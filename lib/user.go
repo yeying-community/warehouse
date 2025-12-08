@@ -13,6 +13,7 @@ type User struct {
 	UserPermissions `mapstructure:",squash"`
 	Username        string
 	Password        string
+	WalletAddress   string `yaml:"wallet_address"`
 }
 
 func (u User) checkPassword(input string) bool {

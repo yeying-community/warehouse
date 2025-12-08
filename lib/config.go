@@ -23,6 +23,12 @@ const (
 	DefaultPrefix  = "/"
 )
 
+// Web3Config Web3 认证配置
+type Web3Config struct {
+	Enabled   bool   `yaml:"enabled"`
+	JWTSecret string `yaml:"jwt_secret"`
+}
+
 type Config struct {
 	UserPermissions `mapstructure:",squash"`
 	Debug           bool
@@ -38,6 +44,9 @@ type Config struct {
 	Log             Log
 	CORS            CORS
 	Users           []User
+
+	// Web3 配置
+	Web3 Web3Config `yaml:"web3"`
 }
 
 func ParseConfig(filename string, flags *pflag.FlagSet) (*Config, error) {
