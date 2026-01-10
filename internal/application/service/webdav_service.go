@@ -70,6 +70,7 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 获取用户目录
 	userDir := s.getUserDirectory(u)
+	s.logger.Info("user directory", zap.String("username", u.Username), zap.String("directory", userDir))
 
 	// 确保目录存在
 	if err := s.ensureDirectory(userDir); err != nil {
@@ -256,6 +257,10 @@ func (s *WebDAVService) createLogger(username string) func(*http.Request, error)
 			// 权限错误 - WARN 级别
 			s.logger.Warn("permission denied",
 				append(fields, zap.String("error", err.Error()))...)
+		} else if isExistsError(err) {
+			// 文件已存在 - WARN 级别
+			s.logger.Warn("resource already exists",
+				append(fields, zap.String("error", err.Error()))...)
 		} else if isClientError(err) {
 			// 客户端错误 - INFO 级别
 			s.logger.Info("client error",
@@ -313,6 +318,24 @@ func isClientError(err error) bool {
 	return contains(errMsg, "invalid") ||
 		contains(errMsg, "bad request") ||
 		contains(errMsg, "malformed")
+}
+
+// isExistsError 判断是否为文件/目录已存在错误
+func isExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// 检查是否为 os.ErrExist
+	if errors.Is(err, os.ErrExist) {
+		return true
+	}
+
+	// 检查错误消息
+	errMsg := err.Error()
+	return contains(errMsg, "file exists") ||
+		contains(errMsg, "already exists") ||
+		contains(errMsg, "cannot create")
 }
 
 // contains 检查字符串是否包含子串（不区分大小写）

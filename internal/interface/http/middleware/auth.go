@@ -109,14 +109,19 @@ func (m *AuthMiddleware) authenticate(ctx context.Context, credentials interface
 
 // extractCredentials 提取凭证
 func (m *AuthMiddleware) extractCredentials(r *http.Request) interface{} {
-	// 1. 尝试 Bearer Token
+	// 1. 尝试 Bearer Token (Authorization header)
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		return &auth.BearerCredentials{Token: token}
 	}
 
-	// 2. 尝试 Basic Auth
+	// 2. 尝试从 Cookie 读取 token
+	if cookie, err := r.Cookie("authToken"); err == nil {
+		return &auth.BearerCredentials{Token: cookie.Value}
+	}
+
+	// 3. 尝试 Basic Auth
 	username, password, ok := r.BasicAuth()
 	if ok {
 		return &auth.BasicCredentials{
@@ -130,7 +135,8 @@ func (m *AuthMiddleware) extractCredentials(r *http.Request) interface{} {
 
 // sendUnauthorized 发送未授权响应
 func (m *AuthMiddleware) sendUnauthorized(w http.ResponseWriter, message string) {
-	w.Header().Set("WWW-Authenticate", `Basic realm="WebDAV"`)
+	// 不设置 WWW-Authenticate，避免浏览器弹出 Basic Auth 对话框
+	// 前端会通过 Bearer Token 或其他方式处理认证
 	http.Error(w, message, http.StatusUnauthorized)
 }
 

@@ -1,0 +1,25 @@
+// styles/element/index.scss
+/* 重写element */
+@use './mixin' as mixin;
+
+.el-drawer {
+    white-space: nowrap;
+
+    .el-drawer__header {
+        padding: 12px 20px;
+        margin-bottom: 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    .el-drawer__body {
+        @include mixin.fScroll
+    }
+}
+
+.el-color-picker__trigger {
+    border: 0;
+}
+
+.el-input-group .el-input-group__append {
+    background-color: #fff;
+}

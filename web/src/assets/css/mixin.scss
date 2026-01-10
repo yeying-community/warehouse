@@ -1,0 +1,35 @@
+/*弹性盒⼦（传⼊null不设置该属性）*/
+
+@mixin flexBox($justify: null, $align: null, $flex-wrap: null) {
+  display: flex;
+
+  @if ($justify) {
+    justify-content: $justify;
+  }
+
+  @if ($align) {
+    align-items: $align;
+  }
+
+  @if ($flex-wrap) {
+    flex-wrap: $flex-wrap;
+  }
+}
+
+@mixin fScroll {
+  overflow-y: scroll;
+  scrollbar-color: #9093994d transparent;
+  scrollbar-width: thin;
+  -ms-overflow-style: none;
+}
+
+
+$header-color: #fff;
+
+@mixin textBox($transparency: null) {
+  color: $header-color+#{$transparency};
+}
+
+@function color($color-name, $color) {
+  @return $color+#{$color-name};
+}
