@@ -73,3 +73,39 @@ export const quotaApi = {
     }>('/api/v1/public/webdav/quota')
   }
 }
+
+// 回收站项目类型
+export interface RecycleItem {
+  hash: string
+  name: string
+  path: string        // 删除前的完整路径（相对于目录根）
+  size: number
+  deletedAt: string   // 删除时间
+  directory: string   // 所在目录
+}
+
+// 回收站 API
+export const recycleApi = {
+  // 获取回收站列表（全局）
+  list() {
+    return request<{
+      items: RecycleItem[]
+    }>('/api/v1/public/webdav/recycle/list')
+  },
+
+  // 恢复文件到原始目录
+  recover(hash: string) {
+    return request('/api/v1/public/webdav/recycle/recover', {
+      method: 'POST',
+      body: { hash }
+    })
+  },
+
+  // 永久删除
+  remove(hash: string) {
+    return request('/api/v1/public/webdav/recycle/permanent', {
+      method: 'POST',
+      body: { hash }
+    })
+  }
+}

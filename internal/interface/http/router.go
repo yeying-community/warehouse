@@ -18,7 +18,8 @@ type Router struct {
 	healthHandler  *handler.HealthHandler
 	web3Handler    *handler.Web3Handler
 	webdavHandler  *handler.WebDAVHandler
-	quotaHandler   *handler.QuotaHandler // 新增配额处理器
+	quotaHandler   *handler.QuotaHandler
+	recycleHandler *handler.RecycleHandler
 	logger         *zap.Logger
 }
 
@@ -30,6 +31,7 @@ func NewRouter(
 	web3Handler *handler.Web3Handler,
 	webdavHandler *handler.WebDAVHandler,
 	quotaHandler *handler.QuotaHandler,
+	recycleHandler *handler.RecycleHandler,
 	logger *zap.Logger,
 ) *Router {
 	return &Router{
@@ -39,6 +41,7 @@ func NewRouter(
 		web3Handler:    web3Handler,
 		webdavHandler:  webdavHandler,
 		quotaHandler:   quotaHandler,
+		recycleHandler: recycleHandler,
 		logger:         logger,
 	}
 }
@@ -57,6 +60,11 @@ func (r *Router) Setup() http.Handler {
 
 	// API 路由（需要认证）
 	mux.Handle("/api/v1/public/webdav/quota", r.createAuthenticatedHandler(http.HandlerFunc(r.quotaHandler.GetUserQuota)))
+
+	// 回收站路由
+	mux.Handle("/api/v1/public/webdav/recycle/list", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleList)))
+	mux.Handle("/api/v1/public/webdav/recycle/recover", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleRecover)))
+	mux.Handle("/api/v1/public/webdav/recycle/permanent", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleRemove)))
 
 	// WebDAV 路由（需要认证）
 	webdavPrefix := r.normalizePrefix(r.config.WebDAV.Prefix)

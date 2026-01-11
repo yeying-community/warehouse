@@ -84,6 +84,7 @@ func main() {
 // rollbackMigrations 回滚迁移
 func rollbackMigrations(ctx context.Context, db *database.PostgresDB) error {
 	queries := []string{
+		"DROP TABLE IF EXISTS recycle_items CASCADE",
 		"DROP TABLE IF EXISTS user_rules CASCADE",
 		"DROP TABLE IF EXISTS users CASCADE",
 		"DROP TRIGGER IF EXISTS update_users_updated_at ON users",

@@ -13,8 +13,11 @@ import (
 
 	"github.com/yeying-community/webdav/internal/domain/permission"
 	"github.com/yeying-community/webdav/internal/domain/quota"
+	"github.com/yeying-community/webdav/internal/domain/recycle"
 	"github.com/yeying-community/webdav/internal/domain/user"
 	"github.com/yeying-community/webdav/internal/infrastructure/config"
+	"github.com/yeying-community/webdav/internal/infrastructure/repository"
+	webdavfs "github.com/yeying-community/webdav/internal/infrastructure/webdav"
 	"github.com/yeying-community/webdav/internal/interface/http/middleware"
 	"go.uber.org/zap"
 	"golang.org/x/net/webdav"
@@ -26,8 +29,10 @@ type WebDAVService struct {
 	permissionCheck permission.Checker
 	quotaService    quota.Service
 	userRepo        user.Repository
+	recycleRepo     repository.RecycleRepository
 	logger          *zap.Logger
 	lockSystem      webdav.LockSystem
+	recycleDir      string // 回收站目录
 }
 
 // statusRecorder 记录响应状态码
@@ -47,15 +52,19 @@ func NewWebDAVService(
 	permissionCheck permission.Checker,
 	quotaService quota.Service,
 	userRepo user.Repository,
+	recycleRepo repository.RecycleRepository,
 	logger *zap.Logger,
 ) *WebDAVService {
+	recycleDir := filepath.Join(cfg.WebDAV.Directory, ".recycle")
 	return &WebDAVService{
 		config:          cfg,
 		permissionCheck: permissionCheck,
 		quotaService:    quotaService,
 		userRepo:        userRepo,
+		recycleRepo:     recycleRepo,
 		logger:          logger,
 		lockSystem:      webdav.NewMemLS(),
+		recycleDir:      recycleDir,
 	}
 }
 
@@ -106,10 +115,11 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 创建 WebDAV 处理器
+	// 创建 WebDAV 处理器（使用自定义的 Unicode FileSystem）
+	unicodeFS := webdavfs.NewUnicodeFileSystem(userDir)
 	handler := &webdav.Handler{
 		Prefix:     s.config.WebDAV.Prefix,
-		FileSystem: webdav.Dir(userDir),
+		FileSystem: unicodeFS,
 		LockSystem: s.lockSystem,
 		Logger:     s.createLogger(u.Username),
 	}
@@ -121,6 +131,13 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 处理请求
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+	// 处理 DELETE 请求：将文件移动到回收站
+	if r.Method == http.MethodDelete {
+		s.handleDeleteWithRecycle(w, r, u, userDir, handler, rec)
+		return
+	}
+
 	handler.ServeHTTP(rec, r)
 
 	// 写操作成功后刷新 used_space
@@ -145,6 +162,108 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			zap.String("username", u.Username),
 			zap.Int64("used_space", used))
 	}
+}
+
+// handleDeleteWithRecycle 处理删除请求（带回收站功能）
+func (s *WebDAVService) handleDeleteWithRecycle(w http.ResponseWriter, r *http.Request, u *user.User, userDir string, handler *webdav.Handler, rec *statusRecorder) {
+	// 获取文件相对路径
+	filePath := strings.TrimPrefix(r.URL.Path, "/")
+
+	// 获取文件的完整路径
+	fullPath := filepath.Join(userDir, filePath)
+
+	// 检查是否为目录
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		s.logger.Error("failed to stat file", zap.Error(err))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	// 目录不进入回收站，直接删除
+	if info.IsDir() {
+		handler.ServeHTTP(rec, r)
+		return
+	}
+
+	// 文件移动到回收站目录
+	if err := s.moveToRecycle(r.Context(), u, filePath, fullPath); err != nil {
+		s.logger.Error("failed to move file to recycle", zap.Error(err))
+		// 如果移动失败，直接删除
+		handler.ServeHTTP(rec, r)
+		return
+	}
+
+	// 更新配额
+	used, err := s.quotaService.CalculateUsedSpace(r.Context(), userDir)
+	if err != nil {
+		s.logger.Error("failed to calculate used space", zap.Error(err))
+		return
+	}
+	if err := s.userRepo.UpdateUsedSpace(r.Context(), u.Username, used); err != nil {
+		s.logger.Error("failed to update used space", zap.Error(err))
+		return
+	}
+	u.UpdateUsedSpace(used)
+
+	// 返回成功
+	w.WriteHeader(http.StatusOK)
+}
+
+// moveToRecycle 将文件移动到回收站并保存记录
+func (s *WebDAVService) moveToRecycle(ctx context.Context, u *user.User, relativePath, fullPath string) error {
+	// 获取文件信息
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat file: %w", err)
+	}
+	fileSize := info.Size()
+
+	// 确保回收站目录存在
+	if err := os.MkdirAll(s.recycleDir, 0755); err != nil {
+		return fmt.Errorf("failed to create recycle dir: %w", err)
+	}
+
+	// 获取文件名和目录
+	fileName := filepath.Base(relativePath)
+	dirName := filepath.Dir(relativePath)
+	if dirName == "." {
+		dirName = u.Directory
+		if dirName == "" {
+			dirName = u.Username
+		}
+	}
+
+	// 创建回收站记录（先生成 hash，便于文件命名）
+	item := recycle.NewRecycleItem(u.ID, u.Username, dirName, fileName, relativePath, fileSize)
+
+	// 生成唯一的回收站文件名：{hash}_{原文件名}
+	recycleFileName := fmt.Sprintf("%s_%s", item.Hash, fileName)
+	recyclePath := filepath.Join(s.recycleDir, recycleFileName)
+
+	// 移动文件
+	if err := os.Rename(fullPath, recyclePath); err != nil {
+		return fmt.Errorf("failed to move file to recycle: %w", err)
+	}
+
+	// 创建回收站记录并保存到数据库
+	if err := s.recycleRepo.Create(ctx, item); err != nil {
+		s.logger.Error("failed to save recycle item", zap.Error(err))
+		// 不返回错误，因为文件已经移动了
+	}
+
+	s.logger.Info("file moved to recycle",
+		zap.String("username", u.Username),
+		zap.String("original_path", relativePath),
+		zap.String("recycle_path", recyclePath),
+		zap.String("hash", item.Hash),
+	)
+
+	return nil
 }
 
 // isUploadMethod 判断是否为上传方法
