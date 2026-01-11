@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -136,6 +137,11 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		s.handleDeleteWithRecycle(w, r, u, userDir, handler, rec)
 		return
+	}
+
+	// 规范化 MOVE/COPY 的 Destination 头，避免编码或代理导致的路径异常
+	if r.Method == http.MethodMove || r.Method == http.MethodCopy {
+		normalizeDestinationHeader(r)
 	}
 
 	handler.ServeHTTP(rec, r)
@@ -352,6 +358,31 @@ func (b *bodyReader) ReadAt(p []byte, off int64) (n int, err error) {
 		err = io.EOF
 	}
 	return n, err
+}
+
+// normalizeDestinationHeader 规范化 Destination 头，处理编码和代理前缀差异
+func normalizeDestinationHeader(r *http.Request) {
+	dest := r.Header.Get("Destination")
+	if dest == "" {
+		return
+	}
+
+	u, err := url.Parse(dest)
+	if err != nil {
+		return
+	}
+
+	if u.Path == "" {
+		return
+	}
+
+	if decoded, err := url.PathUnescape(u.Path); err == nil {
+		u.Path = decoded
+	}
+
+	// 强制使用路径形式，避免代理导致的 host 不匹配
+	path := "/" + strings.TrimLeft(u.Path, "/")
+	r.Header.Set("Destination", path)
 }
 
 // createLogger 创建 WebDAV 日志记录器

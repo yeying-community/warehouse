@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, computed } from 'vue'
-import { Download, Delete, Refresh, FolderOpened } from '@element-plus/icons-vue'
-import { ElIcon } from 'element-plus'
+import { Download, Delete, Refresh, FolderOpened, DocumentCopy, Edit } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { quotaApi, recycleApi, type RecycleItem } from '@/api'
 import { isLoggedIn, hasWallet, loginWithWallet } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
@@ -28,11 +28,45 @@ const recycleLoading = ref(false)
 
 // 是否显示回收站列表
 const displayList = computed(() => showRecycle.value ? recycleList.value : fileList.value)
+const breadcrumbItems = computed(() => {
+  if (showRecycle.value) return []
+  const parts = currentPath.value.split('/').filter(Boolean)
+  const items: { name: string; path: string }[] = []
+  let acc = ''
+  for (const part of parts) {
+    acc += '/' + part
+    items.push({ name: part, path: acc + '/' })
+  }
+  return items
+})
+
+function encodePath(path: string): string {
+  if (!path) return '/'
+  const hasTrailing = path.endsWith('/') && path.length > 1
+  const trimmed = path.replace(/^\/+/, '').replace(/\/+$/, '')
+  if (!trimmed) return '/'
+  const encoded = trimmed.split('/').map(encodeURIComponent).join('/')
+  return '/' + encoded + (hasTrailing ? '/' : '')
+}
+
+function buildApiPath(path: string): string {
+  const encodedPath = encodePath(path)
+  return encodedPath === '/' ? '/api' : '/api' + encodedPath
+}
+
+function ensureAuthCookie(token: string): void {
+  if (!token) return
+  document.cookie = `authToken=${token}; path=/; max-age=86400`
+}
+
+function buildDavPath(path: string): string {
+  return encodePath(path)
+}
 
 // 获取文件列表 (WebDAV PROPFIND)
 async function fetchFiles(path: string = '/') {
   loading.value = true
-  const apiPath = path === '/' ? '/api' : '/api' + path
+  const apiPath = buildApiPath(path)
   console.log('fetchFiles:', path, '→', apiPath)
   try {
     const token = localStorage.getItem('authToken') || ''
@@ -95,6 +129,38 @@ function handleRowClick(row: FileItem) {
   }
 }
 
+// 刷新当前视图
+function refreshCurrentView() {
+  if (showRecycle.value) {
+    fetchRecycle()
+  } else {
+    fetchFiles(currentPath.value)
+  }
+}
+
+async function copyCurrentPath() {
+  const text = showRecycle.value ? '回收站' : currentPath.value
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.setAttribute('readonly', 'true')
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    ElMessage.success('已复制当前路径')
+  } catch (error) {
+    console.error('复制失败:', error)
+    ElMessage.error('复制失败')
+  }
+}
+
 // 返回上级目录
 function goParent() {
   if (currentPath.value === '/') return
@@ -106,36 +172,67 @@ function goParent() {
 
 // 下载文件
 async function downloadFile(item: FileItem) {
-  const cleanPath = item.path.replace(/^\//, '')
-  const apiPath = '/api/' + cleanPath
+  const apiPath = buildApiPath(item.path)
 
   uploadProgress.value = '下载中...'
 
   try {
     const token = localStorage.getItem('authToken') || ''
-    const response = await fetch(apiPath, {
+    ensureAuthCookie(token)
+    const a = document.createElement('a')
+    a.href = apiPath
+    a.download = item.name
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } catch (error) {
+    alert(`下载失败: ${error}`)
+  } finally {
+    window.setTimeout(() => {
+      uploadProgress.value = null
+    }, 800)
+  }
+}
+
+async function renameItem(item: FileItem) {
+  if (item.path === '/') return
+
+  const rawPath = item.path.startsWith('/') ? item.path : '/' + item.path
+  const isDir = item.isDir
+  const normalized = isDir ? rawPath.replace(/\/$/, '') : rawPath
+  const segments = normalized.split('/').filter(Boolean)
+  const oldName = segments.pop()
+  const parentPath = segments.length ? '/' + segments.join('/') + '/' : '/'
+
+  const newName = prompt('请输入新的名称', oldName || '')
+  if (!newName || newName === oldName) return
+  if (newName.includes('/')) {
+    alert('名称不能包含 "/"')
+    return
+  }
+
+  const sourcePath = isDir ? normalized + '/' : normalized
+  const destinationPath = (parentPath === '/' ? '/' + newName : parentPath + newName) + (isDir ? '/' : '')
+
+  try {
+    const token = localStorage.getItem('authToken') || ''
+    const response = await fetch(buildApiPath(sourcePath), {
+      method: 'MOVE',
       headers: {
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${token}`,
+        'Destination': buildDavPath(destinationPath),
+        'Overwrite': 'F'
       }
     })
 
     if (!response.ok) {
-      throw new Error('下载失败')
+      throw new Error(`重命名失败: ${response.status}`)
     }
 
-    const blob = await response.blob()
-    const url = window.URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = item.name
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    window.URL.revokeObjectURL(url)
+    await fetchFiles(currentPath.value)
   } catch (error) {
-    alert(`下载失败: ${error}`)
-  } finally {
-    uploadProgress.value = null
+    alert(`重命名失败: ${error}`)
   }
 }
 
@@ -153,7 +250,8 @@ async function handleFileSelect(event: Event) {
 
   uploadProgress.value = '上传中...'
   const cleanPath = currentPath.value.replace(/^\//, '').replace(/\/$/, '')
-  const apiPath = cleanPath ? '/api/' + cleanPath + '/' + file.name : '/api/' + file.name
+  const targetPath = cleanPath ? '/' + cleanPath + '/' + file.name : '/' + file.name
+  const apiPath = buildApiPath(targetPath)
   try {
     const token = localStorage.getItem('authToken') || ''
     const formData = new FormData()
@@ -189,8 +287,7 @@ async function handleFileSelect(event: Event) {
 async function deleteFile(item: FileItem) {
   if (!confirm(`确定删除 ${item.name} 吗？删除后可在回收站恢复`)) return
 
-  const cleanPath = item.path.replace(/^\//, '')
-  const apiPath = '/api/' + cleanPath
+  const apiPath = buildApiPath(item.path)
   try {
     const token = localStorage.getItem('authToken') || ''
     const response = await fetch(apiPath, {
@@ -263,7 +360,8 @@ async function createFolder() {
   if (!name) return
 
   const cleanPath = currentPath.value.replace(/^\//, '').replace(/\/$/, '')
-  const apiPath = cleanPath ? '/api/' + cleanPath + '/' + name : '/api/' + name
+  const targetPath = cleanPath ? '/' + cleanPath + '/' + name : '/' + name
+  const apiPath = buildApiPath(targetPath)
   try {
     const token = localStorage.getItem('authToken') || ''
     const response = await fetch(apiPath, {
@@ -365,173 +463,275 @@ onMounted(() => {
     </div>
 
     <!-- 已登录状态 -->
-    <div v-else class="file-manager">
-      <!-- 顶部工具栏 -->
-      <div class="toolbar">
-        <div class="left">
-          <template v-if="showRecycle">
-            <el-button @click="backToFiles">
-              <span class="iconfont icon-fanhui"></span> 返回文件列表
-            </el-button>
-            <span class="path">回收站</span>
-          </template>
-          <template v-else>
-            <el-button @click="goParent" :disabled="currentPath === '/'">
-              <span class="iconfont icon-fanhui"></span> 返回上级
-            </el-button>
-            <span class="path">当前路径: {{ currentPath }}</span>
-          </template>
+    <div v-else class="app-shell">
+      <aside class="side-panel">
+        <div class="brand">
+          <div class="brand-mark"></div>
+          <div class="brand-text">
+            <div class="brand-sub">资产管理中心</div>
+          </div>
         </div>
-        <div class="right">
-          <template v-if="showRecycle">
-            <el-button @click="fetchRecycle" :loading="recycleLoading">
-              <el-icon><Refresh /></el-icon> 刷新
-            </el-button>
-          </template>
-          <template v-else>
-            <el-button @click="enterRecycle">
-              <el-icon><Delete /></el-icon> 回收站
-            </el-button>
-            <el-button @click="createFolder">
-              <span class="iconfont icon-tianjia"></span> 新建文件夹
-            </el-button>
-            <el-button type="primary" @click="triggerUpload">
-              <span class="iconfont icon-shangchuan"></span> 上传文件
-            </el-button>
-            <input
-              ref="fileInput"
-              type="file"
-              style="display:none"
-              @change="handleFileSelect"
-            />
-          </template>
+
+        <div class="nav-block">
+          <div class="nav-title">导航</div>
+          <div class="nav-list">
+            <button
+              type="button"
+              class="nav-item"
+              :class="{ active: !showRecycle }"
+              @click="backToFiles"
+            >
+              <el-icon class="nav-icon"><FolderOpened /></el-icon>
+              <span>文件管理</span>
+            </button>
+            <button
+              type="button"
+              class="nav-item"
+              :class="{ active: showRecycle }"
+              @click="enterRecycle"
+            >
+              <el-icon class="nav-icon"><Delete /></el-icon>
+              <span>回收站</span>
+            </button>
+            <button type="button" class="nav-item is-soon" disabled>
+              <el-icon class="nav-icon"><Download /></el-icon>
+              <span>文件分享</span>
+              <el-tag size="small" type="info">规划中</el-tag>
+            </button>
+            <button type="button" class="nav-item is-soon" disabled>
+              <el-icon class="nav-icon"><Refresh /></el-icon>
+              <span>配额管理</span>
+              <el-tag size="small" type="info">规划中</el-tag>
+            </button>
+          </div>
         </div>
-      </div>
+      </aside>
 
-      <!-- 配额显示 -->
-      <div class="quota-bar">
-        <span>存储空间: {{ formatSize(quota.used) }} / {{ quota.unlimited ? '无限' : formatSize(quota.quota) }}</span>
-        <el-progress
-          v-if="!quota.unlimited"
-          :percentage="Math.min(Number(quota.percentage.toFixed(2)), 100)"
-          :stroke-width="8"
-        />
-      </div>
+      <main class="main-panel">
+        <header class="page-header">
+          <div class="header-left">
+            <div class="path-row">
+              <template v-if="showRecycle">
+                <el-button @click="backToFiles">
+                  <span class="iconfont icon-fanhui"></span> 返回文件列表
+                </el-button>
+              </template>
+              <template v-else>
+                <el-button @click="goParent" :disabled="currentPath === '/'">
+                  <span class="iconfont icon-fanhui"></span> 返回上级
+                </el-button>
+              </template>
+              <template v-if="showRecycle">
+                <div class="path-pill">
+                  <span class="path-label">当前位置</span>
+                  <span class="path-value">回收站</span>
+                  <el-tooltip content="复制路径" placement="top">
+                    <button type="button" class="copy-icon" @click="copyCurrentPath">
+                      <el-icon><DocumentCopy /></el-icon>
+                    </button>
+                  </el-tooltip>
+                </div>
+              </template>
+              <template v-else>
+                <div class="breadcrumb">
+                  <el-breadcrumb separator="/">
+                    <el-breadcrumb-item>
+                      <button class="breadcrumb-link" type="button" @click="fetchFiles('/')">根目录</button>
+                    </el-breadcrumb-item>
+                    <el-breadcrumb-item v-for="crumb in breadcrumbItems" :key="crumb.path">
+                      <button class="breadcrumb-link" type="button" @click="fetchFiles(crumb.path)">
+                        {{ crumb.name }}
+                      </button>
+                    </el-breadcrumb-item>
+                  </el-breadcrumb>
+                  <el-tooltip content="复制路径" placement="top">
+                    <button type="button" class="copy-icon" @click="copyCurrentPath">
+                      <el-icon><DocumentCopy /></el-icon>
+                    </button>
+                  </el-tooltip>
+                </div>
+              </template>
+            </div>
+          </div>
+          <div class="header-actions">
+            <template v-if="showRecycle">
+              <el-button @click="refreshCurrentView" :loading="recycleLoading">
+                <el-icon><Refresh /></el-icon> 刷新
+              </el-button>
+            </template>
+            <template v-else>
+              <el-button @click="createFolder">
+                <span class="iconfont icon-tianjia"></span> 新建文件夹
+              </el-button>
+              <el-button type="primary" @click="triggerUpload">
+                <span class="iconfont icon-shangchuan"></span> 上传文件
+              </el-button>
+              <el-button @click="refreshCurrentView" :loading="loading">
+                <el-icon><Refresh /></el-icon> 刷新
+              </el-button>
+              <input
+                ref="fileInput"
+                type="file"
+                style="display:none"
+                @change="handleFileSelect"
+              />
+            </template>
+          </div>
+        </header>
 
-      <!-- 文件列表 -->
-      <el-table
-        :data="displayList"
-        v-loading="showRecycle ? recycleLoading : loading"
-        style="width: 100%"
-        @row-click="handleRowClick"
-      >
-        <!-- 回收站模式 -->
-        <template v-if="showRecycle">
-          <el-table-column label="目录" width="120">
-            <template #default="{ row }">
-              <el-tag size="small">{{ row.directory }}</el-tag>
+        <section class="content-card">
+          <!-- 文件列表 -->
+          <el-table
+            :data="displayList"
+            v-loading="showRecycle ? recycleLoading : loading"
+            style="width: 100%"
+            @row-click="handleRowClick"
+          >
+            <!-- 回收站模式 -->
+            <template v-if="showRecycle">
+              <el-table-column label="目录" width="120">
+                <template #default="{ row }">
+                  <el-tag size="small">{{ row.directory }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="名称" min-width="200">
+                <template #default="{ row }">
+                  <div class="file-name">
+                    <span class="iconfont icon-wenjian1"></span>
+                    <span class="name">{{ row.name }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="原始路径" min-width="180">
+                <template #default="{ row }">
+                  {{ row.path }}
+                </template>
+              </el-table-column>
+              <el-table-column label="大小" width="80">
+                <template #default="{ row }">
+                  {{ formatSize(row.size) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="删除时间" width="150">
+                <template #default="{ row }">
+                  {{ formatDeletedTime(row.deletedAt) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="140" fixed="right">
+                <template #default="{ row }">
+                  <div class="actions">
+                    <el-tooltip content="恢复" placement="top">
+                      <el-button type="primary" link @click="recoverFile(row)">
+                        <el-icon><FolderOpened /></el-icon>
+                      </el-button>
+                    </el-tooltip>
+                    <el-tooltip content="永久删除" placement="top">
+                      <el-button type="danger" link @click="permanentlyDelete(row)">
+                        <el-icon><Delete /></el-icon>
+                      </el-button>
+                    </el-tooltip>
+                  </div>
+                </template>
+              </el-table-column>
             </template>
-          </el-table-column>
-          <el-table-column label="名称" min-width="200">
-            <template #default="{ row }">
-              <div class="file-name">
-                <span class="iconfont icon-wenjian1"></span>
-                <span class="name">{{ row.name }}</span>
-              </div>
+            <!-- 文件列表模式 -->
+            <template v-else>
+              <el-table-column label="名称" min-width="280">
+                <template #default="{ row }">
+                  <div class="file-name">
+                    <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
+                    <span class="name">{{ row.name }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="大小" width="100">
+                <template #default="{ row }">
+                  {{ row.isDir ? '-' : formatSize(row.size) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="修改时间" width="160">
+                <template #default="{ row }">
+                  {{ formatTime(row.modified) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="140" fixed="right">
+                <template #default="{ row }">
+                  <div class="actions" @click.stop>
+                    <el-tooltip v-if="!row.isDir" content="下载" placement="top">
+                      <el-button type="primary" link :icon="Download" @click="downloadFile(row)" />
+                    </el-tooltip>
+                    <el-tooltip content="重命名" placement="top">
+                      <el-button type="primary" link :icon="Edit" @click="renameItem(row)" />
+                    </el-tooltip>
+                    <el-tooltip content="删除" placement="top">
+                      <el-button type="danger" link :icon="Delete" @click="deleteFile(row)" />
+                    </el-tooltip>
+                  </div>
+                </template>
+              </el-table-column>
             </template>
-          </el-table-column>
-          <el-table-column label="原始路径" min-width="180">
-            <template #default="{ row }">
-              {{ row.path }}
-            </template>
-          </el-table-column>
-          <el-table-column label="大小" width="80">
-            <template #default="{ row }">
-              {{ formatSize(row.size) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="删除时间" width="150">
-            <template #default="{ row }">
-              {{ formatDeletedTime(row.deletedAt) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="140" fixed="right">
-            <template #default="{ row }">
-              <div class="actions">
-                <el-tooltip content="恢复" placement="top">
-                  <el-button type="primary" link @click="recoverFile(row)">
-                    <el-icon><FolderOpened /></el-icon>
-                  </el-button>
-                </el-tooltip>
-                <el-tooltip content="永久删除" placement="top">
-                  <el-button type="danger" link @click="permanentlyDelete(row)">
-                    <el-icon><Delete /></el-icon>
-                  </el-button>
-                </el-tooltip>
-              </div>
-            </template>
-          </el-table-column>
-        </template>
-        <!-- 文件列表模式 -->
-        <template v-else>
-          <el-table-column label="名称" min-width="280">
-            <template #default="{ row }">
-              <div class="file-name">
-                <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
-                <span class="name">{{ row.name }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="大小" width="100">
-            <template #default="{ row }">
-              {{ row.isDir ? '-' : formatSize(row.size) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="修改时间" width="160">
-            <template #default="{ row }">
-              {{ formatTime(row.modified) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="100" fixed="right">
-            <template #default="{ row }">
-              <div class="actions" @click.stop>
-                <el-tooltip v-if="!row.isDir" content="下载" placement="top">
-                  <el-button type="primary" link :icon="Download" @click="downloadFile(row)" />
-                </el-tooltip>
-                <el-tooltip content="删除" placement="top">
-                  <el-button type="danger" link :icon="Delete" @click="deleteFile(row)" />
-                </el-tooltip>
-              </div>
-            </template>
-          </el-table-column>
-        </template>
-      </el-table>
+          </el-table>
+        </section>
 
-      <!-- 上传进度 -->
-      <div v-if="uploadProgress" class="upload-tip">
-        {{ uploadProgress }}
-      </div>
+        <!-- 上传进度 -->
+        <div v-if="uploadProgress" class="upload-tip">
+          {{ uploadProgress }}
+        </div>
+      </main>
+
+      <aside class="info-panel">
+        <div class="info-card">
+          <div class="card-title">空间使用</div>
+          <div class="quota-value">
+            <span>{{ formatSize(quota.used) }}</span>
+            <span class="quota-sep">/</span>
+            <span>{{ quota.unlimited ? '无限' : formatSize(quota.quota) }}</span>
+          </div>
+          <el-progress
+            v-if="!quota.unlimited"
+            :percentage="Math.min(Number(quota.percentage.toFixed(2)), 100)"
+            :stroke-width="8"
+          />
+          <div class="quota-meta">
+            <span v-if="quota.unlimited">未设置上限</span>
+            <span v-else>已使用 {{ quota.percentage.toFixed(2) }}%</span>
+          </div>
+        </div>
+
+        <div class="info-card muted">
+          <div class="card-title">文件分享</div>
+          <p class="card-desc">为单个文件生成可控访问链接。</p>
+          <el-button size="small" disabled>创建分享链接</el-button>
+        </div>
+
+        <div class="info-card muted">
+          <div class="card-title">配额管理</div>
+          <p class="card-desc">按用户与目录设置空间配额。</p>
+          <el-button size="small" disabled>打开配额面板</el-button>
+        </div>
+      </aside>
     </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .home-container {
-  height: 100%;
+  min-height: 100%;
+  background: linear-gradient(180deg, #f6f8fb 0%, #f2f4f7 100%);
 }
 
 .login-page {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100%;
+  min-height: 100vh;
 
   .login-box {
     text-align: center;
     padding: 40px;
-    border-radius: 8px;
+    border-radius: 16px;
     background: #fff;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
 
     h1 {
       margin-bottom: 16px;
@@ -548,68 +748,351 @@ onMounted(() => {
   }
 }
 
-.file-manager {
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 280px;
+  gap: 16px;
   padding: 16px;
+  height: 100%;
+  box-sizing: border-box;
+}
 
-  .toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
+.side-panel {
+  background: #fff;
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid #eef1f4;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
-    .left {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0f2f5;
+}
 
-    .right {
-      display: flex;
-      gap: 12px;
-    }
+.brand-mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #409eff, #7cc6ff);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
 
-    .path {
-      color: #666;
-      font-size: 14px;
-    }
+.brand-title {
+  font-weight: 600;
+  font-size: 16px;
+  color: #1f2d3d;
+}
+
+.brand-sub {
+  font-size: 14px;
+  color: #98a2b3;
+  margin-top: 2px;
+}
+
+.nav-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nav-title {
+  font-size: 12px;
+  color: #8a8f98;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #2b2f36;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.nav-item:hover {
+  background: #f5f7fa;
+}
+
+.nav-item.active {
+  background: #eef5ff;
+  border-color: #d6e6ff;
+  color: #1c4fb8;
+  font-weight: 600;
+}
+
+.nav-item.is-soon {
+  cursor: not-allowed;
+}
+
+.nav-item:disabled {
+  background: #fafafa;
+  color: #9aa0a6;
+  border-color: #f0f0f0;
+}
+
+.nav-icon {
+  font-size: 16px;
+}
+
+.nav-item .el-tag {
+  margin-left: auto;
+}
+
+.main-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.page-header {
+  background: #fff;
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid #eef1f4;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.view-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.path-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.path-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #f5f7fa;
+  color: #606266;
+  font-size: 12px;
+}
+
+.path-label {
+  color: #909399;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f5f7fa;
+  color: #606266;
+  gap: 8px;
+}
+
+.breadcrumb-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  color: #409eff;
+  cursor: pointer;
+}
+
+.breadcrumb-link:hover {
+  color: #1d73c7;
+}
+
+.copy-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #909399;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: all 0.2s ease;
+}
+
+.copy-icon:hover {
+  background: rgba(64, 158, 255, 0.12);
+  color: #409eff;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.content-card {
+  background: #fff;
+  border-radius: 16px;
+  border: 1px solid #eef1f4;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  padding: 8px 8px 12px;
+}
+
+.file-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+
+  .iconfont {
+    font-size: 20px;
   }
 
-  .quota-bar {
-    margin-bottom: 16px;
-    font-size: 14px;
-    color: #666;
+  .icon-wenjianjia {
+    color: #e6a23c;
   }
 
-  .file-name {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
+  .icon-wenjian1 {
+    color: #409eff;
+  }
+}
 
-    .iconfont {
-      font-size: 20px;
-    }
+.actions {
+  display: flex;
+  gap: 8px;
+}
 
-    .icon-wenjianjia {
-      color: #e6a23c;
-    }
+.upload-tip {
+  align-self: flex-start;
+  padding: 8px 16px;
+  background: #ecf9f1;
+  border: 1px solid #d3f1df;
+  border-radius: 10px;
+  color: #2f8f5b;
+  font-size: 13px;
+}
 
-    .icon-wenjian1 {
-      color: #409eff;
-    }
+.info-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.info-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 16px;
+  border: 1px solid #eef1f4;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.info-card.muted {
+  opacity: 0.8;
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.quota-value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.quota-sep {
+  color: #c0c4cc;
+  font-weight: 400;
+}
+
+.quota-meta {
+  font-size: 12px;
+  color: #909399;
+}
+
+.card-desc {
+  margin: 0;
+  color: #7a7f87;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1200px) {
+  .app-shell {
+    grid-template-columns: 220px minmax(0, 1fr);
   }
 
-  .actions {
-    display: flex;
-    gap: 8px;
+  .info-panel {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    padding: 12px;
   }
 
-  .upload-tip {
-    margin-top: 16px;
-    padding: 8px 16px;
-    background: #f0f9eb;
-    border-radius: 4px;
-    color: #67c23a;
+  .side-panel {
+    padding: 12px;
+  }
+
+  .brand {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .nav-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .nav-item {
+    width: auto;
+  }
+
+  .page-header {
+    padding: 12px;
   }
 }
 </style>
