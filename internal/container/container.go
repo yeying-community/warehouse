@@ -49,6 +49,7 @@ type Container struct {
 	Web3Handler    *handler.Web3Handler
 	WebDAVHandler  *handler.WebDAVHandler
 	QuotaHandler   *handler.QuotaHandler
+	UserHandler    *handler.UserHandler
 	RecycleHandler *handler.RecycleHandler
 	ShareHandler   *handler.ShareHandler
 
@@ -230,6 +231,8 @@ func (c *Container) initHandlers() error {
 
 	// 创建配额处理器
 	c.QuotaHandler = handler.NewQuotaHandler(c.QuotaService, c.Logger)
+	// 用户信息处理器
+	c.UserHandler = handler.NewUserHandler(c.Logger)
 
 	// Web3 处理器
 	if c.Web3Auth != nil {
@@ -276,6 +279,7 @@ func (c *Container) initHTTP() error {
 		c.Web3Handler,
 		c.WebDAVHandler,
 		c.QuotaHandler,
+		c.UserHandler,
 		c.RecycleHandler,
 		c.ShareHandler,
 		c.Logger,

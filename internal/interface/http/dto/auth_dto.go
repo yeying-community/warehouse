@@ -32,5 +32,5 @@ type UserInfo struct {
 	Username      string   `json:"username"`
 	WalletAddress string   `json:"wallet_address,omitempty"`
 	Permissions   []string `json:"permissions"`
+	CreatedAt     string   `json:"created_at,omitempty"`
 }
-

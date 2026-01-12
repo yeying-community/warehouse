@@ -53,7 +53,12 @@ export const authApi = {
     return request<{
       token: string
       expires_at: string
-      user: { username: string; wallet_address: string; permissions: string[] }
+      user: {
+        username: string
+        wallet_address: string
+        permissions: string[]
+        created_at?: string
+      }
     }>('/api/v1/public/common/auth/verify', {
       method: 'POST',
       body: { address, signature }
@@ -71,6 +76,19 @@ export const quotaApi = {
       percentage: number
       unlimited: boolean
     }>('/api/v1/public/webdav/quota')
+  }
+}
+
+// 用户信息 API
+export const userApi = {
+  getInfo() {
+    return request<{
+      username: string
+      wallet_address?: string
+      permissions: string[]
+      created_at?: string
+      updated_at?: string
+    }>('/api/v1/public/webdav/user/info')
   }
 }
 

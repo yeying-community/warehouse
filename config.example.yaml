@@ -112,12 +112,3 @@ users:
       - path: "/readonly"
         permissions: "R"
         regex: false
-
-  # Admin user with full permissions and no quota limit
-  - username: "admin"
-    password: "admin123"
-    wallet_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
-    directory: "."  # Root directory
-    permissions: "CRUD"
-    quota: 0  # 0 means unlimited
-

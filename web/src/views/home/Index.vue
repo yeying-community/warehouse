@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, computed } from 'vue'
-import { Download, Delete, Refresh, FolderOpened, DocumentCopy, Edit, Share } from '@element-plus/icons-vue'
+import { Download, Delete, Refresh, FolderOpened, DocumentCopy, Edit, Share, User } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { quotaApi, recycleApi, shareApi, type RecycleItem, type ShareItem } from '@/api'
-import { isLoggedIn, hasWallet, loginWithWallet } from '@/plugins/auth'
+import { quotaApi, userApi, recycleApi, shareApi, type RecycleItem, type ShareItem } from '@/api'
+import { isLoggedIn, hasWallet, loginWithWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 
 interface FileItem {
@@ -18,7 +18,14 @@ interface FileItem {
 const loading = ref(false)
 const fileList = ref<FileItem[]>([])
 const currentPath = ref('/')
-const quota = ref({ quota: 0, used: 0, percentage: 0, unlimited: true })
+const quota = ref({ quota: 0, used: 0, available: 0, percentage: 0, unlimited: true })
+const userInfo = ref<{
+  username: string
+  wallet_address?: string
+  permissions: string[]
+  created_at?: string
+  updated_at?: string
+} | null>(null)
 const uploadProgress = ref<string | null>(null)
 
 // 回收站相关状态
@@ -28,12 +35,29 @@ const recycleLoading = ref(false)
 const showShare = ref(false)
 const shareList = ref<ShareItem[]>([])
 const shareLoading = ref(false)
+const showQuotaManage = ref(false)
+const quotaManageLoading = ref(false)
 
 // 是否显示回收站列表
 const displayList = computed(() => {
   if (showRecycle.value) return recycleList.value
   if (showShare.value) return shareList.value
   return fileList.value
+})
+const userProfile = computed(() => {
+  const username = userInfo.value?.username || getUsername() || '当前用户'
+  const walletAddress = userInfo.value?.wallet_address || localStorage.getItem('walletAddress') || getCurrentAccount() || '-'
+  const walletName = getWalletName()
+  const permissions = userInfo.value?.permissions?.length ? userInfo.value.permissions : getUserPermissions()
+  const createdAt = userInfo.value?.created_at || getUserCreatedAt()
+  return { username, walletAddress, walletName, permissions, createdAt }
+})
+const quotaAvailable = computed(() => {
+  if (quota.value.unlimited) return null
+  const available = Number.isFinite(quota.value.available)
+    ? quota.value.available
+    : quota.value.quota - quota.value.used
+  return Math.max(available, 0)
 })
 const breadcrumbItems = computed(() => {
   if (showRecycle.value) return []
@@ -107,12 +131,50 @@ async function fetchFiles(path: string = '/') {
 }
 
 // 获取配额
-async function fetchQuota() {
+async function fetchQuota(withLoading = false) {
+  if (withLoading) {
+    quotaManageLoading.value = true
+  }
   try {
     const data = await quotaApi.get()
     quota.value = data
   } catch (error) {
     console.error('获取配额失败:', error)
+  } finally {
+    if (withLoading) {
+      quotaManageLoading.value = false
+    }
+  }
+}
+
+// 获取用户信息
+async function fetchUserInfo() {
+  try {
+    const data = await userApi.getInfo()
+    userInfo.value = data
+    if (data.username) {
+      localStorage.setItem('username', data.username)
+    }
+    if (data.wallet_address) {
+      localStorage.setItem('walletAddress', data.wallet_address)
+    }
+    if (Array.isArray(data.permissions)) {
+      localStorage.setItem('permissions', JSON.stringify(data.permissions))
+    }
+    if (data.created_at) {
+      localStorage.setItem('createdAt', data.created_at)
+    }
+  } catch (error) {
+    console.error('获取用户信息失败:', error)
+  }
+}
+
+async function fetchUserCenter() {
+  quotaManageLoading.value = true
+  try {
+    await Promise.all([fetchUserInfo(), fetchQuota()])
+  } finally {
+    quotaManageLoading.value = false
   }
 }
 
@@ -130,7 +192,7 @@ function enterDirectory(item: FileItem) {
 
 // 单击行进入目录（回收站模式不响应）
 function handleRowClick(row: FileItem) {
-  if (showRecycle.value || showShare.value) return
+  if (showRecycle.value || showShare.value || showQuotaManage.value) return
   if (row.isDir) {
     enterDirectory(row)
   }
@@ -142,6 +204,8 @@ function refreshCurrentView() {
     fetchRecycle()
   } else if (showShare.value) {
     fetchShare()
+  } else if (showQuotaManage.value) {
+    fetchUserCenter()
   } else {
     fetchFiles(currentPath.value)
   }
@@ -370,6 +434,7 @@ async function fetchRecycle() {
 function enterRecycle() {
   showRecycle.value = true
   showShare.value = false
+  showQuotaManage.value = false
   fetchRecycle()
 }
 
@@ -377,6 +442,7 @@ function enterRecycle() {
 function backToFiles() {
   showRecycle.value = false
   showShare.value = false
+  showQuotaManage.value = false
   fetchFiles(currentPath.value)
 }
 
@@ -419,6 +485,7 @@ async function fetchShare() {
 function enterShare() {
   showShare.value = true
   showRecycle.value = false
+  showQuotaManage.value = false
   fetchShare()
 }
 
@@ -436,6 +503,14 @@ async function revokeShare(item: ShareItem) {
 async function copyShareLink(item: ShareItem) {
   const url = item.url || `${window.location.origin}/api/v1/public/share/${item.token}`
   await copyText(url, '分享链接已复制')
+}
+
+// 进入用户中心
+function enterQuotaManage() {
+  showQuotaManage.value = true
+  showShare.value = false
+  showRecycle.value = false
+  fetchUserCenter()
 }
 
 // 新建文件夹
@@ -480,38 +555,37 @@ function formatSize(bytes: number): string {
 }
 
 // 格式化时间
-function formatTime(timeStr: string): string {
-  if (!timeStr) return '-'
+function formatDateTime(value: string | number): string {
+  if (value === null || value === undefined || value === '') return '-'
   try {
-    const date = new Date(timeStr)
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    let raw: number | string = value
+    if (typeof value === 'string' && /^\d+$/.test(value)) {
+      const asNumber = Number(value)
+      raw = value.length <= 10 ? asNumber * 1000 : asNumber
+    }
+    const date = new Date(raw)
+    if (Number.isNaN(date.getTime())) return '-'
+    const pad = (num: number) => String(num).padStart(2, '0')
+    const year = date.getFullYear()
+    const month = pad(date.getMonth() + 1)
+    const day = pad(date.getDate())
+    const hour = pad(date.getHours())
+    const minute = pad(date.getMinutes())
+    const second = pad(date.getSeconds())
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`
   } catch {
-    return timeStr
+    return '-'
   }
+}
+
+// 格式化时间
+function formatTime(timeStr: string | number): string {
+  return formatDateTime(timeStr)
 }
 
 // 格式化删除时间
 function formatDeletedTime(timeStr: string): string {
-  if (!timeStr) return '-'
-  try {
-    const date = new Date(timeStr)
-    return date.toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    })
-  } catch {
-    return timeStr
-  }
+  return formatDateTime(timeStr)
 }
 
 // 连接钱包
@@ -528,6 +602,7 @@ onMounted(() => {
   if (isLoggedIn()) {
     fetchFiles()
     fetchQuota()
+    fetchUserInfo()
   }
 })
 </script>
@@ -562,7 +637,7 @@ onMounted(() => {
             <button
               type="button"
               class="nav-item"
-              :class="{ active: !showRecycle }"
+              :class="{ active: !showRecycle && !showShare && !showQuotaManage }"
               @click="backToFiles"
             >
               <el-icon class="nav-icon"><FolderOpened /></el-icon>
@@ -586,10 +661,14 @@ onMounted(() => {
               <el-icon class="nav-icon"><Share /></el-icon>
               <span>文件分享</span>
             </button>
-            <button type="button" class="nav-item is-soon" disabled>
-              <el-icon class="nav-icon"><Refresh /></el-icon>
-              <span>配额管理</span>
-              <el-tag size="small" type="info">规划中</el-tag>
+            <button
+              type="button"
+              class="nav-item"
+              :class="{ active: showQuotaManage }"
+              @click="enterQuotaManage"
+            >
+              <el-icon class="nav-icon"><User /></el-icon>
+              <span>用户中心</span>
             </button>
           </div>
         </div>
@@ -599,7 +678,7 @@ onMounted(() => {
         <header class="page-header">
           <div class="header-left">
             <div class="path-row">
-              <template v-if="showRecycle">
+              <template v-if="showRecycle || showShare || showQuotaManage">
                 <el-button @click="backToFiles">
                   <span class="iconfont icon-fanhui"></span> 返回文件列表
                 </el-button>
@@ -624,6 +703,12 @@ onMounted(() => {
                 <div class="path-pill">
                   <span class="path-label">当前位置</span>
                   <span class="path-value">文件分享</span>
+                </div>
+              </template>
+              <template v-else-if="showQuotaManage">
+                <div class="path-pill">
+                  <span class="path-label">当前位置</span>
+                  <span class="path-value">用户中心</span>
                 </div>
               </template>
               <template v-else>
@@ -658,6 +743,11 @@ onMounted(() => {
                 <el-icon><Refresh /></el-icon> 刷新
               </el-button>
             </template>
+            <template v-else-if="showQuotaManage">
+              <el-button @click="refreshCurrentView" :loading="quotaManageLoading">
+                <el-icon><Refresh /></el-icon> 刷新
+              </el-button>
+            </template>
             <template v-else>
               <el-button @click="createFolder">
                 <span class="iconfont icon-tianjia"></span> 新建文件夹
@@ -679,8 +769,81 @@ onMounted(() => {
         </header>
 
         <section class="content-card">
-          <!-- 文件列表 -->
+          <div v-if="showQuotaManage" class="user-center" v-loading="quotaManageLoading">
+            <div class="user-card">
+              <div class="card-title">基础信息</div>
+              <div class="user-list">
+                <div class="user-row">
+                  <span class="user-label">用户名</span>
+                  <span class="user-value">{{ userProfile.username }}</span>
+                </div>
+                <div class="user-row">
+                  <span class="user-label">钱包地址</span>
+                  <span class="user-value mono">{{ userProfile.walletAddress }}</span>
+                </div>
+                <div class="user-row">
+                  <span class="user-label">钱包类型</span>
+                  <span class="user-value">{{ userProfile.walletName }}</span>
+                </div>
+                <div class="user-row">
+                  <span class="user-label">权限</span>
+                  <span class="user-value">
+                    <span v-if="!userProfile.permissions.length">-</span>
+                    <span v-else class="user-tags">
+                      <el-tag v-for="permission in userProfile.permissions" :key="permission" size="small" type="info">
+                        {{ permission }}
+                      </el-tag>
+                    </span>
+                  </span>
+                </div>
+                <div class="user-row">
+                  <span class="user-label">注册时间</span>
+                  <span class="user-value">
+                    {{ userProfile.createdAt ? formatTime(userProfile.createdAt) : '-' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="user-card">
+              <div class="card-title">当前额度</div>
+              <div class="quota-value">
+                <span>{{ formatSize(quota.used) }}</span>
+                <span class="quota-sep">/</span>
+                <span>{{ quota.unlimited ? '无限' : formatSize(quota.quota) }}</span>
+              </div>
+              <el-progress
+                v-if="!quota.unlimited"
+                :percentage="Math.min(Number(quota.percentage.toFixed(2)), 100)"
+                :stroke-width="8"
+              />
+              <div class="quota-meta">
+                <span v-if="quota.unlimited">未设置上限</span>
+                <span v-else>已使用 {{ quota.percentage.toFixed(2) }}%</span>
+              </div>
+              <div class="quota-grid">
+                <div class="quota-item">
+                  <span class="quota-label">已使用</span>
+                  <span class="quota-amount">{{ formatSize(quota.used) }}</span>
+                </div>
+                <div class="quota-item">
+                  <span class="quota-label">可用</span>
+                  <span class="quota-amount">
+                    {{ quota.unlimited ? '无限' : formatSize(quotaAvailable ?? 0) }}
+                  </span>
+                </div>
+                <div class="quota-item">
+                  <span class="quota-label">总额度</span>
+                  <span class="quota-amount">{{ quota.unlimited ? '无限' : formatSize(quota.quota) }}</span>
+                </div>
+                <div class="quota-item">
+                  <span class="quota-label">使用率</span>
+                  <span class="quota-amount">{{ quota.unlimited ? '-' : `${quota.percentage.toFixed(2)}%` }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
           <el-table
+            v-else
             :data="displayList"
             v-loading="showRecycle ? recycleLoading : (showShare ? shareLoading : loading)"
             style="width: 100%"
@@ -822,37 +985,6 @@ onMounted(() => {
           {{ uploadProgress }}
         </div>
       </main>
-
-      <aside class="info-panel">
-        <div class="info-card">
-          <div class="card-title">空间使用</div>
-          <div class="quota-value">
-            <span>{{ formatSize(quota.used) }}</span>
-            <span class="quota-sep">/</span>
-            <span>{{ quota.unlimited ? '无限' : formatSize(quota.quota) }}</span>
-          </div>
-          <el-progress
-            v-if="!quota.unlimited"
-            :percentage="Math.min(Number(quota.percentage.toFixed(2)), 100)"
-            :stroke-width="8"
-          />
-          <div class="quota-meta">
-            <span v-if="quota.unlimited">未设置上限</span>
-            <span v-else>已使用 {{ quota.percentage.toFixed(2) }}%</span>
-          </div>
-        </div>
-
-        <div class="info-card muted">
-          <div class="card-title">文件分享</div>
-          <p class="card-desc">在文件列表中点击分享图标生成链接。</p>
-        </div>
-
-        <div class="info-card muted">
-          <div class="card-title">配额管理</div>
-          <p class="card-desc">按用户与目录设置空间配额。</p>
-          <el-button size="small" disabled>打开配额面板</el-button>
-        </div>
-      </aside>
     </div>
   </div>
 </template>
@@ -893,7 +1025,7 @@ onMounted(() => {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 280px;
+  grid-template-columns: 240px minmax(0, 1fr);
   gap: 16px;
   padding: 16px;
   height: 100%;
@@ -1165,13 +1297,14 @@ onMounted(() => {
   font-size: 13px;
 }
 
-.info-panel {
-  display: flex;
-  flex-direction: column;
+.user-center {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+  padding: 8px;
 }
 
-.info-card {
+.user-card {
   background: #fff;
   border-radius: 16px;
   padding: 16px;
@@ -1179,17 +1312,48 @@ onMounted(() => {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.info-card.muted {
-  opacity: 0.8;
+  gap: 12px;
 }
 
 .card-title {
   font-size: 14px;
   font-weight: 600;
   color: #1f2d3d;
+}
+
+.user-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.user-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.user-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.user-value {
+  font-size: 13px;
+  color: #1f2d3d;
+  word-break: break-all;
+}
+
+.user-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.user-value.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
 }
 
 .quota-value {
@@ -1211,11 +1375,30 @@ onMounted(() => {
   color: #909399;
 }
 
-.card-desc {
-  margin: 0;
-  color: #7a7f87;
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.quota-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7f9fc;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quota-label {
   font-size: 12px;
-  line-height: 1.5;
+  color: #909399;
+}
+
+.quota-amount {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2d3d;
 }
 
 @media (max-width: 1200px) {
@@ -1223,8 +1406,8 @@ onMounted(() => {
     grid-template-columns: 220px minmax(0, 1fr);
   }
 
-  .info-panel {
-    display: none;
+  .user-center {
+    grid-template-columns: 1fr;
   }
 }
 

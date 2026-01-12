@@ -297,6 +297,10 @@ func (h *Web3Handler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		zap.String("username", u.Username))
 
 	// 构建响应
+	createdAt := ""
+	if !u.CreatedAt.IsZero() {
+		createdAt = u.CreatedAt.Format(timeLayout)
+	}
 	response := dto.VerifyResponse{
 		Token:     token.Value,
 		ExpiresAt: token.ExpiresAt,
@@ -304,6 +308,7 @@ func (h *Web3Handler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 			Username:      u.Username,
 			WalletAddress: u.WalletAddress,
 			Permissions:   h.getPermissionStrings(u.Permissions),
+			CreatedAt:     createdAt,
 		},
 	}
 
