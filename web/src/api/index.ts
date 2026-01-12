@@ -53,7 +53,12 @@ export const authApi = {
     return request<{
       token: string
       expires_at: string
-      user: { username: string; wallet_address: string; permissions: string[] }
+      user: {
+        username: string
+        wallet_address: string
+        permissions: string[]
+        created_at?: string
+      }
     }>('/api/v1/public/common/auth/verify', {
       method: 'POST',
       body: { address, signature }
@@ -71,5 +76,97 @@ export const quotaApi = {
       percentage: number
       unlimited: boolean
     }>('/api/v1/public/webdav/quota')
+  }
+}
+
+// 用户信息 API
+export const userApi = {
+  getInfo() {
+    return request<{
+      username: string
+      wallet_address?: string
+      permissions: string[]
+      created_at?: string
+      updated_at?: string
+    }>('/api/v1/public/webdav/user/info')
+  }
+}
+
+// 回收站项目类型
+export interface RecycleItem {
+  hash: string
+  name: string
+  path: string        // 删除前的完整路径（相对于目录根）
+  size: number
+  deletedAt: string   // 删除时间
+  directory: string   // 所在目录
+}
+
+// 回收站 API
+export const recycleApi = {
+  // 获取回收站列表（全局）
+  list() {
+    return request<{
+      items: RecycleItem[]
+    }>('/api/v1/public/webdav/recycle/list')
+  },
+
+  // 恢复文件到原始目录
+  recover(hash: string) {
+    return request('/api/v1/public/webdav/recycle/recover', {
+      method: 'POST',
+      body: { hash }
+    })
+  },
+
+  // 永久删除
+  remove(hash: string) {
+    return request('/api/v1/public/webdav/recycle/permanent', {
+      method: 'POST',
+      body: { hash }
+    })
+  }
+}
+
+// 分享项目类型
+export interface ShareItem {
+  token: string
+  name: string
+  path: string
+  url: string
+  viewCount: number
+  downloadCount: number
+  expiresAt?: string
+  createdAt?: string
+}
+
+// 分享 API
+export const shareApi = {
+  create(path: string, expiresIn?: number) {
+    return request<{
+      token: string
+      name: string
+      path: string
+      url: string
+      viewCount: number
+      downloadCount: number
+      expiresAt?: string
+    }>('/api/v1/public/share/create', {
+      method: 'POST',
+      body: { path, expiresIn }
+    })
+  },
+
+  list() {
+    return request<{
+      items: ShareItem[]
+    }>('/api/v1/public/share/list')
+  },
+
+  revoke(token: string) {
+    return request('/api/v1/public/share/revoke', {
+      method: 'POST',
+      body: { token }
+    })
   }
 }

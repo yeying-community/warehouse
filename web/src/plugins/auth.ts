@@ -125,6 +125,11 @@ export async function loginWithWallet(): Promise<void> {
     // 存储用户信息
     localStorage.setItem('username', result.user.username)
     localStorage.setItem('walletAddress', result.user.wallet_address)
+    localStorage.setItem('permissions', JSON.stringify(result.user.permissions || []))
+
+    if (result.user.created_at) {
+      localStorage.setItem('createdAt', result.user.created_at)
+    }
   } catch (error) {
     throw new Error(`登录失败: ${error}`)
   }
@@ -136,6 +141,8 @@ export function logout(): void {
   localStorage.removeItem('currentAccount')
   localStorage.removeItem('username')
   localStorage.removeItem('walletAddress')
+  localStorage.removeItem('permissions')
+  localStorage.removeItem('createdAt')
   // 清除 cookie
   document.cookie = 'authToken=; path=/; max-age=0'
   window.location.reload()
@@ -163,4 +170,38 @@ export function getToken(): string | null {
 // 获取用户名
 export function getUsername(): string | null {
   return localStorage.getItem('username')
+}
+
+function parseTokenPayload(): Record<string, unknown> | null {
+  const token = localStorage.getItem('authToken')
+  if (!token) return null
+  try {
+    const payload = token.split('.')[1]
+    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+  } catch {
+    return null
+  }
+}
+
+export function getUserPermissions(): string[] {
+  const stored = localStorage.getItem('permissions')
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed)) {
+        return parsed.map(item => String(item))
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+  const payload = parseTokenPayload()
+  const raw = (payload?.permissions ||
+    (payload?.user as { permissions?: unknown } | undefined)?.permissions) as unknown
+  return Array.isArray(raw) ? raw.map(item => String(item)) : []
+}
+
+export function getUserCreatedAt(): string | null {
+  const stored = localStorage.getItem('createdAt')
+  return stored || null
 }

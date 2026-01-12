@@ -18,7 +18,10 @@ type Router struct {
 	healthHandler  *handler.HealthHandler
 	web3Handler    *handler.Web3Handler
 	webdavHandler  *handler.WebDAVHandler
-	quotaHandler   *handler.QuotaHandler // 新增配额处理器
+	quotaHandler   *handler.QuotaHandler
+	userHandler    *handler.UserHandler
+	recycleHandler *handler.RecycleHandler
+	shareHandler   *handler.ShareHandler
 	logger         *zap.Logger
 }
 
@@ -30,6 +33,9 @@ func NewRouter(
 	web3Handler *handler.Web3Handler,
 	webdavHandler *handler.WebDAVHandler,
 	quotaHandler *handler.QuotaHandler,
+	userHandler *handler.UserHandler,
+	recycleHandler *handler.RecycleHandler,
+	shareHandler *handler.ShareHandler,
 	logger *zap.Logger,
 ) *Router {
 	return &Router{
@@ -39,6 +45,9 @@ func NewRouter(
 		web3Handler:    web3Handler,
 		webdavHandler:  webdavHandler,
 		quotaHandler:   quotaHandler,
+		userHandler:    userHandler,
+		recycleHandler: recycleHandler,
+		shareHandler:   shareHandler,
 		logger:         logger,
 	}
 }
@@ -57,6 +66,18 @@ func (r *Router) Setup() http.Handler {
 
 	// API 路由（需要认证）
 	mux.Handle("/api/v1/public/webdav/quota", r.createAuthenticatedHandler(http.HandlerFunc(r.quotaHandler.GetUserQuota)))
+	mux.Handle("/api/v1/public/webdav/user/info", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.GetUserInfo)))
+
+	// 回收站路由
+	mux.Handle("/api/v1/public/webdav/recycle/list", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleList)))
+	mux.Handle("/api/v1/public/webdav/recycle/recover", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleRecover)))
+	mux.Handle("/api/v1/public/webdav/recycle/permanent", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleRemove)))
+
+	// 分享路由
+	mux.Handle("/api/v1/public/share/create", r.createAuthenticatedHandler(http.HandlerFunc(r.shareHandler.HandleCreate)))
+	mux.Handle("/api/v1/public/share/list", r.createAuthenticatedHandler(http.HandlerFunc(r.shareHandler.HandleList)))
+	mux.Handle("/api/v1/public/share/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.shareHandler.HandleRevoke)))
+	mux.HandleFunc("/api/v1/public/share/", r.shareHandler.HandleAccess)
 
 	// WebDAV 路由（需要认证）
 	webdavPrefix := r.normalizePrefix(r.config.WebDAV.Prefix)

@@ -80,6 +80,50 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
+		// 创建回收站表
+		`CREATE TABLE IF NOT EXISTS recycle_items (
+			id VARCHAR(50) PRIMARY KEY,
+			hash VARCHAR(50) UNIQUE NOT NULL,
+			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			username VARCHAR(255) NOT NULL,
+			directory TEXT NOT NULL,
+			name TEXT NOT NULL,
+			path TEXT NOT NULL,
+			size BIGINT NOT NULL DEFAULT 0,
+			deleted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+
+		// 创建分享表
+		`CREATE TABLE IF NOT EXISTS share_items (
+			id VARCHAR(50) PRIMARY KEY,
+			token VARCHAR(50) UNIQUE NOT NULL,
+			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			username VARCHAR(255) NOT NULL,
+			name TEXT NOT NULL,
+			path TEXT NOT NULL,
+			expires_at TIMESTAMP NULL,
+			view_count BIGINT NOT NULL DEFAULT 0,
+			download_count BIGINT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+
+		// 补充分享表字段（兼容已存在表）
+		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS download_count BIGINT NOT NULL DEFAULT 0`,
+
+		// 创建回收站的哈希索引
+		`CREATE INDEX IF NOT EXISTS idx_recycle_items_hash ON recycle_items(hash)`,
+
+		// 创建回收站的用户ID索引
+		`CREATE INDEX IF NOT EXISTS idx_recycle_items_user_id ON recycle_items(user_id)`,
+
+		// 创建分享的 token 索引
+		`CREATE INDEX IF NOT EXISTS idx_share_items_token ON share_items(token)`,
+
+		// 创建分享的用户ID索引
+		`CREATE INDEX IF NOT EXISTS idx_share_items_user_id ON share_items(user_id)`,
+
 		// 创建钱包地址索引
 		`CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address) WHERE wallet_address IS NOT NULL`,
 
@@ -124,4 +168,3 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 
 	return nil
 }
-

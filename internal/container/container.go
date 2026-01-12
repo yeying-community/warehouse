@@ -29,11 +29,15 @@ type Container struct {
 	DB *database.PostgresDB
 
 	// Repositories
-	UserRepository user.Repository
+	UserRepository    user.Repository
+	RecycleRepository repository.RecycleRepository
+	ShareRepository   repository.ShareRepository
 
 	// Services
-	QuotaService  quota.Service
-	WebDAVService *service.WebDAVService
+	QuotaService   quota.Service
+	WebDAVService  *service.WebDAVService
+	RecycleService *service.RecycleService
+	ShareService   *service.ShareService
 
 	// Authenticators
 	Authenticators []auth.Authenticator
@@ -41,10 +45,14 @@ type Container struct {
 	Web3Auth       *infraAuth.Web3Authenticator
 
 	// Handlers
-	HealthHandler *handler.HealthHandler
-	Web3Handler   *handler.Web3Handler
-	WebDAVHandler *handler.WebDAVHandler
-	QuotaHandler  *handler.QuotaHandler
+	HealthHandler  *handler.HealthHandler
+	Web3Handler    *handler.Web3Handler
+	WebDAVHandler  *handler.WebDAVHandler
+	QuotaHandler   *handler.QuotaHandler
+	UserHandler    *handler.UserHandler
+	RecycleHandler *handler.RecycleHandler
+	ShareHandler   *handler.ShareHandler
+
 	// HTTP
 	Router *http.Router
 	Server *http.Server
@@ -136,11 +144,17 @@ func (c *Container) initRepositories() error {
 		return fmt.Errorf("database not initialized")
 	}
 
+	// 用户仓储
 	repo, err := repository.NewPostgresUserRepository(c.DB, c.Config.Users)
 	if err != nil {
 		return fmt.Errorf("failed to create postgres repository: %w", err)
 	}
 	c.UserRepository = repo
+
+	// 回收站仓储
+	c.RecycleRepository = repository.NewPostgresRecycleRepository(c.DB.DB)
+	// 分享仓储
+	c.ShareRepository = repository.NewPostgresShareRepository(c.DB.DB)
 
 	c.Logger.Info("using PostgreSQL user repository")
 	c.Logger.Info("repositories initialized", zap.Int("seed_users", len(c.Config.Users)))
@@ -161,6 +175,23 @@ func (c *Container) initServices() error {
 		permissionChecker,
 		c.QuotaService,
 		c.UserRepository,
+		c.RecycleRepository,
+		c.Logger,
+	)
+
+	// 回收站服务
+	c.RecycleService = service.NewRecycleService(
+		c.RecycleRepository,
+		c.UserRepository,
+		c.Config,
+		c.Logger,
+	)
+
+	// 分享服务
+	c.ShareService = service.NewShareService(
+		c.ShareRepository,
+		c.UserRepository,
+		c.Config,
 		c.Logger,
 	)
 
@@ -200,6 +231,8 @@ func (c *Container) initHandlers() error {
 
 	// 创建配额处理器
 	c.QuotaHandler = handler.NewQuotaHandler(c.QuotaService, c.Logger)
+	// 用户信息处理器
+	c.UserHandler = handler.NewUserHandler(c.Logger)
 
 	// Web3 处理器
 	if c.Web3Auth != nil {
@@ -218,6 +251,19 @@ func (c *Container) initHandlers() error {
 		c.Logger,
 	)
 
+	// 回收站处理器
+	c.RecycleHandler = handler.NewRecycleHandler(
+		c.RecycleService,
+		c.UserRepository,
+		c.Logger,
+	)
+
+	// 分享处理器
+	c.ShareHandler = handler.NewShareHandler(
+		c.ShareService,
+		c.Logger,
+	)
+
 	c.Logger.Info("handlers initialized")
 
 	return nil
@@ -233,6 +279,9 @@ func (c *Container) initHTTP() error {
 		c.Web3Handler,
 		c.WebDAVHandler,
 		c.QuotaHandler,
+		c.UserHandler,
+		c.RecycleHandler,
+		c.ShareHandler,
 		c.Logger,
 	)
 
@@ -264,4 +313,3 @@ func (c *Container) Close() error {
 
 	return nil
 }
-
