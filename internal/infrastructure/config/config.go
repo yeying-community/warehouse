@@ -56,6 +56,15 @@ type Web3Config struct {
 	JWTSecret              string        `yaml:"jwt_secret"`
 	TokenExpiration        time.Duration `yaml:"token_expiration"`
 	RefreshTokenExpiration time.Duration `yaml:"refresh_token_expiration"`
+	UCAN                   UCANConfig    `yaml:"ucan"`
+}
+
+// UCANConfig UCAN authentication configuration
+type UCANConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	Audience         string `yaml:"audience"`
+	RequiredResource string `yaml:"required_resource"`
+	RequiredAction   string `yaml:"required_action"`
 }
 
 // SecurityConfig 安全配置

@@ -15,6 +15,7 @@ import (
 type Web3Authenticator struct {
 	userRepo          user.Repository
 	jwtManager        *JWTManager
+	ucanVerifier      *UcanVerifier
 	challengeStore    *ChallengeStore
 	ethSigner         *crypto.EthereumSigner
 	logger            *zap.Logger
@@ -27,11 +28,13 @@ func NewWeb3Authenticator(
 	jwtSecret string,
 	tokenExpiration time.Duration,
 	refreshTokenExpiration time.Duration,
+	ucanVerifier *UcanVerifier,
 	logger *zap.Logger,
 ) *Web3Authenticator {
 	return &Web3Authenticator{
 		userRepo:          userRepo,
 		jwtManager:        NewJWTManager(jwtSecret, tokenExpiration),
+		ucanVerifier:      ucanVerifier,
 		challengeStore:    NewChallengeStore(),
 		ethSigner:         crypto.NewEthereumSigner(),
 		logger:            logger,
@@ -51,10 +54,9 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 		return nil, fmt.Errorf("invalid credentials type")
 	}
 
-	// 验证 JWT
-	address, err := a.jwtManager.Verify(creds.Token)
+	// 验证 Token (UCAN 或 JWT)
+	address, err := a.verifyToken(creds.Token)
 	if err != nil {
-		a.logger.Debug("jwt verification failed", zap.Error(err))
 		return nil, err
 	}
 
@@ -74,6 +76,31 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 		zap.String("address", address))
 
 	return u, nil
+}
+
+func (a *Web3Authenticator) verifyToken(token string) (string, error) {
+	if token == "" {
+		return "", auth.ErrInvalidToken
+	}
+
+	if isUcanToken(token) {
+		if a.ucanVerifier == nil || !a.ucanVerifier.Enabled() {
+			return "", auth.ErrInvalidToken
+		}
+		address, err := a.ucanVerifier.VerifyInvocation(token)
+		if err != nil {
+			a.logger.Debug("ucan verification failed", zap.Error(err))
+			return "", err
+		}
+		return address, nil
+	}
+
+	address, err := a.jwtManager.Verify(token)
+	if err != nil {
+		a.logger.Debug("jwt verification failed", zap.Error(err))
+		return "", err
+	}
+	return address, nil
 }
 
 // CanHandle 是否可以处理该凭证

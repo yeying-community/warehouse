@@ -95,6 +95,23 @@ func (l *Loader) overrideFromEnv(config *Config) {
 	if v := os.Getenv("WEBDAV_JWT_SECRET"); v != "" {
 		config.Web3.JWTSecret = v
 	}
+	if v := os.Getenv("WEBDAV_UCAN_ENABLED"); v != "" {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			config.Web3.UCAN.Enabled = true
+		default:
+			config.Web3.UCAN.Enabled = false
+		}
+	}
+	if v := os.Getenv("WEBDAV_UCAN_AUDIENCE"); v != "" {
+		config.Web3.UCAN.Audience = v
+	}
+	if v := os.Getenv("WEBDAV_UCAN_RESOURCE"); v != "" {
+		config.Web3.UCAN.RequiredResource = v
+	}
+	if v := os.Getenv("WEBDAV_UCAN_ACTION"); v != "" {
+		config.Web3.UCAN.RequiredAction = v
+	}
 }
 
 // validate 验证配置

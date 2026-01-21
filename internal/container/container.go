@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/yeying-community/webdav/internal/application/service"
 	"github.com/yeying-community/webdav/internal/domain/auth"
@@ -231,11 +232,26 @@ func (c *Container) initAuthenticators() error {
 	c.Authenticators = append(c.Authenticators, c.BasicAuth)
 
 	// Web3 认证器
+	ucanAudience := strings.TrimSpace(c.Config.Web3.UCAN.Audience)
+	if ucanAudience == "" {
+		ucanAudience = fmt.Sprintf("did:web:localhost:%d", c.Config.Server.Port)
+	}
+	ucanCaps := infraAuth.BuildRequiredUcanCaps(
+		c.Config.Web3.UCAN.RequiredResource,
+		c.Config.Web3.UCAN.RequiredAction,
+	)
+	ucanVerifier := infraAuth.NewUcanVerifier(
+		c.Config.Web3.UCAN.Enabled,
+		ucanAudience,
+		ucanCaps,
+		c.Logger,
+	)
 	c.Web3Auth = infraAuth.NewWeb3Authenticator(
 		c.UserRepository,
 		c.Config.Web3.JWTSecret,
 		c.Config.Web3.TokenExpiration,
 		c.Config.Web3.RefreshTokenExpiration,
+		ucanVerifier,
 		c.Logger,
 	)
 	c.Authenticators = append(c.Authenticators, c.Web3Auth)

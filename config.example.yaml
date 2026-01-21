@@ -37,6 +37,11 @@ web3:
   jwt_secret: "your-super-secret-jwt-key-at-least-32-characters-long"
   token_expiration: 24h
   refresh_token_expiration: 720h
+  ucan:
+    enabled: false
+    audience: "did:web:localhost:6065"
+    required_resource: "profile"
+    required_action: "read"
 
 # Security Configuration
 security:

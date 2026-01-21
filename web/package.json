@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@vueuse/core": "^13.1.0",
-    "@yeying-community/web3": "^1.0.1",
+    "@yeying-community/web3-bs": "^1.0.3",
     "buffer": "^6.0.3",
     "element-plus": "^2.9.2",
     "i18next": "^24.2.0",

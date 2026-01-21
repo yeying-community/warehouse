@@ -1,5 +1,5 @@
 // API 统一封装
-import { authFetch, getAccessToken } from '@yeying-community/web3'
+import { authFetch, getAccessToken } from '@yeying-community/web3-bs'
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 const AUTH_BASE = API_BASE ? `${API_BASE.replace(/\/+$/, '')}/api/v1/public/auth` : '/api/v1/public/auth'
