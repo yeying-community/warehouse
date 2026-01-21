@@ -33,6 +33,11 @@ web3:
   jwt_secret: "${WEBDAV_JWT_SECRET}"  # From environment variable
   token_expiration: 12h
   refresh_token_expiration: 720h
+  ucan:
+    enabled: false
+    audience: "did:web:your-domain.com"
+    required_resource: "profile"
+    required_action: "read"
 
 security:
   no_password: false

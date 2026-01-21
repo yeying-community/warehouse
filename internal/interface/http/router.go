@@ -63,15 +63,9 @@ func (r *Router) Setup() http.Handler {
 	mux := http.NewServeMux()
 
 	// 健康检查路由（无需认证）
-	mux.HandleFunc("/api/v1/public/common/health/heartbeat", r.healthHandler.Handle)
+	mux.HandleFunc("/api/v1/public/health/heartbeat", r.healthHandler.Handle)
 
 	// Web3 认证路由（无需认证）
-	mux.HandleFunc("/api/v1/public/common/auth/challenge", r.web3Handler.HandleChallenge)
-	mux.HandleFunc("/api/v1/public/common/auth/verify", r.web3Handler.HandleVerify)
-	mux.HandleFunc("/api/v1/public/common/auth/refresh", r.web3Handler.HandleRefresh)
-	mux.HandleFunc("/api/v1/public/common/auth/logout", r.web3Handler.HandleLogout)
-
-	// SDK 认证路由（无需认证）
 	mux.HandleFunc("/api/v1/public/auth/challenge", r.web3Handler.HandleChallenge)
 	mux.HandleFunc("/api/v1/public/auth/verify", r.web3Handler.HandleVerify)
 	mux.HandleFunc("/api/v1/public/auth/refresh", r.web3Handler.HandleRefresh)

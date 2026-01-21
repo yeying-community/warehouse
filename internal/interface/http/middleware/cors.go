@@ -30,13 +30,6 @@ func NewCORSMiddleware(config *CORSConfig) *CORSMiddleware {
 // Handle 处理 CORS
 func (m *CORSMiddleware) Handle(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 对于 WebDAV 路径，不处理 OPTIONS，让 WebDAV 中间件处理
-		// 检查路径是否是 WebDAV 路径（根路径或 /dav/ 开头）
-		if r.Method == http.MethodOptions && (r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/dav/")) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		origin := r.Header.Get("Origin")
 
 		// 检查是否允许该来源
@@ -60,8 +53,8 @@ func (m *CORSMiddleware) Handle(next http.Handler) http.Handler {
 			}
 		}
 
-		// 处理预检请求
-		if r.Method == http.MethodOptions {
+		// 处理带 Origin 的预检请求
+		if origin != "" && r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

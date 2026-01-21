@@ -1957,7 +1957,6 @@ onMounted(() => {
         </div>
 
         <div class="nav-block">
-          <div class="nav-title">导航</div>
           <div class="nav-list">
             <button
               type="button"

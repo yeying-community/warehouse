@@ -36,7 +36,28 @@ build/webdav -c config.yaml
 ## 健康检查
 
 ```shell
-curl http://127.0.0.1:6065/api/v1/public/common/health/heartbeat
+curl http://127.0.0.1:6065/api/v1/public/health/heartbeat
+```
+
+## API 文档
+
+- WebDAV 文件 CRUD 与认证流程：`docs/webdav-api.md`
+- 认证接口统一使用 `/api/v1/public/auth/*`
+
+# UCAN 认证
+
+在 `config.yaml` 中启用 UCAN 后，可使用 `Authorization: Bearer <UCAN>` 访问需要鉴权的 API/WebDAV 资源。
+
+```yaml
+web3:
+  jwt_secret: "your-super-secret-jwt-key-at-least-32-characters-long"
+  token_expiration: 24h
+  refresh_token_expiration: 720h
+  ucan:
+    enabled: true
+    audience: "did:web:localhost:6065"
+    required_resource: "profile"
+    required_action: "read"
 ```
 
 # 常用命令行操作
