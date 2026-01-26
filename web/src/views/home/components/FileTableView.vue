@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { Delete, Download, Edit, Share, User, View } from '@element-plus/icons-vue'
+import { Delete, Download, Edit, MoreFilled, Share, User, View } from '@element-plus/icons-vue'
 import type { FileItem } from '../types'
 
-defineProps<{
+const props = defineProps<{
   rows: FileItem[]
   loading: boolean
   onRowClick: (...args: any[]) => void
@@ -15,10 +15,36 @@ defineProps<{
   renameItem: (item: FileItem) => void
   deleteFile: (item: FileItem) => void
 }>()
+
+function handleCommand(row: FileItem, command: string) {
+  switch (command) {
+    case 'detail':
+      props.openDetailDrawer('file', row)
+      break
+    case 'download':
+      props.downloadFile(row)
+      break
+    case 'share':
+      props.shareFile(row)
+      break
+    case 'shareUser':
+      props.openShareUserDialog(row)
+      break
+    case 'rename':
+      props.renameItem(row)
+      break
+    case 'delete':
+      props.deleteFile(row)
+      break
+    default:
+      break
+  }
+}
 </script>
 
 <template>
   <el-table
+    class="desktop-only"
     :data="rows"
     v-loading="loading"
     style="width: 100%"
@@ -68,6 +94,47 @@ defineProps<{
       </template>
     </el-table-column>
   </el-table>
+
+  <div class="mobile-only card-list" v-loading="loading">
+    <el-empty v-if="!loading && !rows.length" description="暂无数据" />
+    <div
+      v-for="row in rows"
+      :key="row.path"
+      class="card-item"
+      @click="onRowClick(row)"
+    >
+      <div class="card-header">
+        <div class="file-name">
+          <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
+          <span class="name" :title="row.name">{{ row.name }}</span>
+        </div>
+      </div>
+      <div class="card-footer" @click.stop>
+        <div class="card-meta card-meta-compact">
+          <span class="card-meta-value">{{ formatTime(row.modified) }}</span>
+          <span v-if="!row.isDir" class="card-meta-sep">·</span>
+          <span v-if="!row.isDir" class="card-meta-value">{{ formatSize(row.size) }}</span>
+        </div>
+        <div class="card-actions card-actions-inline">
+          <el-button v-if="row.isDir" size="small" circle :icon="View" @click="openDetailDrawer('file', row)" />
+          <el-button v-else size="small" :icon="Download" circle @click="downloadFile(row)" />
+          <el-dropdown @command="command => handleCommand(row, command)">
+            <el-button size="small" :icon="MoreFilled" circle />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="detail">详情</el-dropdown-item>
+                <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
+                <el-dropdown-item v-if="!row.isDir" command="share">分享</el-dropdown-item>
+                <el-dropdown-item command="shareUser">共享给用户</el-dropdown-item>
+                <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                <el-dropdown-item command="delete">删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped src="./homeShared.scss"></style>

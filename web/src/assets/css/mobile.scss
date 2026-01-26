@@ -1,0 +1,353 @@
+/* Mobile responsive overrides */
+
+.desktop-only {
+  display: block !important;
+}
+
+.mobile-only {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
+  }
+
+  .mobile-only {
+    display: block !important;
+  }
+
+  .mobile-only.card-list {
+    display: flex !important;
+  }
+
+  .container_box {
+    height: auto !important;
+    min-height: 100vh !important;
+  }
+
+  .container_box .el-container {
+    height: auto !important;
+    min-height: 100% !important;
+  }
+
+  .container_box .el-header {
+    --el-header-height: 52px !important;
+    padding: 0 8px !important;
+  }
+
+  .container_box .el-main {
+    padding: 8px !important;
+    overflow: auto !important;
+  }
+
+  .myHeader {
+    gap: 8px !important;
+    justify-content: flex-end !important;
+  }
+
+  .myHeader .logo .logo-icon {
+    width: 40px !important;
+    height: 40px !important;
+  }
+
+  .myHeader .logo {
+    display: none !important;
+  }
+
+  .myHeader .right {
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .myHeader .right .account {
+    font-size: 12px !important;
+    padding: 2px 8px !important;
+  }
+
+  .home-container {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+  }
+
+  .home-container .app-shell {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    min-height: 100% !important;
+    padding: 8px !important;
+    padding-bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+    gap: 12px !important;
+  }
+
+  .home-container .side-panel {
+    padding: 12px !important;
+    border-radius: 12px !important;
+    overflow: visible !important;
+    position: sticky !important;
+    top: 0;
+    z-index: 2 !important;
+    display: none !important;
+  }
+
+  .home-container .brand {
+    display: none !important;
+  }
+
+  .home-container .nav-list {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    padding-bottom: 4px !important;
+  }
+
+  .home-container .nav-item {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+  }
+
+  .home-container .main-panel {
+    min-height: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .home-container .content-card {
+    padding: 6px !important;
+    border-radius: 12px !important;
+    overflow: visible !important;
+  }
+
+  .home-container .list-header {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+
+  .home-container .list-header-right {
+    width: 100% !important;
+    justify-content: flex-end !important;
+    margin-left: 0 !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+  }
+
+  .home-container .header-search {
+    flex: 1 !important;
+    min-width: 0 !important;
+  }
+
+  .home-container .header-search .el-input {
+    width: 100% !important;
+  }
+
+  .home-container .mobile-menu-button {
+    flex: 0 0 auto !important;
+  }
+
+  .home-container .table-wrapper {
+    overflow: visible !important;
+  }
+
+  .home-container .content-scroll {
+    overflow: visible !important;
+  }
+
+  .home-container .content-body {
+    overflow: visible !important;
+    flex: none !important;
+  }
+
+  .home-container .drop-mask {
+    inset: 4px !important;
+  }
+
+
+  .address-page {
+    padding: 0 !important;
+    gap: 12px !important;
+  }
+
+  .address-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .address-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .address-card {
+    padding: 10px !important;
+  }
+
+  .group-list,
+  .contact-list {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .address-toolbar {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .toolbar-left {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .contact-row {
+    grid-template-columns: 1fr !important;
+    align-items: flex-start !important;
+  }
+
+  .contact-actions {
+    justify-content: flex-start !important;
+  }
+
+  .share-user-permissions {
+    gap: 4px !important;
+  }
+
+  .share-user-permissions .el-checkbox {
+    margin-right: 4px !important;
+  }
+
+  .home-container .el-dialog {
+    width: calc(100% - 16px) !important;
+    max-width: 100% !important;
+    margin: 8px auto !important;
+  }
+
+  .home-container .el-dialog__body {
+    padding: 12px !important;
+  }
+
+  .home-container .el-drawer {
+    width: 100% !important;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: auto;
+    min-height: 60px;
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    justify-content: space-around;
+    background: rgba(255, 255, 255, 0.96);
+    border-top: 1px solid #eef1f4;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 20px rgba(15, 23, 42, 0.08);
+    backdrop-filter: blur(12px);
+    overflow: visible;
+    z-index: 10;
+  }
+
+  .mobile-nav-hint {
+    position: absolute;
+    top: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid #eef1f4;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+    font-size: 11px;
+    color: #606266;
+    max-width: 70%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-nav-badge {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #409eff, #7cc6ff);
+    box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+  }
+
+  .mobile-nav-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-menu-group {
+    font-size: 11px;
+    color: #909399;
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .mobile-nav-item {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    color: #606266;
+    font-size: 11px;
+    padding: 4px 0;
+    white-space: nowrap;
+  }
+
+  .mobile-nav-item .el-icon {
+    font-size: 18px;
+  }
+
+  .mobile-nav-item.active {
+    color: #409eff;
+    font-weight: 600;
+  }
+
+}
+
+@media (max-width: 480px) {
+  .container_box .el-header {
+    --el-header-height: 48px !important;
+  }
+
+  .myHeader .logo .logo-icon {
+    width: 32px !important;
+    height: 32px !important;
+  }
+
+  .myHeader .right {
+    gap: 6px !important;
+  }
+
+  .myHeader .right .el-button {
+    padding: 6px 10px !important;
+    font-size: 12px !important;
+  }
+
+  .home-container .nav-item {
+    padding: 8px 10px !important;
+    font-size: 13px !important;
+  }
+
+  .home-container .content-card {
+    padding: 4px !important;
+  }
+
+  .card-meta {
+    grid-template-columns: 1fr !important;
+  }
+
+  .address-stats {
+    grid-template-columns: 1fr !important;
+  }
+}

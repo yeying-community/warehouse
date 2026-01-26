@@ -35,6 +35,123 @@
   padding: 0 4px;
 }
 
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid #eef1f4;
+  background: #fff;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.card-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.card-meta-compact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #606266;
+  min-width: 0;
+}
+
+.card-meta-compact .card-meta-value {
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta-sep {
+  color: #c0c4cc;
+}
+
+.card-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.card-meta-label {
+  color: #909399;
+}
+
+.card-meta-value {
+  font-weight: 500;
+  color: #1f2d3d;
+  min-width: 0;
+  text-align: right;
+  word-break: break-all;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-actions-inline {
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-footer .card-meta {
+  margin: 0;
+}
+
+.card-actions .el-button {
+  padding: 6px 10px;
+}
+
+.card-actions .el-dropdown {
+  margin-left: 4px;
+}
+
+.card-empty {
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+  padding: 20px 0;
+}
+
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;

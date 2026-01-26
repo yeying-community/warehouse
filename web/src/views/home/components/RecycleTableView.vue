@@ -17,6 +17,7 @@ defineProps<{
 
 <template>
   <el-table
+    class="desktop-only"
     :data="rows"
     v-loading="loading"
     style="width: 100%"
@@ -65,6 +66,40 @@ defineProps<{
       </template>
     </el-table-column>
   </el-table>
+
+  <div class="mobile-only card-list" v-loading="loading">
+    <el-empty v-if="!loading && !rows.length" description="暂无数据" />
+    <div
+      v-for="row in rows"
+      :key="row.hash"
+      class="card-item"
+      @click="onRowClick(row)"
+    >
+      <div class="card-header">
+        <div class="file-name">
+          <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
+          <span class="name" :title="row.name">{{ row.name }}</span>
+        </div>
+      </div>
+      <div class="card-footer" @click.stop>
+        <div class="card-meta card-meta-compact">
+          <span class="card-meta-value path-cell" :title="formatRecycleFullPath(row.path)">
+            {{ formatRecycleLocation(row.path) }}
+          </span>
+          <span class="card-meta-sep">·</span>
+          <span class="card-meta-value">{{ formatDeletedTime(row.deletedAt) }}</span>
+        </div>
+        <div class="card-actions card-actions-inline">
+          <el-button size="small" circle type="primary" @click="recoverFile(row)">
+            <el-icon><FolderOpened /></el-icon>
+          </el-button>
+          <el-button size="small" circle type="danger" @click="permanentlyDelete(row)">
+            <el-icon><Delete /></el-icon>
+          </el-button>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped src="./homeShared.scss"></style>

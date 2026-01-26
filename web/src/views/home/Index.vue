@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ArrowLeft, ArrowUp, Delete, FolderAdd, FolderOpened, Refresh, Upload, DocumentCopy, Share, User, UserFilled, Search } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowUp, Delete, FolderAdd, FolderOpened, Refresh, Upload, DocumentCopy, Share, UserFilled, Search, MoreFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, type RecycleItem, type ShareItem, type DirectShareItem } from '@/api'
 import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt } from '@/plugins/auth'
@@ -127,6 +127,83 @@ const userProfile = computed(() => {
 })
 const showSearch = computed(() => !showQuotaManage.value && !showAddressBook.value)
 const showListHeader = computed(() => !showQuotaManage.value && !showAddressBook.value)
+type MobileAction = { command: string; label: string; disabled?: boolean }
+type MobileActionGroup = { title: string; items: MobileAction[] }
+
+const mobileActionGroups = computed<MobileActionGroup[]>(() => {
+  if (showRecycle.value) {
+    return [
+      {
+        title: '回收站',
+        items: [
+          { command: 'clearRecycle', label: '清空回收站', disabled: recycleLoading.value }
+        ]
+      },
+      {
+        title: '列表',
+        items: [
+          { command: 'refresh', label: '刷新', disabled: recycleLoading.value }
+        ]
+      }
+    ]
+  }
+  if (showShare.value) {
+    return [
+      {
+        title: '列表',
+        items: [
+          { command: 'refresh', label: '刷新', disabled: shareTab.value === 'link' ? shareLoading.value : directShareLoading.value }
+        ]
+      }
+    ]
+  }
+  if (showSharedWithMe.value) {
+    if (sharedActive.value) {
+      const uploadItems: MobileAction[] = []
+      if (sharedCanCreate.value) {
+        uploadItems.push(
+          { command: 'createFolder', label: '新建文件夹' },
+          { command: 'uploadFile', label: '上传文件' },
+          { command: 'uploadDir', label: '上传目录' }
+        )
+      }
+      const groups: MobileActionGroup[] = []
+      if (uploadItems.length) {
+        groups.push({ title: '上传与新建', items: uploadItems })
+      }
+      groups.push({
+        title: '列表',
+        items: [
+          { command: 'refresh', label: '刷新', disabled: sharedEntriesLoading.value }
+        ]
+      })
+      return groups
+    }
+    return [
+      {
+        title: '列表',
+        items: [{ command: 'refresh', label: '刷新', disabled: sharedWithMeLoading.value }]
+      }
+    ]
+  }
+  return [
+    {
+      title: '上传与新建',
+      items: [
+        { command: 'createFolder', label: '新建文件夹' },
+        { command: 'uploadFile', label: '上传文件' },
+        { command: 'uploadDir', label: '上传目录' }
+      ]
+    },
+    {
+      title: '列表',
+      items: [
+        { command: 'refresh', label: '刷新', disabled: loading.value }
+      ]
+    }
+  ]
+})
+const hasMobileActions = computed(() => mobileActionGroups.value.some(group => group.items.length))
 const searchKeyword = computed({
   get: () => {
     if (showRecycle.value) return recycleSearch.value
@@ -160,6 +237,16 @@ const searchPlaceholder = computed(() => {
   if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索共享列表'
   return '搜索文件或目录'
 })
+const mobileLocationLabel = computed(() => {
+  if (showRecycle.value) return '回收站'
+  if (showShare.value) return shareTab.value === 'link' ? '分享链接' : '定向分享'
+  if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '共享给我'
+  if (showQuotaManage.value) return '用户中心'
+  if (showAddressBook.value) return '地址簿'
+  const parts = currentPath.value.split('/').filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : '根目录'
+})
+const mobileLocationText = computed(() => `当前位置：${mobileLocationLabel.value}`)
 const detailTitle = computed(() => {
   if (detailMode.value === 'recycle') return '回收站详情'
   if (detailMode.value === 'share') return '分享详情'
@@ -1835,8 +1922,29 @@ function formatSharePermission(permission: string): string {
   return permission
 }
 
+function handleMobileAction(command: string) {
+  switch (command) {
+    case 'createFolder':
+      createFolder()
+      break
+    case 'uploadFile':
+      triggerUpload()
+      break
+    case 'uploadDir':
+      triggerDirectoryUpload()
+      break
+    case 'clearRecycle':
+      clearRecycle()
+      break
+    default:
+      refreshCurrentView()
+  }
+}
+
+
 function persistView(view: ViewKey) {
   localStorage.setItem(VIEW_STORAGE_KEY, view)
+  window.dispatchEvent(new CustomEvent('webdav:view-changed', { detail: { view } }))
 }
 
 function clearSharedState() {
@@ -1934,6 +2042,28 @@ onMounted(() => {
     void restoreView()
   }
 })
+
+function handleExternalNavigate(event: Event) {
+  const customEvent = event as CustomEvent<{ view?: ViewKey }>
+  const view = customEvent?.detail?.view
+  if (!view) return
+  if (view === 'quotaManage') {
+    enterQuotaManage()
+    return
+  }
+  if (view === 'addressBook') {
+    enterAddressBook()
+    return
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('webdav:navigate', handleExternalNavigate as EventListener)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('webdav:navigate', handleExternalNavigate as EventListener)
+})
 </script>
 
 <template>
@@ -1970,11 +2100,11 @@ onMounted(() => {
             <button
               type="button"
               class="nav-item"
-              :class="{ active: showRecycle }"
-              @click="enterRecycle"
+              :class="{ active: showSharedWithMe }"
+              @click="enterSharedWithMe"
             >
-              <el-icon class="nav-icon"><Delete /></el-icon>
-              <span>回收站</span>
+              <el-icon class="nav-icon"><UserFilled /></el-icon>
+              <span>共享给我</span>
             </button>
             <button
               type="button"
@@ -1997,29 +2127,11 @@ onMounted(() => {
             <button
               type="button"
               class="nav-item"
-              :class="{ active: showSharedWithMe }"
-              @click="enterSharedWithMe"
+              :class="{ active: showRecycle }"
+              @click="enterRecycle"
             >
-              <el-icon class="nav-icon"><UserFilled /></el-icon>
-              <span>共享给我</span>
-            </button>
-            <button
-              type="button"
-              class="nav-item"
-              :class="{ active: showQuotaManage }"
-              @click="enterQuotaManage"
-            >
-              <el-icon class="nav-icon"><User /></el-icon>
-              <span>用户中心</span>
-            </button>
-            <button
-              type="button"
-              class="nav-item"
-              :class="{ active: showAddressBook }"
-              @click="enterAddressBook"
-            >
-              <el-icon class="nav-icon"><DocumentCopy /></el-icon>
-              <span>地址簿</span>
+              <el-icon class="nav-icon"><Delete /></el-icon>
+              <span>回收站</span>
             </button>
           </div>
         </div>
@@ -2136,7 +2248,36 @@ onMounted(() => {
                   </template>
                 </el-input>
               </div>
-              <div class="list-actions">
+              <el-dropdown
+                v-if="showListHeader && hasMobileActions"
+                class="mobile-only mobile-menu-button"
+                trigger="click"
+                @command="handleMobileAction"
+              >
+                <el-button circle :icon="MoreFilled" />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <template v-for="(group, index) in mobileActionGroups" :key="group.title">
+                      <el-dropdown-item
+                        class="mobile-menu-group"
+                        disabled
+                        :divided="index > 0"
+                      >
+                        {{ group.title }}
+                      </el-dropdown-item>
+                      <el-dropdown-item
+                        v-for="item in group.items"
+                        :key="item.command"
+                        :command="item.command"
+                        :disabled="item.disabled"
+                      >
+                        {{ item.label }}
+                      </el-dropdown-item>
+                    </template>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <div class="list-actions desktop-only">
                 <template v-if="showRecycle">
                   <el-tooltip content="清空回收站" placement="top">
                     <el-button type="danger" circle @click="clearRecycle" :loading="recycleLoading">
@@ -2471,6 +2612,58 @@ onMounted(() => {
         :user-profile="userProfile"
         :submit-password="submitPassword"
       />
+
+      <nav class="mobile-only mobile-bottom-nav">
+        <div class="mobile-nav-hint">
+          <span class="mobile-nav-badge"></span>
+          <span class="mobile-nav-text">{{ mobileLocationText }}</span>
+        </div>
+        <button
+          type="button"
+          class="mobile-nav-item"
+          :class="{ active: !showRecycle && !showShare && !showQuotaManage && !showSharedWithMe && !showAddressBook }"
+          @click="backToFiles"
+        >
+          <el-icon><FolderOpened /></el-icon>
+          <span>文件</span>
+        </button>
+        <button
+          type="button"
+          class="mobile-nav-item"
+          :class="{ active: showSharedWithMe }"
+          @click="enterSharedWithMe"
+        >
+          <el-icon><UserFilled /></el-icon>
+          <span>共享</span>
+        </button>
+        <button
+          type="button"
+          class="mobile-nav-item"
+          :class="{ active: showShare && shareTab === 'link' }"
+          @click="enterShare('link')"
+        >
+          <el-icon><DocumentCopy /></el-icon>
+          <span>链接</span>
+        </button>
+        <button
+          type="button"
+          class="mobile-nav-item"
+          :class="{ active: showShare && shareTab === 'direct' }"
+          @click="enterShare('direct')"
+        >
+          <el-icon><Share /></el-icon>
+          <span>定向</span>
+        </button>
+        <button
+          type="button"
+          class="mobile-nav-item"
+          :class="{ active: showRecycle }"
+          @click="enterRecycle"
+        >
+          <el-icon><Delete /></el-icon>
+          <span>回收</span>
+        </button>
+      </nav>
     </div>
   </div>
 </template>
@@ -2480,6 +2673,7 @@ onMounted(() => {
   height: 100%;
   overflow: hidden;
   background: linear-gradient(180deg, #f6f8fb 0%, #f2f4f7 100%);
+  padding: 0;
 }
 
 .login-page {
@@ -2506,7 +2700,7 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 16px;
-  padding: 16px;
+  padding: 0;
   height: 100%;
   box-sizing: border-box;
   min-height: 0;
@@ -2960,4 +3154,5 @@ onMounted(() => {
     width: auto;
   }
 }
+
 </style>

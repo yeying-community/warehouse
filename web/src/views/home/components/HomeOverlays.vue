@@ -353,11 +353,10 @@ function handleEnterDirectory(item: FileItem) {
     title="共享给用户"
     width="420px"
   >
-    <div class="share-user-info">
-      <span class="share-user-label">共享对象</span>
-      <span class="share-user-value">{{ shareUserTarget?.name || '-' }}</span>
-    </div>
-    <el-form label-width="90px">
+    <el-form label-width="72px" label-position="left" class="share-user-form">
+      <el-form-item label="共享对象">
+        <span class="share-user-value">{{ shareUserTarget?.name || '-' }}</span>
+      </el-form-item>
       <el-form-item label="共享方式">
         <el-radio-group v-model="shareUserForm.targetMode" size="small">
           <el-radio-button value="single">单个地址</el-radio-button>
@@ -382,7 +381,7 @@ function handleEnterDirectory(item: FileItem) {
         </div>
       </el-form-item>
       <el-form-item label="权限">
-        <el-checkbox-group v-model="shareUserForm.permissions">
+        <el-checkbox-group v-model="shareUserForm.permissions" class="share-user-permissions">
           <el-checkbox label="read">读取</el-checkbox>
           <el-checkbox label="create">上传</el-checkbox>
           <el-checkbox label="update">重命名</el-checkbox>
@@ -459,26 +458,26 @@ function handleEnterDirectory(item: FileItem) {
 
 <style scoped src="./homeShared.scss"></style>
 <style scoped>
-.share-user-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: #f5f7fa;
-  border-radius: 10px;
-  margin-bottom: 12px;
-}
-
-.share-user-label {
-  font-size: 12px;
-  color: #909399;
-}
-
 .share-user-value {
-  font-size: 13px;
-  color: #1f2d3d;
-  font-weight: 500;
   word-break: break-all;
+}
+
+.share-user-form :deep(.el-form-item__label) {
+  padding-right: 8px;
+}
+
+.share-user-form :deep(.el-form-item__content) {
+  margin-left: 0;
+}
+
+.share-user-permissions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.share-user-permissions :deep(.el-checkbox) {
+  margin-right: 6px;
 }
 
 .rename-field {

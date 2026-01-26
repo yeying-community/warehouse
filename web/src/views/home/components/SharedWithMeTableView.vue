@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Delete, Download, Edit, View } from '@element-plus/icons-vue'
+import { Delete, Download, Edit, MoreFilled, View } from '@element-plus/icons-vue'
 import type { DirectShareItem } from '@/api'
 import type { FileItem } from '../types'
 
@@ -29,6 +29,7 @@ const tableRows = computed(() => (props.sharedActive ? props.sharedEntries : pro
 
 <template>
   <el-table
+    class="desktop-only"
     :data="tableRows"
     v-loading="loading"
     style="width: 100%"
@@ -116,6 +117,100 @@ const tableRows = computed(() => (props.sharedActive ? props.sharedEntries : pro
       </el-table-column>
     </template>
   </el-table>
+
+  <div class="mobile-only card-list" v-loading="loading">
+    <el-empty v-if="!loading && !tableRows.length" description="暂无数据" />
+    <template v-if="!sharedActive">
+      <div
+        v-for="row in tableRows"
+        :key="row.id"
+        class="card-item"
+        @click="onRowClick(row)"
+      >
+        <div class="card-header">
+          <div class="file-name">
+            <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
+            <span class="name" :title="row.name">{{ row.name }}</span>
+          </div>
+        </div>
+        <div class="card-footer" @click.stop>
+          <div class="card-meta card-meta-compact">
+            <span class="card-meta-value mono">{{ shortenAddress(row.ownerWallet) }}</span>
+            <span class="card-meta-sep">·</span>
+            <span class="card-meta-value">{{ row.expiresAt ? formatTime(row.expiresAt) : '永不过期' }}</span>
+          </div>
+          <div class="card-actions card-actions-inline">
+            <el-button
+              v-if="row.isDir"
+              size="small"
+              circle
+              :icon="View"
+              @click="openShareDetail('receivedShare', row)"
+            />
+            <el-button
+              v-else-if="row.permissions && row.permissions.includes('read')"
+              size="small"
+              circle
+              type="primary"
+              :icon="Download"
+              @click="downloadSharedRoot(row)"
+            />
+          </div>
+        </div>
+      </div>
+    </template>
+    <template v-else>
+      <div
+        v-for="row in tableRows"
+        :key="row.path"
+        class="card-item"
+        @click="onRowClick(row)"
+      >
+        <div class="card-header">
+          <div class="file-name">
+            <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
+            <span class="name" :title="row.name">{{ row.name }}</span>
+          </div>
+        </div>
+        <div class="card-footer" @click.stop>
+          <div class="card-meta card-meta-compact">
+            <span class="card-meta-value">{{ formatTime(row.modified) }}</span>
+          </div>
+          <div class="card-actions card-actions-inline">
+            <el-button
+              v-if="row.isDir"
+              size="small"
+              circle
+              :icon="View"
+              @click="openSharedEntryDetail(row)"
+            />
+            <el-button
+              v-else-if="sharedCanRead"
+              size="small"
+              circle
+              type="primary"
+              :icon="Download"
+              @click="downloadSharedFile(row)"
+            />
+            <el-dropdown
+              @command="command => {
+                if (command === 'rename') renameSharedItem(row)
+                if (command === 'delete') deleteSharedItem(row)
+              }"
+            >
+              <el-button size="small" circle :icon="MoreFilled" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="sharedCanUpdate" command="rename">重命名</el-dropdown-item>
+                  <el-dropdown-item v-if="sharedCanDelete" command="delete">删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
 </template>
 
 <style scoped src="./homeShared.scss"></style>
