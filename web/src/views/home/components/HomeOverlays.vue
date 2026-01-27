@@ -15,6 +15,9 @@ const props = defineProps<{
   detailReceivedShare: DirectShareItem | null
   detailSharedEntry: FileItem | null
   sharedCanRead: boolean
+  sharedCanUpdate: boolean
+  getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | null
+  openFilePreview: (item: FileItem) => void
   formatTime: (time: string | number) => string
   formatDeletedTime: (time: string) => string
   formatSizeDetail: (size: number) => string
@@ -38,6 +41,7 @@ const props = defineProps<{
     permissions: string[]
     expiresIn: string
   }
+  addressContacts: AddressContact[]
   addressGroups: AddressGroup[]
   groupedContacts: AddressContact[]
   submitShareUser: () => void
@@ -140,6 +144,16 @@ function handleEnterDirectory(item: FileItem) {
       <div class="detail-actions" v-if="detailFile.isDir">
         <el-button type="primary" size="small" @click="handleEnterDirectory(detailFile)">
           进入目录
+        </el-button>
+      </div>
+      <div class="detail-actions" v-else-if="getPreviewMode(detailFile) === 'text'">
+        <el-button type="primary" size="small" @click="openFilePreview(detailFile)">
+          打开编辑
+        </el-button>
+      </div>
+      <div class="detail-actions" v-else-if="getPreviewMode(detailFile)">
+        <el-button type="primary" size="small" @click="openFilePreview(detailFile)">
+          预览
         </el-button>
       </div>
     </div>
@@ -336,12 +350,32 @@ function handleEnterDirectory(item: FileItem) {
         </div>
       </div>
       <div class="detail-actions">
-        <el-button v-if="detailSharedEntry.isDir" type="primary" size="small" @click="enterSharedDirectory(detailSharedEntry)">
-          进入目录
-        </el-button>
-        <el-button v-else-if="sharedCanRead" type="primary" size="small" @click="downloadSharedFile(detailSharedEntry)">
-          下载
-        </el-button>
+        <template v-if="detailSharedEntry.isDir">
+          <el-button type="primary" size="small" @click="enterSharedDirectory(detailSharedEntry)">
+            进入目录
+          </el-button>
+        </template>
+        <template v-else>
+          <el-button v-if="sharedCanRead" type="primary" size="small" @click="downloadSharedFile(detailSharedEntry)">
+            下载
+          </el-button>
+          <el-button
+            v-if="sharedCanRead && getPreviewMode(detailSharedEntry) === 'text'"
+            type="primary"
+            size="small"
+            @click="openFilePreview(detailSharedEntry)"
+          >
+            {{ sharedCanUpdate ? '打开编辑' : '预览' }}
+          </el-button>
+          <el-button
+            v-else-if="sharedCanRead && getPreviewMode(detailSharedEntry)"
+            type="primary"
+            size="small"
+            @click="openFilePreview(detailSharedEntry)"
+          >
+            预览
+          </el-button>
+        </template>
       </div>
     </div>
 
@@ -364,7 +398,27 @@ function handleEnterDirectory(item: FileItem) {
         </el-radio-group>
       </el-form-item>
       <el-form-item v-if="shareUserForm.targetMode === 'single'" label="目标钱包">
-        <el-input v-model="shareUserForm.targetAddress" placeholder="请输入钱包地址" />
+        <el-select
+          v-model="shareUserForm.targetAddress"
+          placeholder="选择或输入钱包地址"
+          filterable
+          allow-create
+          default-first-option
+          clearable
+          style="width: 100%"
+        >
+          <el-option
+            v-for="contact in addressContacts"
+            :key="contact.id"
+            :label="contact.walletAddress"
+            :value="contact.walletAddress"
+          >
+            <div class="contact-option" :title="contact.walletAddress">
+              <span v-if="contact.name" class="contact-name">{{ contact.name }}</span>
+              <span class="contact-address mono">{{ shortenAddress(contact.walletAddress) }}</span>
+            </div>
+          </el-option>
+        </el-select>
       </el-form-item>
       <el-form-item v-else label="目标分组">
         <el-select v-model="shareUserForm.groupId" placeholder="选择分组" style="width: 100%">
@@ -502,6 +556,24 @@ function handleEnterDirectory(item: FileItem) {
 
 .share-group-meta {
   margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.contact-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.contact-name {
+  font-size: 13px;
+  color: #1f2d3d;
+  font-weight: 500;
+}
+
+.contact-address {
   font-size: 12px;
   color: #909399;
 }

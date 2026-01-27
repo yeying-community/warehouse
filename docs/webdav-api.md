@@ -213,6 +213,23 @@ Body：
 
 说明：WebDAV 原生请求（如 PROPFIND/PUT/DELETE）通常只返回 HTTP 状态码与简单文本，具体错误以 HTTP 状态为准。
 
+### 3.8 非认证接口的返回格式说明
+
+除认证接口外，大部分 JSON 接口 **不使用 SDK 统一结构**，常见两种风格：
+
+1) **纯 JSON 业务对象**（成功时）
+
+```json
+{ "quota": 0, "used": 123, "available": -1, "percentage": 0, "unlimited": true }
+```
+
+2) **错误响应**
+
+- 用户信息/配额接口：`{"error":"...","code":400,"success":false}`  
+- 分享/地址簿等接口：多为 `http.Error`，返回 **纯文本** 错误信息  
+
+因此建议客户端兼容：**先看 HTTP 状态码，再尝试 JSON 解析**。
+
 ## 4. CRUD 方法矩阵
 
 | 目的 | 方法 | 路径 | 说明 |
@@ -345,7 +362,369 @@ curl -u alice:password123 \
   http://127.0.0.1:6065/api/v1/public/webdav/quota
 ```
 
-## 8. 常见状态码
+响应示例：
+
+```json
+{
+  "quota": 5368709120,
+  "used": 1048576,
+  "available": 5367660544,
+  "percentage": 0.0195,
+  "unlimited": false
+}
+```
+
+## 8. 用户信息与账号 API
+
+以下接口均需要鉴权（Bearer 或 Basic）。
+
+### 8.1 获取用户信息
+
+- 方法：`GET`
+- 路径：`/api/v1/public/webdav/user/info`
+
+响应示例：
+
+```json
+{
+  "username": "alice",
+  "wallet_address": "0x...",
+  "permissions": ["create", "read", "update", "delete"],
+  "created_at": "2024-01-01 12:00:00",
+  "updated_at": "2024-01-02 12:00:00",
+  "has_password": true
+}
+```
+
+### 8.2 更新用户名
+
+- 方法：`POST`
+- 路径：`/api/v1/public/webdav/user/update`
+
+Body：
+
+```json
+{ "username": "alice2" }
+```
+
+成功响应：
+
+```json
+{ "username": "alice2" }
+```
+
+错误响应（示例）：
+
+```json
+{ "error": "Username already exists", "code": 409, "success": false }
+```
+
+### 8.3 修改/设置密码
+
+- 方法：`POST`
+- 路径：`/api/v1/public/webdav/user/password`
+
+Body：
+
+```json
+{ "oldPassword": "old", "newPassword": "newStrongPassword" }
+```
+
+说明：
+- 如果用户已有密码，`oldPassword` 必填；否则可省略。
+
+成功响应：
+
+```json
+{ "success": true }
+```
+
+错误响应（示例）：
+
+```json
+{ "error": "Old password is incorrect", "code": 401, "success": false }
+```
+
+## 9. 地址簿 API
+
+以下接口均需要鉴权（Bearer 或 Basic）。
+
+### 9.1 分组
+
+- `GET /api/v1/public/webdav/address/groups`
+- `POST /api/v1/public/webdav/address/groups/create`
+- `PUT /api/v1/public/webdav/address/groups/update`
+- `DELETE /api/v1/public/webdav/address/groups/delete`
+
+创建分组示例：
+
+```bash
+curl -X POST -u alice:password123 \
+  -H "Content-Type: application/json" \
+  -d '{"name":"合作伙伴"}' \
+  http://127.0.0.1:6065/api/v1/public/webdav/address/groups/create
+```
+
+列表响应示例：
+
+```json
+{
+  "items": [
+    { "id": "g1", "name": "合作伙伴", "createdAt": "2024-01-01 12:00:00" }
+  ]
+}
+```
+
+更新/删除说明：
+- `PUT /api/v1/public/webdav/address/groups/update` 与 `DELETE /api/v1/public/webdav/address/groups/delete` 成功时返回 `200`，通常无响应体。
+
+### 9.2 联系人
+
+- `GET /api/v1/public/webdav/address/contacts`
+- `POST /api/v1/public/webdav/address/contacts/create`
+- `PUT /api/v1/public/webdav/address/contacts/update`
+- `DELETE /api/v1/public/webdav/address/contacts/delete`
+
+创建联系人示例：
+
+```bash
+curl -X POST -u alice:password123 \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Bob","walletAddress":"0x1234...","groupId":"<groupId>","tags":["team"]}' \
+  http://127.0.0.1:6065/api/v1/public/webdav/address/contacts/create
+```
+
+列表响应示例：
+
+```json
+{
+  "items": [
+    {
+      "id": "c1",
+      "name": "Bob",
+      "walletAddress": "0x1234...",
+      "groupId": "g1",
+      "tags": ["team"],
+      "createdAt": "2024-01-01 12:00:00"
+    }
+  ]
+}
+```
+
+更新联系人响应示例：
+
+```json
+{
+  "id": "c1",
+  "name": "Bob",
+  "walletAddress": "0x1234...",
+  "groupId": "g1",
+  "tags": ["team"]
+}
+```
+
+删除联系人说明：
+- `DELETE /api/v1/public/webdav/address/contacts/delete` 成功时返回 `200`，通常无响应体。
+
+## 10. 公开分享链接 API
+
+创建/管理接口需要鉴权；访问分享链接为公开接口。
+
+### 10.1 创建分享链接
+
+- 方法：`POST`
+- 路径：`/api/v1/public/share/create`
+
+Body：
+
+```json
+{ "path": "/docs/file.txt", "expiresIn": 3600 }
+```
+
+成功响应：
+
+```json
+{
+  "token": "share-token",
+  "name": "file.txt",
+  "path": "/docs/file.txt",
+  "url": "http://127.0.0.1:6065/api/v1/public/share/share-token",
+  "viewCount": 0,
+  "downloadCount": 0,
+  "expiresAt": "2024-01-01 12:00:00"
+}
+```
+
+### 10.2 列表与撤销
+
+- `GET /api/v1/public/share/list`
+- `POST /api/v1/public/share/revoke`（Body：`{"token":"..."}`）
+
+列表响应示例：
+
+```json
+{
+  "items": [
+    {
+      "token": "share-token",
+      "name": "file.txt",
+      "path": "/docs/file.txt",
+      "url": "http://127.0.0.1:6065/api/v1/public/share/share-token",
+      "viewCount": 1,
+      "downloadCount": 0,
+      "expiresAt": "2024-01-01 12:00:00",
+      "createdAt": "2024-01-01 10:00:00"
+    }
+  ]
+}
+```
+
+撤销成功响应示例：
+
+```json
+{ "message": "revoked successfully" }
+```
+
+### 10.3 访问分享链接（公开）
+
+- `GET /api/v1/public/share/{token}`
+- `HEAD /api/v1/public/share/{token}`
+
+说明：
+- 该接口直接下载文件，无需鉴权。
+- 分享过期返回 `410 Gone`。
+- 响应会携带 `Content-Disposition`，用于下载文件名。
+
+## 11. 定向分享 API（share/user）
+
+以下接口均需要鉴权（Bearer 或 Basic）。
+
+### 11.1 创建定向分享
+
+- 方法：`POST`
+- 路径：`/api/v1/public/share/user/create`
+
+Body：
+
+```json
+{
+  "path": "/docs",
+  "targetAddress": "0x...",
+  "permissions": ["read", "create", "update", "delete"],
+  "expiresIn": 86400
+}
+```
+
+说明：
+- `permissions` 也可传单个 `"CRUD"` 字符串。
+
+### 11.2 列表/撤销
+
+- `GET /api/v1/public/share/user/list`（我分享的）
+- `GET /api/v1/public/share/user/received`（分享给我的）
+- `POST /api/v1/public/share/user/revoke`（Body：`{"id":"..."}`）
+
+列表响应示例（我分享的）：
+
+```json
+{
+  "items": [
+    {
+      "id": "share-id",
+      "name": "docs",
+      "path": "/docs",
+      "isDir": true,
+      "permissions": ["read", "update"],
+      "targetWallet": "0x...",
+      "expiresAt": "2024-01-02 12:00:00",
+      "createdAt": "2024-01-01 12:00:00"
+    }
+  ]
+}
+```
+
+列表响应示例（分享给我的）：
+
+```json
+{
+  "items": [
+    {
+      "id": "share-id",
+      "name": "docs",
+      "path": "/docs",
+      "isDir": true,
+      "permissions": ["read"],
+      "ownerWallet": "0x...",
+      "ownerName": "alice",
+      "expiresAt": "2024-01-02 12:00:00",
+      "createdAt": "2024-01-01 12:00:00"
+    }
+  ]
+}
+```
+
+撤销成功响应示例：
+
+```json
+{ "message": "revoked successfully" }
+```
+
+### 11.3 浏览与下载
+
+- `GET /api/v1/public/share/user/entries?shareId=...&path=/`
+- `GET /api/v1/public/share/user/download?shareId=...&path=/file.txt`
+
+目录条目响应示例：
+
+```json
+{
+  "items": [
+    { "name": "file.txt", "path": "/file.txt", "isDir": false, "size": 12, "modified": "2024-01-01 12:00:00" },
+    { "name": "sub", "path": "/sub/", "isDir": true, "size": 0, "modified": "2024-01-01 12:00:00" }
+  ]
+}
+```
+
+下载说明：
+- 响应为文件内容。
+- 头部包含 `Content-Disposition`。
+
+### 11.4 上传与目录操作
+
+- `PUT` 或 `POST` `/api/v1/public/share/user/upload?shareId=...&path=/file.txt`（`multipart/form-data`，字段 `file`）
+- `POST /api/v1/public/share/user/folder`
+- `POST /api/v1/public/share/user/rename`
+- `DELETE /api/v1/public/share/user/item`
+
+Body 示例（folder/rename/item）：
+
+```json
+{ "shareId": "share-id", "path": "/new-folder" }
+```
+
+```json
+{ "shareId": "share-id", "from": "/a.txt", "to": "/b.txt" }
+```
+
+成功响应示例：
+
+```json
+{ "message": "uploaded successfully" }
+```
+
+```json
+{ "message": "created successfully" }
+```
+
+```json
+{ "message": "renamed successfully" }
+```
+
+```json
+{ "message": "deleted successfully" }
+```
+
+## 12. 常见状态码
 
 - `200/201/204`：成功
 - `207 Multi-Status`：PROPFIND 成功（XML 响应）
@@ -354,12 +733,35 @@ curl -u alice:password123 \
 - `404 Not Found`：路径不存在
 - `409 Conflict`：目录冲突或已存在
 - `412 Precondition Failed`：条件不满足（如 Overwrite=F）
+- `410 Gone`：分享链接已过期
 - `507 Insufficient Storage`：配额不足
 
-## 9. 注意事项
+## 13. 注意事项
 
 - 路径请使用 URL 编码（空格、中文等需要编码）。
 - `Destination` 可以是完整 URL 或绝对路径。
 - 目录列举使用 `PROPFIND`，响应为 XML（建议配合 `xq` 查看）。
 - 系统会忽略 `._*`、`.DS_Store`、`.AppleDouble`、`Thumbs.db` 等系统文件。
 - WebDAV 支持 Unicode 路径。
+
+## 14. 权限规则（rules）
+
+用户可在配置中为特定路径设置规则，系统会按规则顺序匹配，命中后不再继续匹配其他规则；未命中则回退到用户默认权限。
+
+```yaml
+users:
+  - username: "alice"
+    permissions: "CRUD"
+    rules:
+      - path: "/private"
+        permissions: "R"
+        regex: false
+      - path: "^/projects/.+/readonly(/|$)"
+        permissions: "R"
+        regex: true
+```
+
+说明：
+- `regex: false` 使用前缀匹配（`strings.HasPrefix`）。
+- `regex: true` 使用 Go 正则表达式（`regexp`），路径会以 `/` 开头（例如 `/docs/file.txt`）。
+- 正则建议显式写 `^` 和目录边界 `(/|$)`，避免误匹配。

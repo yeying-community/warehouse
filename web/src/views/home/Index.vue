@@ -12,6 +12,7 @@ import { showInfo, showSuccess } from '@/utils/toast'
 import { useAddressBookStore } from '@/stores/addressBookStore'
 import AddressBookView from './components/AddressBookView.vue'
 import HomeOverlays from './components/HomeOverlays.vue'
+import FilePreviewDialog from './components/FilePreviewDialog.vue'
 import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
 import SharedWithMeTableView from './components/SharedWithMeTableView.vue'
@@ -98,6 +99,16 @@ const renameMode = ref<'file' | 'shared' | null>(null)
 const renameForm = ref({
   name: ''
 })
+type PreviewMode = 'text' | 'pdf' | 'word'
+const previewVisible = ref(false)
+const previewMode = ref<PreviewMode | null>(null)
+const previewLoading = ref(false)
+const previewSaving = ref(false)
+const previewContent = ref('')
+const previewOrigin = ref('')
+const previewTarget = ref<FileItem | null>(null)
+const previewBlob = ref<Blob | null>(null)
+const previewReadOnly = ref(false)
 const VIEW_STORAGE_KEY = 'webdav:lastView'
 const FILE_PATH_STORAGE_KEY = 'webdav:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'webdav:sharedActiveId'
@@ -266,6 +277,14 @@ const detailShare = computed(() => (detailMode.value === 'share' ? (detailItem.v
 const detailDirectShare = computed(() => (detailMode.value === 'directShare' ? (detailItem.value as DirectShareItem | null) : null))
 const detailReceivedShare = computed(() => (detailMode.value === 'receivedShare' ? (detailItem.value as DirectShareItem | null) : null))
 const detailSharedEntry = computed(() => (detailMode.value === 'sharedEntry' ? (detailItem.value as FileItem | null) : null))
+const previewTitle = computed(() => {
+  if (!previewTarget.value) return '文件预览'
+  if (previewMode.value === 'text') return `编辑：${previewTarget.value.name}`
+  return `预览：${previewTarget.value.name}`
+})
+const previewDirty = computed(
+  () => previewMode.value === 'text' && !previewReadOnly.value && previewContent.value !== previewOrigin.value
+)
 const groupedContacts = computed(() => {
   const groupId = shareUserForm.value.groupId
   if (shareUserForm.value.targetMode !== 'group') return []
@@ -351,6 +370,43 @@ const filteredSharedEntries = computed(() => {
   return sharedEntries.value.filter(item => item.name.toLowerCase().includes(token))
 })
 const API_BASE = import.meta.env.VITE_API_BASE || ''
+const TEXT_EXTENSIONS = new Set([
+  'txt', 'md', 'markdown', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
+  'log', 'csv', 'tsv', 'xml', 'html', 'htm', 'css', 'scss', 'less',
+  'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs',
+  'py', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'cc', 'cpp', 'h', 'hpp',
+  'sh', 'bash', 'zsh', 'sql', 'graphql', 'gql', 'mdx', 'vue'
+])
+const TEXT_FILENAMES = new Set([
+  'readme', 'readme.md', 'license', 'license.txt', 'makefile', 'dockerfile', '.gitignore', '.env'
+])
+const PDF_EXTENSIONS = new Set(['pdf'])
+const WORD_EXTENSIONS = new Set(['docx'])
+
+function getFileExtension(name: string): string {
+  if (!name) return ''
+  const trimmed = name.toLowerCase()
+  const parts = trimmed.split('.')
+  if (parts.length <= 1) return ''
+  return parts.pop() || ''
+}
+
+function isTextFile(item?: FileItem | null): boolean {
+  if (!item || item.isDir) return false
+  const name = (item.name || '').toLowerCase()
+  if (TEXT_FILENAMES.has(name)) return true
+  const ext = getFileExtension(name)
+  return Boolean(ext && TEXT_EXTENSIONS.has(ext))
+}
+
+function getPreviewMode(item?: FileItem | null): PreviewMode | null {
+  if (!item || item.isDir) return null
+  if (isTextFile(item)) return 'text'
+  const ext = getFileExtension(item.name || '')
+  if (ext && PDF_EXTENSIONS.has(ext)) return 'pdf'
+  if (ext && WORD_EXTENSIONS.has(ext)) return 'word'
+  return null
+}
 
 function encodePath(path: string): string {
   if (!path) return '/'
@@ -614,6 +670,156 @@ function openSharedEntryDetail(item: FileItem) {
   detailItem.value = item
   detailMode.value = 'sharedEntry'
   detailDrawerVisible.value = true
+}
+
+async function openFilePreview(item: FileItem) {
+  const mode = getPreviewMode(item)
+  if (!mode) {
+    showError('暂不支持预览该类型文件')
+    return
+  }
+  detailDrawerVisible.value = false
+  previewTarget.value = item
+  previewMode.value = mode
+  previewContent.value = ''
+  previewOrigin.value = ''
+  previewBlob.value = null
+  previewReadOnly.value = isSharedBrowse.value && mode === 'text' && !sharedCanUpdate.value
+  previewVisible.value = true
+  previewLoading.value = true
+  try {
+    const token = localStorage.getItem('authToken') || ''
+    if (mode === 'text') {
+      const response = await fetch(
+        isSharedBrowse.value && sharedActive.value
+          ? buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
+              shareId: sharedActive.value.id,
+              path: normalizeShareRelative(item.path)
+            }))
+          : buildApiPath(item.path),
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      )
+      if (!response.ok) {
+        throw new Error(`读取失败: ${response.status}`)
+      }
+      const text = await response.text()
+      previewContent.value = text
+      previewOrigin.value = text
+    } else if (mode === 'pdf' || mode === 'word') {
+      const response = await fetch(
+        isSharedBrowse.value && sharedActive.value
+          ? buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
+              shareId: sharedActive.value.id,
+              path: normalizeShareRelative(item.path)
+            }))
+          : buildApiPath(item.path),
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      )
+      if (!response.ok) {
+        throw new Error(`读取失败: ${response.status}`)
+      }
+      previewBlob.value = await response.blob()
+    }
+  } catch (error: any) {
+    console.error('预览文件失败:', error)
+    showError(error?.message || '预览失败')
+    previewVisible.value = false
+    resetPreview()
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+function resetPreview() {
+  previewTarget.value = null
+  previewMode.value = null
+  previewContent.value = ''
+  previewOrigin.value = ''
+  previewBlob.value = null
+  previewReadOnly.value = false
+  previewLoading.value = false
+  previewSaving.value = false
+}
+
+async function handlePreviewBeforeClose(done: () => void) {
+  if (!previewDirty.value) {
+    resetPreview()
+    done()
+    return
+  }
+  const confirmed = await confirmAction('内容尚未保存，确定关闭吗？', '关闭确认')
+  if (!confirmed) return
+  resetPreview()
+  done()
+}
+
+async function savePreview() {
+  if (!previewTarget.value || previewMode.value !== 'text') return
+  if (previewReadOnly.value) {
+    showError('没有修改权限')
+    return
+  }
+  previewSaving.value = true
+  try {
+    const token = localStorage.getItem('authToken') || ''
+    if (isSharedBrowse.value && sharedActive.value) {
+      const relPath = normalizeShareRelative(previewTarget.value.path)
+      const params = new URLSearchParams({ shareId: sharedActive.value.id, path: relPath })
+      const apiPath = buildShareUserUrl('/api/v1/public/share/user/upload', params)
+      const blob = new Blob([previewContent.value], { type: 'text/plain;charset=utf-8' })
+      const file = new File([blob], previewTarget.value.name, { type: 'text/plain;charset=utf-8' })
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch(apiPath, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      })
+      if (!response.ok) {
+        throw new Error(`保存失败: ${response.status}`)
+      }
+      previewOrigin.value = previewContent.value
+      showSuccess('已保存')
+      fetchSharedEntries(sharedPath.value)
+    } else {
+      const response = await fetch(buildApiPath(previewTarget.value.path), {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'text/plain; charset=utf-8'
+        },
+        body: previewContent.value
+      })
+      if (!response.ok) {
+        throw new Error(`保存失败: ${response.status}`)
+      }
+      previewOrigin.value = previewContent.value
+      showSuccess('已保存')
+      fetchFiles(currentPath.value)
+    }
+  } catch (error: any) {
+    console.error('保存文件失败:', error)
+    showError(error?.message || '保存失败')
+  } finally {
+    previewSaving.value = false
+  }
+}
+
+function downloadPreview() {
+  if (!previewTarget.value) return
+  downloadFile(previewTarget.value)
 }
 
 function handleRowClick(row: FileItem | RecycleItem | ShareItem | DirectShareItem) {
@@ -2577,6 +2783,9 @@ onBeforeUnmount(() => {
         :detail-received-share="detailReceivedShare"
         :detail-shared-entry="detailSharedEntry"
         :shared-can-read="sharedCanRead"
+        :shared-can-update="sharedCanUpdate"
+        :get-preview-mode="getPreviewMode"
+        :open-file-preview="openFilePreview"
         :format-time="formatTime"
         :format-deleted-time="formatDeletedTime"
         :format-size-detail="formatSizeDetail"
@@ -2594,6 +2803,7 @@ onBeforeUnmount(() => {
         :share-user-submitting="shareUserSubmitting"
         :share-user-target="shareUserTarget"
         :share-user-form="shareUserForm"
+        :address-contacts="addressContacts"
         :address-groups="addressGroups"
         :grouped-contacts="groupedContacts"
         :submit-share-user="submitShareUser"
@@ -2611,6 +2821,21 @@ onBeforeUnmount(() => {
         :password-form="passwordForm"
         :user-profile="userProfile"
         :submit-password="submitPassword"
+      />
+      <FilePreviewDialog
+        v-model="previewVisible"
+        v-model:content="previewContent"
+        :title="previewTitle"
+        :mode="previewMode || 'text'"
+        :blob="previewBlob"
+        :file-name="previewTarget?.name || ''"
+        :loading="previewLoading"
+        :saving="previewSaving"
+        :dirty="previewDirty"
+        :read-only="previewReadOnly"
+        @request-close="handlePreviewBeforeClose"
+        @save="savePreview"
+        @download="downloadPreview"
       />
 
       <nav class="mobile-only mobile-bottom-nav">

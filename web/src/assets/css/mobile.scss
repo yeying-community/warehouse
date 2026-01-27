@@ -227,6 +227,17 @@
     width: 100% !important;
   }
 
+  .file-preview-dialog {
+    width: calc(100% - 16px) !important;
+    max-width: 100% !important;
+    margin: 8px auto !important;
+  }
+
+  .file-preview-dialog .preview-frame {
+    height: 50vh;
+    min-height: 260px;
+  }
+
   .mobile-bottom-nav {
     position: fixed;
     left: 0;

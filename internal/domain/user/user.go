@@ -2,7 +2,9 @@ package user
 
 import (
 	"errors"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,6 +49,9 @@ type Rule struct {
 	Path        string
 	Permissions *Permissions
 	Regex       bool
+	regexOnce   sync.Once
+	regex       *regexp.Regexp
+	regexErr    error
 }
 
 // NewUser 创建新用户
@@ -236,10 +241,20 @@ func (p *Permissions) Has(perm string) bool {
 // Matches 规则是否匹配路径
 func (r *Rule) Matches(path string) bool {
 	if r.Regex {
-		// TODO: 实现正则匹配
-		return false
+		re, err := r.compileRegex()
+		if err != nil || re == nil {
+			return false
+		}
+		return re.MatchString(path)
 	}
 	return strings.HasPrefix(path, r.Path)
+}
+
+func (r *Rule) compileRegex() (*regexp.Regexp, error) {
+	r.regexOnce.Do(func() {
+		r.regex, r.regexErr = regexp.Compile(r.Path)
+	})
+	return r.regex, r.regexErr
 }
 
 // HasPermission 规则是否有权限
