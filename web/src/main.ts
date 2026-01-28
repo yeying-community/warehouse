@@ -2,8 +2,10 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import { createPinia } from 'pinia'
 import { routes } from './router'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
+import { ElLoading } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
+import 'element-plus/es/components/loading/style/css'
 import './assets/css/index.scss'
 import { createRouter, createWebHistory } from 'vue-router'
 
@@ -17,7 +19,7 @@ const router = createRouter({
 app.config.globalProperties.$t = function(key: string) { return key }
 
 app.use(createPinia())
-app.use(ElementPlus)
+app.use(ElLoading)
 app.use(router)
 
 app.mount('#app')

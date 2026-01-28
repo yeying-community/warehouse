@@ -40,6 +40,10 @@ function handleCommand(row: FileItem, command: string) {
       break
   }
 }
+
+function handleDropdownCommand(row: FileItem, command: string | number) {
+  handleCommand(row, String(command))
+}
 </script>
 
 <template>
@@ -118,7 +122,7 @@ function handleCommand(row: FileItem, command: string) {
         <div class="card-actions card-actions-inline">
           <el-button v-if="row.isDir" size="small" circle :icon="View" @click="openDetailDrawer('file', row)" />
           <el-button v-else size="small" :icon="Download" circle @click="downloadFile(row)" />
-          <el-dropdown @command="command => handleCommand(row, command)">
+          <el-dropdown @command="handleDropdownCommand(row, $event)">
             <el-button size="small" :icon="MoreFilled" circle />
             <template #dropdown>
               <el-dropdown-menu>

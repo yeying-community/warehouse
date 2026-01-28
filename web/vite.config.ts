@@ -1,18 +1,19 @@
 import { defineConfig, loadEnv } from 'vite'
-import { fileURLToPath } from 'url';
+import { fileURLToPath } from 'url'
 import vue from '@vitejs/plugin-vue'
 import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig(({ command, mode }) => {
+  const isProd = mode === 'production'
   const { VITE_ENV_BASE_API, VITE_ENV_BASE_URL } = loadEnv(mode, process.cwd());
   return {
     plugins: [vue(), AutoImport({
-      resolvers: [ElementPlusResolver()],
+      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
     }),
     Components({
-      resolvers: [ElementPlusResolver()],
+      resolvers: [ElementPlusResolver({ importStyle: 'css' })],
     }),],
     resolve: {
       alias: {
@@ -29,12 +30,19 @@ export default defineConfig(({ command, mode }) => {
     },
     build: {
       outDir: VITE_ENV_BASE_URL,
-      sourcemap: true,
+      sourcemap: !isProd,
       rollupOptions: {
         output: {
           chunkFileNames: 'static/js/[name]-[hash].js',
           entryFileNames: 'static/js/[name]-[hash].js',
           assetFileNames: 'static/[ext]/[name]-[hash].[ext]',
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return
+            if (id.includes('element-plus')) return 'vendor-element-plus'
+            if (id.includes('pdfjs-dist')) return 'vendor-pdf'
+            if (id.includes('docx-preview')) return 'vendor-docx'
+            return 'vendor'
+          },
         },
       },
     },

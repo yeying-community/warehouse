@@ -24,105 +24,126 @@ const props = defineProps<{
   deleteSharedItem: (item: FileItem) => void
 }>()
 
-const tableRows = computed(() => (props.sharedActive ? props.sharedEntries : props.sharedWithMeList))
+const sharedListRows = computed<DirectShareItem[]>(() => props.sharedWithMeList)
+const sharedEntryRows = computed<FileItem[]>(() => props.sharedEntries)
+
+function handleMobileCommand(row: FileItem, command: string | number) {
+  const action = String(command)
+  if (action === 'rename') {
+    props.renameSharedItem(row)
+    return
+  }
+  if (action === 'delete') {
+    props.deleteSharedItem(row)
+  }
+}
 </script>
 
 <template>
   <el-table
+    v-if="!sharedActive"
     class="desktop-only"
-    :data="tableRows"
+    :data="sharedListRows"
     v-loading="loading"
     style="width: 100%"
     height="100%"
     @row-click="onRowClick"
   >
-    <template v-if="!sharedActive">
-      <el-table-column label="名称" min-width="200">
-        <template #default="{ row }">
-          <div class="file-name">
-            <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
-            <span class="name" :title="row.name">{{ row.name }}</span>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="分享人" min-width="160">
-        <template #default="{ row }">
-          <span>{{ row.ownerName || '-' }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="源钱包" min-width="200">
-        <template #default="{ row }">
-          <span class="mono">{{ shortenAddress(row.ownerWallet) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="过期时间" width="180">
-        <template #default="{ row }">
-          <span class="time-cell">{{ row.expiresAt ? formatTime(row.expiresAt) : '永不过期' }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="创建时间" width="180">
-        <template #default="{ row }">
-          <span class="time-cell">{{ row.createdAt ? formatTime(row.createdAt) : '-' }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="120" fixed="right">
-        <template #default="{ row }">
-          <div class="actions" @click.stop>
-            <el-tooltip v-if="row.isDir" content="详情" placement="top">
-              <el-button type="primary" link :icon="View" @click="openShareDetail('receivedShare', row)" />
-            </el-tooltip>
-            <el-tooltip v-else-if="row.permissions && row.permissions.includes('read')" content="下载" placement="top">
-              <el-button type="primary" link :icon="Download" @click="downloadSharedRoot(row)" />
-            </el-tooltip>
-          </div>
-        </template>
-      </el-table-column>
-    </template>
-    <template v-else>
-      <el-table-column label="名称" min-width="280">
-        <template #default="{ row }">
-          <div class="file-name">
-            <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
-            <span class="name" :title="row.name">{{ row.name }}</span>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="大小" width="120">
-        <template #default="{ row }">
-          <span class="size-cell">{{ row.isDir ? '-' : formatSize(row.size) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="修改时间" width="180">
-        <template #default="{ row }">
-          <span class="time-cell">{{ formatTime(row.modified) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
-        <template #default="{ row }">
-          <div class="actions" @click.stop>
-            <el-tooltip v-if="row.isDir" content="详情" placement="top">
-              <el-button type="primary" link :icon="View" @click="openSharedEntryDetail(row)" />
-            </el-tooltip>
-            <el-tooltip v-if="!row.isDir && sharedCanRead" content="下载" placement="top">
-              <el-button type="primary" link :icon="Download" @click="downloadSharedFile(row)" />
-            </el-tooltip>
-            <el-tooltip v-if="sharedCanUpdate" content="重命名" placement="top">
-              <el-button type="primary" link :icon="Edit" @click="renameSharedItem(row)" />
-            </el-tooltip>
-            <el-tooltip v-if="sharedCanDelete" content="删除" placement="top">
-              <el-button type="danger" link :icon="Delete" @click="deleteSharedItem(row)" />
-            </el-tooltip>
-          </div>
-        </template>
-      </el-table-column>
-    </template>
+    <el-table-column label="名称" min-width="200">
+      <template #default="{ row }">
+        <div class="file-name">
+          <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
+          <span class="name" :title="row.name">{{ row.name }}</span>
+        </div>
+      </template>
+    </el-table-column>
+    <el-table-column label="分享人" min-width="160">
+      <template #default="{ row }">
+        <span>{{ row.ownerName || '-' }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="源钱包" min-width="200">
+      <template #default="{ row }">
+        <span class="mono">{{ shortenAddress(row.ownerWallet) }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="过期时间" width="180">
+      <template #default="{ row }">
+        <span class="time-cell">{{ row.expiresAt ? formatTime(row.expiresAt) : '永不过期' }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="创建时间" width="180">
+      <template #default="{ row }">
+        <span class="time-cell">{{ row.createdAt ? formatTime(row.createdAt) : '-' }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="操作" width="120" fixed="right">
+      <template #default="{ row }">
+        <div class="actions" @click.stop>
+          <el-tooltip v-if="row.isDir" content="详情" placement="top">
+            <el-button type="primary" link :icon="View" @click="openShareDetail('receivedShare', row)" />
+          </el-tooltip>
+          <el-tooltip v-else-if="row.permissions && row.permissions.includes('read')" content="下载" placement="top">
+            <el-button type="primary" link :icon="Download" @click="downloadSharedRoot(row)" />
+          </el-tooltip>
+        </div>
+      </template>
+    </el-table-column>
+  </el-table>
+
+  <el-table
+    v-else
+    class="desktop-only"
+    :data="sharedEntryRows"
+    v-loading="loading"
+    style="width: 100%"
+    height="100%"
+    @row-click="onRowClick"
+  >
+    <el-table-column label="名称" min-width="280">
+      <template #default="{ row }">
+        <div class="file-name">
+          <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
+          <span class="name" :title="row.name">{{ row.name }}</span>
+        </div>
+      </template>
+    </el-table-column>
+    <el-table-column label="大小" width="120">
+      <template #default="{ row }">
+        <span class="size-cell">{{ row.isDir ? '-' : formatSize(row.size) }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="修改时间" width="180">
+      <template #default="{ row }">
+        <span class="time-cell">{{ formatTime(row.modified) }}</span>
+      </template>
+    </el-table-column>
+    <el-table-column label="操作" width="180" fixed="right">
+      <template #default="{ row }">
+        <div class="actions" @click.stop>
+          <el-tooltip v-if="row.isDir" content="详情" placement="top">
+            <el-button type="primary" link :icon="View" @click="openSharedEntryDetail(row)" />
+          </el-tooltip>
+          <el-tooltip v-if="!row.isDir && sharedCanRead" content="下载" placement="top">
+            <el-button type="primary" link :icon="Download" @click="downloadSharedFile(row)" />
+          </el-tooltip>
+          <el-tooltip v-if="sharedCanUpdate" content="重命名" placement="top">
+            <el-button type="primary" link :icon="Edit" @click="renameSharedItem(row)" />
+          </el-tooltip>
+          <el-tooltip v-if="sharedCanDelete" content="删除" placement="top">
+            <el-button type="danger" link :icon="Delete" @click="deleteSharedItem(row)" />
+          </el-tooltip>
+        </div>
+      </template>
+    </el-table-column>
   </el-table>
 
   <div class="mobile-only card-list" v-loading="loading">
-    <el-empty v-if="!loading && !tableRows.length" description="暂无数据" />
+    <el-empty v-if="!loading && !sharedActive && !sharedListRows.length" description="暂无数据" />
+    <el-empty v-else-if="!loading && sharedActive && !sharedEntryRows.length" description="暂无数据" />
     <template v-if="!sharedActive">
       <div
-        v-for="row in tableRows"
+        v-for="row in sharedListRows"
         :key="row.id"
         class="card-item"
         @click="onRowClick(row)"
@@ -161,7 +182,7 @@ const tableRows = computed(() => (props.sharedActive ? props.sharedEntries : pro
     </template>
     <template v-else>
       <div
-        v-for="row in tableRows"
+        v-for="row in sharedEntryRows"
         :key="row.path"
         class="card-item"
         @click="onRowClick(row)"
@@ -192,12 +213,7 @@ const tableRows = computed(() => (props.sharedActive ? props.sharedEntries : pro
               :icon="Download"
               @click="downloadSharedFile(row)"
             />
-            <el-dropdown
-              @command="command => {
-                if (command === 'rename') renameSharedItem(row)
-                if (command === 'delete') deleteSharedItem(row)
-              }"
-            >
+            <el-dropdown @command="handleMobileCommand(row, $event)">
               <el-button size="small" circle :icon="MoreFilled" />
               <template #dropdown>
                 <el-dropdown-menu>

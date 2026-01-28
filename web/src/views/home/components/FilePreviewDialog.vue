@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount, nextTick, shallowRef, markRaw } from 'vue'
 import { renderAsync } from 'docx-preview'
-import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf'
-import PdfWorker from 'pdfjs-dist/legacy/build/pdf.worker?url'
+import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.min.mjs'
+import PdfWorker from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
 type PreviewMode = 'text' | 'pdf' | 'word'
 

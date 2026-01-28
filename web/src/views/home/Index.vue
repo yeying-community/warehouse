@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, FolderAdd, FolderOpened, Refresh, Upload, DocumentCopy, Share, UserFilled, Search, MoreFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
@@ -12,13 +12,14 @@ import { showInfo, showSuccess } from '@/utils/toast'
 import { useAddressBookStore } from '@/stores/addressBookStore'
 import AddressBookView from './components/AddressBookView.vue'
 import HomeOverlays from './components/HomeOverlays.vue'
-import FilePreviewDialog from './components/FilePreviewDialog.vue'
 import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
 import SharedWithMeTableView from './components/SharedWithMeTableView.vue'
 import RecycleTableView from './components/RecycleTableView.vue'
 import UploadTaskListView from './components/UploadTaskListView.vue'
 import type { DropEntry, FileItem, UploadItem, UploadTask } from './types'
+
+const FilePreviewDialog = defineAsyncComponent(() => import('./components/FilePreviewDialog.vue'))
 
 // 状态
 const loading = ref(false)
@@ -1423,8 +1424,18 @@ function addUploadTasks(tasks: UploadTask[]) {
 }
 
 function updateUploadTask(task: UploadTask, patch: Partial<UploadTask>) {
-  Object.assign(task, patch)
-  task.updatedAt = Date.now()
+  const index = uploadTasks.value.findIndex(item => item.id === task.id)
+  const updatedAt = Date.now()
+  if (index === -1) {
+    Object.assign(task, patch, { updatedAt })
+    return
+  }
+  const current = uploadTasks.value[index]
+  uploadTasks.value[index] = {
+    ...current,
+    ...patch,
+    updatedAt
+  }
 }
 
 function getUploadUrlForTask(task: UploadTask): string | null {
