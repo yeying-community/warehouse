@@ -43,7 +43,7 @@ fi
 build_dir=${work_dir}/build
 dist_dir=${work_dir}/web/dist
 output_dir=${work_dir}/output
-scripts_dir=${work_dir}/scripts
+config_template=${work_dir}/config.yaml.template
 
 index=$((index+1))
 echo -e "step $index -- compile build and dist (logs in ${LOGFILE})" | tee -a "$LOGFILE"
@@ -78,6 +78,10 @@ if [[ ! -d "${dist_dir}" ]]; then
     echo -e "ERROR! dist directory is missing after npm run build" | tee -a "$LOGFILE"
     exit 1
 fi
+if [[ ! -f "${config_template}" ]]; then
+    echo -e "ERROR! config.yaml.template is missing" | tee -a "$LOGFILE"
+    exit 1
+fi
 
 if [[ -d "${output_dir}" ]]; then
     rm -rf "${output_dir}"
@@ -85,17 +89,17 @@ fi
 
 index=$((index+1))
 echo -e "step $index -- prepare package files under directroy: ${output_dir} " | tee -a "$LOGFILE"
-package_name=$(printf "%s-%s-%s" "$service_name" "$package_timestamp" "$commit_hash" | tr '[:upper:]' '[:lower:]')
-file_name="${package_name}.tar.gz"
-package_dir=${output_dir}/${package_name}
+file_base=$(printf "%s-%s-%s" "$service_name" "$package_timestamp" "$commit_hash" | tr '[:upper:]' '[:lower:]')
+file_name="${file_base}.tar.gz"
+package_dir=${output_dir}/${service_name}
 mkdir -p "${package_dir}"
 
 index=$((index+1))
 echo -e "step $index -- copy necessary file to ${package_dir} " | tee -a "$LOGFILE"
 cp -a "${build_dir}" "${package_dir}/"
 cp -a "${dist_dir}" "${package_dir}/"
-if [[ -d "${scripts_dir}" ]]; then
-    cp -a "${scripts_dir}" "${package_dir}/"
+if [[ -f "${config_template}" ]]; then
+    cp -a "${config_template}" "${package_dir}/"
 fi
 formatted_date=$(date '+%Y%m%d-%H%M%S')
 VERSION_FILE="version_information_${formatted_date}"
@@ -106,8 +110,8 @@ sleep 1
 index=$((index+1))
 echo -e "step $index -- generate package file. " | tee -a "$LOGFILE"
 pushd "${output_dir}" > /dev/null || exit 2
-tar -zcf "${file_name}" "${package_name}"
-rm -rf "${package_name}"
+tar -zcf "${file_name}" "${service_name}"
+rm -rf "${service_name}"
 popd > /dev/null || exit 2
 
 index=$((index+1))
