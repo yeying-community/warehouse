@@ -445,6 +445,55 @@ Body：
 { "error": "Old password is incorrect", "code": 401, "success": false }
 ```
 
+### 8.4 管理员用户管理
+
+需要管理员权限（`security.admin_addresses` 白名单中的钱包地址登录）。
+
+- `GET /api/v1/public/admin/users/list`
+- `POST /api/v1/public/admin/users/create`
+- `POST /api/v1/public/admin/users/update`
+- `POST /api/v1/public/admin/users/delete`
+- `POST /api/v1/public/admin/users/reset-password`
+
+创建用户示例：
+
+```json
+{
+  "username": "alice",
+  "password": "password123",
+  "wallet_address": "0x...",
+  "directory": "alice",
+  "permissions": ["CRUD"],
+  "quota": 5368709120,
+  "rules": [
+    { "path": "/private", "permissions": ["read"], "regex": false }
+  ]
+}
+```
+
+更新用户示例：
+
+```json
+{
+  "username": "alice",
+  "new_username": "alice2",
+  "permissions": ["read", "update"],
+  "quota": 10737418240
+}
+```
+
+删除用户示例：
+
+```json
+{ "username": "alice" }
+```
+
+重置密码示例：
+
+```json
+{ "username": "alice", "password": "newStrongPassword" }
+```
+
 ## 9. 地址簿 API
 
 以下接口均需要鉴权（Bearer 或 Basic）。
@@ -746,19 +795,18 @@ Body 示例（folder/rename/item）：
 
 ## 14. 权限规则（rules）
 
-用户可在配置中为特定路径设置规则，系统会按规则顺序匹配，命中后不再继续匹配其他规则；未命中则回退到用户默认权限。
+用户规则存储在数据库，可通过管理员接口更新。规则按顺序匹配，命中后不再继续匹配；未命中则回退到用户默认权限。
 
-```yaml
-users:
-  - username: "alice"
-    permissions: "CRUD"
-    rules:
-      - path: "/private"
-        permissions: "R"
-        regex: false
-      - path: "^/projects/.+/readonly(/|$)"
-        permissions: "R"
-        regex: true
+更新示例（管理员接口）：
+
+```json
+{
+  "username": "alice",
+  "rules": [
+    { "path": "/private", "permissions": ["read"], "regex": false },
+    { "path": "^/projects/.+/readonly(/|$)", "permissions": ["read"], "regex": true }
+  ]
+}
 ```
 
 说明：

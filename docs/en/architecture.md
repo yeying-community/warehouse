@@ -32,7 +32,6 @@ This document summarizes the system architecture, component responsibilities, an
 
 Config validation highlights:
 
-- `config.users` must contain at least one user (validated before startup).
 - `web3.jwt_secret` is required and must be at least 32 characters.
 - `database.type` supports only `postgres`/`postgresql`.
 

@@ -7,45 +7,17 @@ import (
 	"strings"
 
 	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/config"
-	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
 	"github.com/yeying-community/webdav/internal/infrastructure/database"
 )
 
 // PostgresUserRepository PostgreSQL 用户仓储
 type PostgresUserRepository struct {
-	db             *database.PostgresDB
-	passwordHasher *crypto.PasswordHasher
+	db *database.PostgresDB
 }
 
 // NewPostgresUserRepository 创建 PostgreSQL 用户仓储
-func NewPostgresUserRepository(db *database.PostgresDB, userConfigs []config.UserConfig) (*PostgresUserRepository, error) {
-	repo := &PostgresUserRepository{
-		db:             db,
-		passwordHasher: crypto.NewPasswordHasher(),
-	}
-
-	// 如果有配置文件中的用户，同步到数据库
-	if len(userConfigs) > 0 {
-		ctx := context.Background()
-		for _, cfg := range userConfigs {
-			// 检查用户是否已存在
-			existingUser, err := repo.FindByUsername(ctx, cfg.Username)
-			if err != nil && err != user.ErrUserNotFound {
-				return nil, fmt.Errorf("failed to check existing user: %w", err)
-			}
-
-			if existingUser == nil {
-				// 用户不存在，创建新用户
-				u := repo.createUserFromConfig(cfg)
-				if err := repo.Save(ctx, u); err != nil {
-					return nil, fmt.Errorf("failed to save user from config: %w", err)
-				}
-			}
-		}
-	}
-
-	return repo, nil
+func NewPostgresUserRepository(db *database.PostgresDB) (*PostgresUserRepository, error) {
+	return &PostgresUserRepository{db: db}, nil
 }
 
 // FindByUsername 根据用户名查找用户
@@ -444,49 +416,4 @@ func (r *PostgresUserRepository) loadUserRules(ctx context.Context, userID strin
 	}
 
 	return rules, nil
-}
-
-// createUserFromConfig 从配置创建用户
-func (r *PostgresUserRepository) createUserFromConfig(cfg config.UserConfig) *user.User {
-	u := user.NewUser(cfg.Username, cfg.Directory)
-	// 设置密码
-	if cfg.Password != "" {
-		// 如果密码已经是加密的，直接使用
-		if strings.HasPrefix(cfg.Password, "{bcrypt}") {
-			u.SetPassword(cfg.Password)
-		} else {
-			// 否则加密密码
-			hashedPassword, err := r.passwordHasher.Hash(cfg.Password)
-			if err == nil {
-				u.SetPassword(hashedPassword)
-			}
-		}
-	}
-
-	// 设置钱包地址
-	if cfg.WalletAddress != "" {
-		u.SetWalletAddress(cfg.WalletAddress)
-	}
-
-	// 设置权限
-	if cfg.Permissions != "" {
-		u.Permissions = user.ParsePermissions(cfg.Permissions)
-	}
-
-	// 设置配额
-	if cfg.Quota > 0 {
-		u.SetQuota(cfg.Quota)
-	}
-
-	// 设置规则
-	for _, ruleCfg := range cfg.Rules {
-		rule := &user.Rule{
-			Path:        ruleCfg.Path,
-			Permissions: user.ParsePermissions(ruleCfg.Permissions),
-			Regex:       ruleCfg.Regex,
-		}
-		u.Rules = append(u.Rules, rule)
-	}
-
-	return u
 }

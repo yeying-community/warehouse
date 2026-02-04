@@ -23,7 +23,7 @@ var (
 	wallet     = flag.String("wallet", "", "钱包地址")
 	directory  = flag.String("directory", "", "用户目录")
 	perms      = flag.String("permissions", "R", "权限 (C=Create, R=Read, U=Update, D=Delete)")
-	quota      = flag.Int64("quota", 0, "配额 (字节)")
+	quota      = flag.Int64("quota", -1, "配额 (字节)，-1 使用默认值")
 )
 
 func main() {
@@ -53,7 +53,7 @@ func main() {
 		}
 		defer db.Close()
 
-		userRepo, err = repository.NewPostgresUserRepository(db, cfg.Users)
+		userRepo, err = repository.NewPostgresUserRepository(db)
 		if err != nil {
 			log.Fatalf("Failed to create user repository: %v", err)
 		}
@@ -173,7 +173,7 @@ func addUser(ctx context.Context, repo user.Repository) error {
 	}
 
 	// 设置配额
-	if *quota > 0 {
+	if *quota >= 0 {
 		u.SetQuota(*quota)
 	}
 

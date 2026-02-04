@@ -32,7 +32,6 @@
 
 配置校验要点：
 
-- `config.users` 必须至少包含一个用户（启动前校验）。
 - `web3.jwt_secret` 必填且长度至少 32。
 - `database.type` 仅支持 `postgres`/`postgresql`。
 

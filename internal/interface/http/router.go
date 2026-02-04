@@ -20,6 +20,7 @@ type Router struct {
 	webdavHandler      *handler.WebDAVHandler
 	quotaHandler       *handler.QuotaHandler
 	userHandler        *handler.UserHandler
+	adminUserHandler   *handler.AdminUserHandler
 	recycleHandler     *handler.RecycleHandler
 	shareHandler       *handler.ShareHandler
 	shareUserHandler   *handler.ShareUserHandler
@@ -36,6 +37,7 @@ func NewRouter(
 	webdavHandler *handler.WebDAVHandler,
 	quotaHandler *handler.QuotaHandler,
 	userHandler *handler.UserHandler,
+	adminUserHandler *handler.AdminUserHandler,
 	recycleHandler *handler.RecycleHandler,
 	shareHandler *handler.ShareHandler,
 	shareUserHandler *handler.ShareUserHandler,
@@ -50,6 +52,7 @@ func NewRouter(
 		webdavHandler:      webdavHandler,
 		quotaHandler:       quotaHandler,
 		userHandler:        userHandler,
+		adminUserHandler:   adminUserHandler,
 		recycleHandler:     recycleHandler,
 		shareHandler:       shareHandler,
 		shareUserHandler:   shareUserHandler,
@@ -77,6 +80,13 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/webdav/user/info", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.GetUserInfo)))
 	mux.Handle("/api/v1/public/webdav/user/update", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.UpdateUsername)))
 	mux.Handle("/api/v1/public/webdav/user/password", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.UpdatePassword)))
+
+	// 管理员用户管理（需要认证 + 管理员权限）
+	mux.Handle("/api/v1/public/admin/users/list", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleList)))
+	mux.Handle("/api/v1/public/admin/users/create", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleCreate)))
+	mux.Handle("/api/v1/public/admin/users/update", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleUpdate)))
+	mux.Handle("/api/v1/public/admin/users/delete", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleDelete)))
+	mux.Handle("/api/v1/public/admin/users/reset-password", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleResetPassword)))
 
 	// 回收站路由
 	mux.Handle("/api/v1/public/webdav/recycle/list", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleList)))
@@ -127,6 +137,13 @@ func (r *Router) createAuthenticatedHandler(handler http.Handler) http.Handler {
 	// 应用认证中间件
 	authMiddleware := middleware.NewAuthMiddleware(r.authenticators, true, r.logger)
 	return authMiddleware.Handle(handler)
+}
+
+// createAdminHandler 创建管理员处理器
+func (r *Router) createAdminHandler(handler http.Handler) http.Handler {
+	adminMiddleware := middleware.NewAdminMiddleware(r.config.Security.AdminAddresses, r.logger)
+	authMiddleware := middleware.NewAuthMiddleware(r.authenticators, true, r.logger)
+	return authMiddleware.Handle(adminMiddleware.Handle(handler))
 }
 
 // applyMiddlewares 应用全局中间件

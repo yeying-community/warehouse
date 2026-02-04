@@ -10,7 +10,7 @@
 
 ```shell
 # 基于模板创建配置文件
-cp config.example.yaml config.yaml
+cp config.yaml.template config.yaml
 # 修改config.yaml中的数据库配置
 ```
 

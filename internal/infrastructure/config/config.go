@@ -13,7 +13,6 @@ type Config struct {
 	Security SecurityConfig `yaml:"security"`
 	CORS     CORSConfig     `yaml:"cors"`
 	Log      LogConfig      `yaml:"log"`
-	Users    []UserConfig   `yaml:"users"`
 }
 
 // DatabaseConfig 数据库配置
@@ -75,8 +74,9 @@ type AppScopeConfig struct {
 
 // SecurityConfig 安全配置
 type SecurityConfig struct {
-	NoPassword  bool `yaml:"no_password"`
-	BehindProxy bool `yaml:"behind_proxy"`
+	NoPassword     bool     `yaml:"no_password"`
+	BehindProxy    bool     `yaml:"behind_proxy"`
+	AdminAddresses []string `yaml:"admin_addresses"`
 }
 
 // CORSConfig CORS 配置
@@ -95,24 +95,6 @@ type LogConfig struct {
 	Format  string   `yaml:"format"`
 	Colors  bool     `yaml:"colors"`
 	Outputs []string `yaml:"outputs"`
-}
-
-// UserConfig 用户配置
-type UserConfig struct {
-	Username      string       `yaml:"username"`
-	Password      string       `yaml:"password"`
-	WalletAddress string       `yaml:"wallet_address"`
-	Directory     string       `yaml:"directory"`
-	Permissions   string       `yaml:"permissions"`
-	Rules         []RuleConfig `yaml:"rules"`
-	Quota         int64        `yaml:"quota"` // 新增：配额（字节），0 表示无限制
-}
-
-// RuleConfig 规则配置
-type RuleConfig struct {
-	Path        string `yaml:"path"`
-	Permissions string `yaml:"permissions"`
-	Regex       bool   `yaml:"regex"`
 }
 
 // DefaultConfig 默认配置
@@ -155,8 +137,9 @@ func DefaultConfig() *Config {
 			},
 		},
 		Security: SecurityConfig{
-			NoPassword:  false,
-			BehindProxy: false,
+			NoPassword:     false,
+			BehindProxy:    false,
+			AdminAddresses: []string{},
 		},
 		CORS: CORSConfig{
 			Enabled:     false,
@@ -168,6 +151,5 @@ func DefaultConfig() *Config {
 			Colors:  true,
 			Outputs: []string{"stderr"},
 		},
-		Users: []UserConfig{},
 	}
 }

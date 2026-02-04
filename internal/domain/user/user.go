@@ -63,7 +63,7 @@ func NewUser(username, directory string) *User {
 		Directory:   directory,
 		Permissions: DefaultPermissions(),
 		Rules:       make([]*Rule, 0),
-		Quota:       0, // 默认无限制
+		Quota:       1073741824, // 默认 1GB
 		UsedSpace:   0,
 		CreatedAt:   now,
 		UpdatedAt:   now,

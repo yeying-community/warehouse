@@ -19,7 +19,6 @@
 
 - `web3.jwt_secret` 必填且至少 32 字符
 - `database.type` 仅支持 `postgres` / `postgresql`
-- `users` 必须至少包含 1 个用户
 - `webdav.directory` 必须存在或可创建
 - 启用 TLS 时必须提供 `cert_file` / `key_file`
 
@@ -29,9 +28,8 @@
 - `database`：PostgreSQL 连接信息与连接池
 - `webdav`：根目录、前缀、NoSniff
 - `web3`：JWT 秘钥、Token 过期时间、UCAN 规则
-- `security`：无密码模式、反向代理标记
+- `security`：无密码模式、反向代理标记、管理员地址白名单
 - `cors`：跨域设置
-- `users`：初始用户列表（用户名、密码、权限、目录、配额）
 
 ## 覆盖方式示例
 
@@ -76,4 +74,3 @@ webdav -c config.yaml
 
 - 健康检查：`/api/v1/public/health/heartbeat`
 - WebDAV 访问：使用 Basic 或 Bearer Token
-

@@ -57,6 +57,12 @@ except UCAN `app:<appId>` caps which also enforce app path prefix and read/write
 - Share User: permissions come from `share_user_items.permissions`, checked for download/upload/create/rename/delete.
 - Recycle: only the owner can recover/remove/clear items.
 
+### Admin Login & User Management
+
+- Admins are allowlisted via `security.admin_addresses` (multiple supported).
+- Only allowlisted wallet addresses can access admin user management APIs.
+- You can also set `WEBDAV_ADMIN_ADDRESSES` (comma-separated) via env.
+
 ## Web3 / JWT Auth
 
 ### Challenge & Verify
@@ -90,7 +96,7 @@ When the address is not found during `HandleChallenge`, the server auto-creates 
 
 - Random username (e.g., `QuickFox42`)
 - Default permissions `CRUD`
-- Default quota `100GB` (`107374182400` bytes)
+- Default quota `1GB` (`1073741824` bytes)
 
 ### Refresh Flow
 

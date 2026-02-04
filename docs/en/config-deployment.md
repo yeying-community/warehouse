@@ -19,7 +19,6 @@ Startup validation fails fast on:
 
 - `web3.jwt_secret` required and at least 32 chars
 - `database.type` must be `postgres` / `postgresql`
-- `users` must contain at least one user
 - `webdav.directory` must exist or be creatable
 - TLS requires `cert_file` / `key_file`
 
@@ -29,9 +28,8 @@ Startup validation fails fast on:
 - `database`: PostgreSQL connection + pool
 - `webdav`: root directory, prefix, NoSniff
 - `web3`: JWT secret, token TTLs, UCAN rules
-- `security`: no-password mode, reverse proxy flag
+- `security`: no-password mode, reverse proxy flag, admin allowlist
 - `cors`: CORS settings
-- `users`: initial users (username, password, permissions, dir, quota)
 
 ## Override Examples
 
@@ -76,4 +74,3 @@ webdav -c config.yaml
 
 - `GET /api/v1/public/health/heartbeat`
 - WebDAV access via Basic or Bearer
-

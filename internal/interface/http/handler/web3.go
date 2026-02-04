@@ -140,8 +140,8 @@ func addUser(r *http.Request, w http.ResponseWriter, h *Web3Handler, address str
 	u.SetWalletAddress(strings.ToLower(address))
 	// 设置权限
 	u.Permissions = user.ParsePermissions("CRUD")
-	// 设置 默认 quota 100GB
-	u.SetQuota(107374182400)
+	// 设置 默认 quota 1GB
+	u.SetQuota(1073741824)
 	// 保存用户
 	ctx := r.Context()
 	if err := h.userRepo.Save(ctx, u); err != nil {

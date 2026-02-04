@@ -49,6 +49,8 @@ web3:
 security:
   no_password: false
   behind_proxy: false
+  admin_addresses:
+    - "0x0000000000000000000000000000000000000000"
 
 # CORS Configuration
 cors:
@@ -85,38 +87,3 @@ log:
   colors: true
   outputs:
     - "stderr"
-
-# Users Configuration
-users:
-  # User with password authentication
-  - username: "alice"
-    password: "password123"  # Will be hashed automatically
-    directory: "alice"
-    permissions: "CRUD"
-    quota: 5368709120  # 5GB in bytes (5 * 1024 * 1024 * 1024)
-    rules:
-      - path: "/private"
-        permissions: "R"
-        regex: false
-
-  # User with Web3 authentication
-  - username: "bob"
-    wallet_address: "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb"
-    directory: "bob"
-    permissions: "CRUD"
-    quota: 10737418240  # 10GB
-
-  # User with both authentication methods
-  - username: "charlie"
-    password: "password456"
-    wallet_address: "0x1234567890123456789012345678901234567890"
-    directory: "charlie"
-    permissions: "RU"
-    quota: 2147483648  # 2GB
-    rules:
-      - path: "/shared"
-        permissions: "CRUD"
-        regex: false
-      - path: "/readonly"
-        permissions: "R"
-        regex: false

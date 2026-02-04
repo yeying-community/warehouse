@@ -55,6 +55,7 @@ type Container struct {
 	WebDAVHandler      *handler.WebDAVHandler
 	QuotaHandler       *handler.QuotaHandler
 	UserHandler        *handler.UserHandler
+	AdminUserHandler   *handler.AdminUserHandler
 	RecycleHandler     *handler.RecycleHandler
 	ShareHandler       *handler.ShareHandler
 	ShareUserHandler   *handler.ShareUserHandler
@@ -152,7 +153,7 @@ func (c *Container) initRepositories() error {
 	}
 
 	// 用户仓储
-	repo, err := repository.NewPostgresUserRepository(c.DB, c.Config.Users)
+	repo, err := repository.NewPostgresUserRepository(c.DB)
 	if err != nil {
 		return fmt.Errorf("failed to create postgres repository: %w", err)
 	}
@@ -168,7 +169,7 @@ func (c *Container) initRepositories() error {
 	c.AddressBookRepository = repository.NewPostgresAddressBookRepository(c.DB.DB)
 
 	c.Logger.Info("using PostgreSQL user repository")
-	c.Logger.Info("repositories initialized", zap.Int("seed_users", len(c.Config.Users)))
+	c.Logger.Info("repositories initialized")
 	return nil
 }
 
@@ -270,6 +271,8 @@ func (c *Container) initHandlers() error {
 	c.QuotaHandler = handler.NewQuotaHandler(c.QuotaService, c.Logger)
 	// 用户信息处理器
 	c.UserHandler = handler.NewUserHandler(c.Logger, c.UserRepository)
+	// 管理员用户处理器
+	c.AdminUserHandler = handler.NewAdminUserHandler(c.Logger, c.UserRepository)
 
 	// Web3 处理器
 	if c.Web3Auth != nil {
@@ -328,6 +331,7 @@ func (c *Container) initHTTP() error {
 		c.WebDAVHandler,
 		c.QuotaHandler,
 		c.UserHandler,
+		c.AdminUserHandler,
 		c.RecycleHandler,
 		c.ShareHandler,
 		c.ShareUserHandler,

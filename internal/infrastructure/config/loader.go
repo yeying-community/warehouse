@@ -115,10 +115,15 @@ func (l *Loader) overrideFromEnv(config *Config) {
 	if v := os.Getenv("WEBDAV_UCAN_APP_SCOPE_PATH_PREFIX"); v != "" {
 		config.Web3.UCAN.AppScope.PathPrefix = v
 	}
+	if v := os.Getenv("WEBDAV_ADMIN_ADDRESSES"); v != "" {
+		config.Security.AdminAddresses = strings.Split(v, ",")
+	}
 }
 
 // validate 验证配置
 func (l *Loader) validate(config *Config) error {
+	l.normalizeAdminAddresses(config)
+
 	if err := l.validateServer(config); err != nil {
 		return fmt.Errorf("server config: %w", err)
 	}
@@ -127,9 +132,6 @@ func (l *Loader) validate(config *Config) error {
 	}
 	if err := l.validateWeb3(config); err != nil {
 		return fmt.Errorf("web3 config: %w", err)
-	}
-	if err := l.validateUsers(config); err != nil {
-		return fmt.Errorf("users config: %w", err)
 	}
 	if err := l.validateDatabase(config); err != nil {
 		return fmt.Errorf("database config: %w", err)
@@ -197,48 +199,27 @@ func (l *Loader) validateWeb3(config *Config) error {
 	return nil
 }
 
-// validateUsers 验证用户配置
-func (l *Loader) validateUsers(config *Config) error {
-	if len(config.Users) == 0 {
-		return errors.New("at least one user is required")
+func (l *Loader) normalizeAdminAddresses(config *Config) {
+	if len(config.Security.AdminAddresses) == 0 {
+		return
 	}
 
-	usernames := make(map[string]bool)
-	addresses := make(map[string]bool)
+	normalized := make([]string, 0, len(config.Security.AdminAddresses))
+	seen := make(map[string]struct{}, len(config.Security.AdminAddresses))
 
-	for i, user := range config.Users {
-		// 检查用户名
-		if user.Username == "" {
-			return fmt.Errorf("user[%d]: username is required", i)
+	for _, raw := range config.Security.AdminAddresses {
+		addr := strings.ToLower(strings.TrimSpace(raw))
+		if addr == "" {
+			continue
 		}
-		if usernames[user.Username] {
-			return fmt.Errorf("user[%d]: duplicate username: %s", i, user.Username)
+		if _, ok := seen[addr]; ok {
+			continue
 		}
-		usernames[user.Username] = true
-
-		// 检查认证方式
-		hasPassword := user.Password != ""
-		hasWallet := user.WalletAddress != ""
-
-		if !hasPassword && !hasWallet && !config.Security.NoPassword {
-			return fmt.Errorf("user[%d]: must have password or wallet_address", i)
-		}
-
-		// 检查钱包地址唯一性
-		if hasWallet {
-			if addresses[user.WalletAddress] {
-				return fmt.Errorf("user[%d]: duplicate wallet_address: %s", i, user.WalletAddress)
-			}
-			addresses[user.WalletAddress] = true
-		}
-
-		// 检查目录
-		if user.Directory == "" {
-			return fmt.Errorf("user[%d]: directory is required", i)
-		}
+		seen[addr] = struct{}{}
+		normalized = append(normalized, addr)
 	}
 
-	return nil
+	config.Security.AdminAddresses = normalized
 }
 
 // validateDatabase 验证数据库配置（仅支持 PostgreSQL）

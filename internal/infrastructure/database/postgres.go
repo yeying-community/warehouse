@@ -64,7 +64,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			wallet_address VARCHAR(42) UNIQUE,
 			directory TEXT NOT NULL,
 			permissions VARCHAR(10) NOT NULL DEFAULT 'R',
-			quota BIGINT NOT NULL DEFAULT 0,
+			quota BIGINT NOT NULL DEFAULT 1073741824,
 			used_space BIGINT NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
