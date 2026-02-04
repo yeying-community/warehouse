@@ -107,6 +107,15 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 确保 app scope 根目录存在（例如 /apps）
+	if err := s.ensureAppScopeRoot(userDir); err != nil {
+		s.logger.Error("failed to ensure app scope root",
+			zap.String("directory", userDir),
+			zap.Error(err))
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
 	// 规范化 MOVE/COPY 的 Destination 头，避免编码或代理导致的路径异常
 	if r.Method == "MOVE" || r.Method == "COPY" {
 		normalizeDestinationHeader(r)
@@ -606,6 +615,32 @@ func (s *WebDAVService) ensureDirectory(dir string) error {
 		return fmt.Errorf("path is not a directory: %s", dir)
 	}
 
+	return nil
+}
+
+func (s *WebDAVService) ensureAppScopeRoot(userDir string) error {
+	if s == nil || s.config == nil {
+		return nil
+	}
+	prefix := strings.TrimSpace(s.config.Web3.UCAN.AppScope.PathPrefix)
+	if prefix == "" {
+		return nil
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	clean := path.Clean(prefix)
+	if clean == "." || clean == "/" {
+		return nil
+	}
+	relative := strings.TrimPrefix(clean, "/")
+	if relative == "" {
+		return nil
+	}
+	target := filepath.Join(userDir, relative)
+	if err := os.MkdirAll(target, 0755); err != nil {
+		return fmt.Errorf("failed to create app scope root: %w", err)
+	}
 	return nil
 }
 
