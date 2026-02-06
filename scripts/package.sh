@@ -44,6 +44,7 @@ build_dir=${work_dir}/build
 dist_dir=${work_dir}/web/dist
 output_dir=${work_dir}/output
 config_template=${work_dir}/config.yaml.template
+scripts_dir=${work_dir}/scripts
 
 index=$((index+1))
 echo -e "step $index -- compile build and dist (logs in ${LOGFILE})" | tee -a "$LOGFILE"
@@ -82,6 +83,10 @@ if [[ ! -f "${config_template}" ]]; then
     echo -e "ERROR! config.yaml.template is missing" | tee -a "$LOGFILE"
     exit 1
 fi
+if [[ ! -d "${scripts_dir}" ]]; then
+    echo -e "ERROR! scripts directory is missing" | tee -a "$LOGFILE"
+    exit 1
+fi
 
 if [[ -d "${output_dir}" ]]; then
     rm -rf "${output_dir}"
@@ -100,6 +105,9 @@ cp -a "${build_dir}" "${package_dir}/"
 cp -a "${dist_dir}" "${package_dir}/"
 if [[ -f "${config_template}" ]]; then
     cp -a "${config_template}" "${package_dir}/"
+fi
+if [[ -d "${scripts_dir}" ]]; then
+    cp -a "${scripts_dir}" "${package_dir}/"
 fi
 formatted_date=$(date '+%Y%m%d-%H%M%S')
 VERSION_FILE="version_information_${formatted_date}"
