@@ -55,6 +55,8 @@ type Web3Config struct {
 	JWTSecret              string        `yaml:"jwt_secret"`
 	TokenExpiration        time.Duration `yaml:"token_expiration"`
 	RefreshTokenExpiration time.Duration `yaml:"refresh_token_expiration"`
+	AutoCreateOnChallenge  bool          `yaml:"auto_create_on_challenge"`
+	AutoCreateOnUCAN       bool          `yaml:"auto_create_on_ucan"`
 	UCAN                   UCANConfig    `yaml:"ucan"`
 }
 
@@ -130,6 +132,8 @@ func DefaultConfig() *Config {
 		Web3: Web3Config{
 			TokenExpiration:        24 * time.Hour,
 			RefreshTokenExpiration: 30 * 24 * time.Hour,
+			AutoCreateOnChallenge:  true,
+			AutoCreateOnUCAN:       true,
 			UCAN: UCANConfig{
 				AppScope: AppScopeConfig{
 					PathPrefix: "/apps",

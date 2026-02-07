@@ -254,6 +254,7 @@ func (c *Container) initAuthenticators() error {
 		c.Config.Web3.RefreshTokenExpiration,
 		ucanVerifier,
 		c.Logger,
+		c.Config.Web3.AutoCreateOnUCAN,
 	)
 	c.Authenticators = append(c.Authenticators, c.Web3Auth)
 
@@ -280,6 +281,7 @@ func (c *Container) initHandlers() error {
 			c.Web3Auth,
 			c.UserRepository,
 			c.Logger,
+			c.Config.Web3.AutoCreateOnChallenge,
 		)
 	}
 

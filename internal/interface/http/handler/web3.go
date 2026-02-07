@@ -2,14 +2,12 @@ package handler
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/yeying-community/webdav/internal/domain/user"
 	"github.com/yeying-community/webdav/internal/infrastructure/auth"
 	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
 	"github.com/yeying-community/webdav/internal/interface/http/dto"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/sha3"
-	"math/rand"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -19,9 +17,10 @@ import (
 
 // Web3Handler Web3 认证处理器
 type Web3Handler struct {
-	web3Auth *auth.Web3Authenticator
-	userRepo user.Repository
-	logger   *zap.Logger
+	web3Auth              *auth.Web3Authenticator
+	userRepo              user.Repository
+	logger                *zap.Logger
+	autoCreateOnChallenge bool
 }
 
 const refreshTokenCookieName = "refresh_token"
@@ -38,11 +37,13 @@ func NewWeb3Handler(
 	web3Auth *auth.Web3Authenticator,
 	userRepo user.Repository,
 	logger *zap.Logger,
+	autoCreateOnChallenge bool,
 ) *Web3Handler {
 	return &Web3Handler{
-		web3Auth: web3Auth,
-		userRepo: userRepo,
-		logger:   logger,
+		web3Auth:              web3Auth,
+		userRepo:              userRepo,
+		logger:                logger,
+		autoCreateOnChallenge: autoCreateOnChallenge,
 	}
 }
 
@@ -118,49 +119,6 @@ func verifyChecksum(address string) bool {
 	return true
 }
 
-var (
-	adjectives = []string{"Quick", "Lazy", "Funny", "Serious", "Brave"}
-	nouns      = []string{"Fox", "Dog", "Cat", "Mouse", "Wolf"}
-)
-
-func generateHumanReadableName() string {
-	rand.Seed(time.Now().UnixNano())
-	adj := adjectives[rand.Intn(len(adjectives))]
-	noun := nouns[rand.Intn(len(nouns))]
-	num := rand.Intn(100)
-	return fmt.Sprintf("%s%s%d", adj, noun, num)
-}
-
-func addUser(r *http.Request, w http.ResponseWriter, h *Web3Handler, address string) (*user.User, error) {
-	// 创建用户
-	userName := generateHumanReadableName()
-	h.logger.Warn("userName:" + userName)
-	u := user.NewUser(userName, userName)
-	// 设置钱包地址
-	u.SetWalletAddress(strings.ToLower(address))
-	// 设置权限
-	u.Permissions = user.ParsePermissions("CRUD")
-	// 设置 默认 quota 1GB
-	u.SetQuota(1073741824)
-	// 保存用户
-	ctx := r.Context()
-	if err := h.userRepo.Save(ctx, u); err != nil {
-		h.logger.Error("failed to create user", zap.String("address", address))
-		return nil, err
-	}
-	return u, nil
-}
-
-func RegisterWalletAccount(r *http.Request, w http.ResponseWriter, h *Web3Handler, address string) (*user.User, error) {
-	ctx := r.Context()
-	u, err := h.userRepo.FindByWalletAddress(ctx, address)
-	if err != nil {
-		// 不存在，则添加
-		return addUser(r, w, h, address)
-	}
-	return u, err
-}
-
 // HandleChallenge 处理挑战请求
 // GET /api/auth/challenge?address=0x123...
 func (h *Web3Handler) HandleChallenge(w http.ResponseWriter, r *http.Request) {
@@ -205,8 +163,14 @@ func (h *Web3Handler) HandleChallenge(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusInternalServerError, "BALANCE_FETCH_FAIL", "The balance of the web3 wallet account is 0")
 		return
 	} else {
-		// 注册钱包账户
-		RegisterWalletAccount(r, w, h, address)
+		if h.autoCreateOnChallenge {
+			// 注册钱包账户（不存在则自动创建）
+			if _, err := h.web3Auth.EnsureUserByWallet(r.Context(), address, true); err != nil {
+				h.logger.Error("failed to ensure wallet user", zap.String("address", address), zap.Error(err))
+				h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to process request")
+				return
+			}
+		}
 	}
 
 	// 检查用户是否存在

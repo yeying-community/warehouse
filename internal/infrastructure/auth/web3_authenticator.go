@@ -2,7 +2,9 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -22,6 +24,7 @@ type Web3Authenticator struct {
 	ethSigner         *crypto.EthereumSigner
 	logger            *zap.Logger
 	refreshExpiration time.Duration
+	autoCreateOnUCAN  bool
 }
 
 // NewWeb3Authenticator 创建 Web3 认证器
@@ -32,6 +35,7 @@ func NewWeb3Authenticator(
 	refreshTokenExpiration time.Duration,
 	ucanVerifier *UcanVerifier,
 	logger *zap.Logger,
+	autoCreateOnUCAN bool,
 ) *Web3Authenticator {
 	return &Web3Authenticator{
 		userRepo:          userRepo,
@@ -41,6 +45,7 @@ func NewWeb3Authenticator(
 		ethSigner:         crypto.NewEthereumSigner(),
 		logger:            logger,
 		refreshExpiration: refreshTokenExpiration,
+		autoCreateOnUCAN:  autoCreateOnUCAN,
 	}
 }
 
@@ -56,21 +61,22 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 		return nil, fmt.Errorf("invalid credentials type")
 	}
 
+	isUcan := isUcanToken(creds.Token)
+
 	// 验证 Token (UCAN 或 JWT)
 	address, err := a.verifyToken(creds.Token)
 	if err != nil {
 		return nil, err
 	}
 
-	// 查找用户
-	u, err := a.userRepo.FindByWalletAddress(ctx, address)
+	u, err := a.EnsureUserByWallet(ctx, address, isUcan && a.autoCreateOnUCAN)
 	if err != nil {
 		if err == user.ErrUserNotFound {
 			a.logger.Debug("wallet address not found",
 				zap.String("address", address))
-			return nil, user.ErrUserNotFound
+			return nil, err
 		}
-		return nil, fmt.Errorf("failed to find user: %w", err)
+		return nil, err
 	}
 
 	a.logger.Debug("user authenticated via web3",
@@ -78,6 +84,65 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 		zap.String("address", address))
 
 	return u, nil
+}
+
+func (a *Web3Authenticator) EnsureUserByWallet(ctx context.Context, address string, createIfMissing bool) (*user.User, error) {
+	u, err := a.userRepo.FindByWalletAddress(ctx, address)
+	if err == nil {
+		return u, nil
+	}
+	if err == user.ErrUserNotFound {
+		if createIfMissing {
+			return a.createUserFromWallet(ctx, address)
+		}
+		return nil, err
+	}
+	return nil, fmt.Errorf("failed to find user: %w", err)
+}
+
+func (a *Web3Authenticator) createUserFromWallet(ctx context.Context, address string) (*user.User, error) {
+	normalizedAddress := strings.ToLower(strings.TrimSpace(address))
+	if normalizedAddress == "" {
+		return nil, fmt.Errorf("invalid wallet address")
+	}
+
+	for attempt := 0; attempt < 5; attempt++ {
+		username := generateHumanReadableName()
+		u := user.NewUser(username, username)
+		if err := u.SetWalletAddress(normalizedAddress); err != nil {
+			return nil, err
+		}
+		u.Permissions = user.ParsePermissions("CRUD")
+		_ = u.SetQuota(1073741824)
+
+		if err := a.userRepo.Save(ctx, u); err != nil {
+			if errors.Is(err, user.ErrDuplicateUsername) {
+				continue
+			}
+			return nil, fmt.Errorf("failed to create user: %w", err)
+		}
+
+		a.logger.Info("user created via ucan",
+			zap.String("username", u.Username),
+			zap.String("address", normalizedAddress))
+
+		return u, nil
+	}
+
+	return nil, fmt.Errorf("failed to create user: duplicate username")
+}
+
+var (
+	ucanAdjectives = []string{"Quick", "Lazy", "Funny", "Serious", "Brave"}
+	ucanNouns      = []string{"Fox", "Dog", "Cat", "Mouse", "Wolf"}
+)
+
+func generateHumanReadableName() string {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	adj := ucanAdjectives[rng.Intn(len(ucanAdjectives))]
+	noun := ucanNouns[rng.Intn(len(ucanNouns))]
+	num := rng.Intn(1000)
+	return fmt.Sprintf("%s%s%d", adj, noun, num)
 }
 
 // EnrichContext attaches UCAN scope info to the request context.
