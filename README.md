@@ -49,6 +49,21 @@ curl http://127.0.0.1:6065/api/v1/public/health/heartbeat
 - 中文：`docs/zh/README.md`
 - English: `docs/en/README.md`
 
+# 测试环境
+
+## 打包操作
+将代码进行编译然后打包，打包文件放置在当前节点的/opt/package目录下
+```shell
+bash scripts/package.sh 
+```
+
+## 升级操作
+从webdav中获取最新的版本包，放置在当前节点的/opt/package目录下，然后对/opt/deploy/webdav下的版本进行升级
+```shell
+bash scripts/upgrade_current_env.sh 
+```
+
+
 # UCAN 认证
 
 在 `config.yaml` 中启用 UCAN 后，可使用 `Authorization: Bearer <UCAN>` 访问需要鉴权的 API/WebDAV 资源。
