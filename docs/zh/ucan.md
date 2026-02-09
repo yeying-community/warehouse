@@ -474,6 +474,127 @@ Authorization: Bearer <UCAN_JWS>
 
 然后按 `/apps/dapp-a/...` 路径访问即可通过 app scope 校验。
 
+### 7.8 第三方服务端接入（UCAN）完整时序 + 示例代码
+
+目标：第三方服务代表用户访问 WebDAV，但**权限只限于指定 app 目录**。
+
+#### 7.8.1 时序图（Mermaid）
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant D as DApp（浏览器）
+  participant W as 钱包/插件
+  participant T as 第三方服务
+  participant S as WebDAV 服务
+
+  U->>D: 触发同步/上传等操作
+  D->>W: 获取 UCAN Session + SIWE 签名（Root Proof）
+  W-->>D: Session Key + Root Proof
+  D->>D: 生成 Invocation UCAN（cap 包含 app:<appId>）
+  D->>T: 安全下发短期 UCAN（+目标路径/参数）
+  T->>S: WebDAV 请求（Authorization: Bearer <UCAN>）
+  S-->>T: 207/200/201/204
+  T-->>D: 返回结果
+  T->>D: （token 过期）请求刷新 UCAN
+  D-->>T: 下发新 UCAN
+```
+
+#### 7.8.2 安全下发（推荐模式）
+
+安全下发的目标：**第三方只拿到短期 Invocation UCAN**，且能力最小化；  
+**Root Proof / Session Key 不应外泄**。
+
+推荐做法（服务器中转）：
+
+1) **用户在 DApp 页面授权**（明确“授予第三方访问哪些 app 目录、哪些动作”）。  
+2) DApp 前端将授权请求发送给 **DApp 自己的后端**（带登录态）。  
+3) DApp 后端生成 **短期 Invocation UCAN**（5~30 分钟），**仅包含必要 `app:<appId>` 能力**。  
+4) DApp 后端通过 **HTTPS** 将 UCAN 下发给第三方服务（建议后端到后端，不要暴露在浏览器或 URL）。  
+
+安全要求：
+- **只下发短期 Invocation UCAN**，不要下发 root proof 或 session key。  
+- **能力最小化**：只给必要的 `app:<appId>` + `read/write`（或更细粒度动作）。  
+- **不使用 URL 参数传递 UCAN**（避免被日志/Referer 泄露）。  
+- 建议**后端到后端**通信，并限制来源 IP / client_id。  
+- 建议在 DApp 后端维护 **授权记录与可撤销列表**（便于禁用第三方）。  
+
+可选的下发接口约定（示例）：
+- `POST /third-party/ucan/issue`：用户授权后调用，返回 `{ ucan, exp }`
+- `POST /third-party/ucan/refresh`：用于刷新（见下一节）
+
+#### 7.8.3 更新/刷新 UCAN（建议）
+
+第三方**不自行刷新** UCAN，而是请求 DApp 后端重新签发短期 Invocation UCAN：
+
+- **刷新触发条件**：
+  - `exp - now < 1~2 分钟`
+  - 或请求返回 `401`（token 过期）/ `403`（权限不足）
+- **刷新流程**：
+  1) 第三方调用 `POST /third-party/ucan/refresh`  
+  2) DApp 后端校验第三方身份与授权记录  
+  3) DApp 后端重新签发短期 UCAN，返回 `{ ucan, exp }`
+
+建议：
+- 对刷新接口 **限流**（避免刷爆钱包签名或后台资源）。  
+- 若授权被撤销，刷新直接返回 403。  
+- 刷新失败时，第三方应要求用户重新授权。
+
+#### 7.8.4 DApp 侧生成 UCAN 的关键要点
+
+- **cap 必须包含 `app:<appId>`**，否则无法访问 `/apps/<appId>/...`
+- 建议使用短期 `exp`（例如 5~30 分钟），第三方到期后向 DApp 请求刷新
+
+示例能力：
+```json
+[
+  { "resource": "app:dapp.example.com", "action": "write" },
+  { "resource": "app:foo.com", "action": "read" }
+]
+```
+
+#### 7.8.5 第三方服务端示例（Node.js）
+
+> 说明：第三方服务只需要拿到 UCAN 并调用 WebDAV；**不需要**钱包私钥。
+
+```ts
+import fetch from 'node-fetch';
+
+const webdavBase = 'https://webdav.example.com';
+const ucan = process.env.UCAN_TOKEN; // 由 DApp 下发（短期）
+
+async function listAppDir(appId: string) {
+  const res = await fetch(`${webdavBase}/apps/${appId}/`, {
+    method: 'PROPFIND',
+    headers: {
+      Authorization: `Bearer ${ucan}`,
+      Depth: '1',
+    },
+  });
+  if (!res.ok) throw new Error(`PROPFIND failed: ${res.status}`);
+  return res.text();
+}
+
+async function uploadFile(appId: string, path: string, content: string) {
+  const res = await fetch(`${webdavBase}/apps/${appId}/${path}`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${ucan}` },
+    body: content,
+  });
+  if (!res.ok) throw new Error(`PUT failed: ${res.status}`);
+}
+
+// 示例调用
+await listAppDir('dapp.example.com');
+await uploadFile('dapp.example.com', 'docs/readme.txt', 'Hello WebDAV');
+```
+
+#### 7.8.6 失败处理建议
+
+- `401`：UCAN 过期或无效 → 让 DApp 重新签发 UCAN
+- `403`：cap 不匹配或路径不在 `/apps/<appId>/` 下
+- 建议第三方服务在 UCAN 过期前 1~2 分钟主动向 DApp 请求刷新
+
 ## 8. 日志与排查
 
 当出现 `UCAN capability denied` 时，日志会给出：
