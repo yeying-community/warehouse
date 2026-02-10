@@ -7,7 +7,7 @@ import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
 
 export default defineConfig(({ command, mode }) => {
   const isProd = mode === 'production'
-  const { VITE_ENV_BASE_API, VITE_ENV_BASE_URL } = loadEnv(mode, process.cwd());
+  const { VITE_ENV_BASE_API } = loadEnv(mode, process.cwd());
   return {
     plugins: [vue(), AutoImport({
       resolvers: [ElementPlusResolver({ importStyle: 'css' })],
@@ -29,7 +29,7 @@ export default defineConfig(({ command, mode }) => {
       }
     },
     build: {
-      outDir: VITE_ENV_BASE_URL,
+      outDir: 'dist',
       sourcemap: !isProd,
       rollupOptions: {
         maxParallelFileOps: 8,
