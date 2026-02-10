@@ -1,126 +1,55 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-set -u
-set -o pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_NAME="$(basename "${ROOT_DIR}")"
+TIMESTAMP="$(date '+%Y%m%d-%H%M%S')"
+GIT_HASH="$(git -C "${ROOT_DIR}" rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")"
+OUTPUT_DIR="${ROOT_DIR}/output"
+PACKAGE_NAME="${PROJECT_NAME}-${TIMESTAMP}-${GIT_HASH}"
+STAGING_DIR="${OUTPUT_DIR}/${PACKAGE_NAME}"
 
-LOGFILE_PATH="/opt/logs"
-LOGFILE_NAME="package-webdav.log"
-LOGFILE="$LOGFILE_PATH/$LOGFILE_NAME"
-if [[ ! -d "$LOGFILE_PATH" ]]; then
-    mkdir -p "$LOGFILE_PATH"
+ASSETS_DIR="${ROOT_DIR}/web/dist"
+
+echo "Packaging ${PACKAGE_NAME}..."
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "npm is required to build frontend assets" >&2
+  exit 1
 fi
 
-touch "$LOGFILE"
+echo "Building frontend assets..."
+if [[ ! -d "${ROOT_DIR}/web/node_modules" ]]; then
+  (cd "${ROOT_DIR}/web" && npm install)
+fi
+(cd "${ROOT_DIR}/web" && npm run build)
 
-filesize=$(stat -c "%s" "$LOGFILE")
-if [[ "$filesize" -ge 1048576 ]]; then
-    echo -e "clear old logs at $(date) to avoid log file too big" > "$LOGFILE"
+if [[ ! -x "${ROOT_DIR}/build/webdav" ]]; then
+  echo "Building backend binary..."
+  (cd "${ROOT_DIR}" && make build)
 fi
 
-script_dir=$(cd "$(dirname "$0")" || exit; pwd)
-work_dir=$(cd "${script_dir}/.." || exit 1; pwd)
-service_name=$(basename "$work_dir")
-
-record_version_information() {
-    local record_file=$1
-    echo -e "\n========branch information:" | tee "$record_file"
-    git -C "$work_dir" branch --show-current | tee -a "$record_file"
-    echo -e "\n========commit log information:" >> "$record_file"
-    git -C "$work_dir" log -3 | grep -v Author | tee -a "$record_file"
-    echo -e "\n====Finished" | tee -a "$record_file"
-}
-
-index=1
-echo -e "step $index -- This is the begining of create package for ${service_name} [$(date)] " | tee -a "$LOGFILE"
-
-package_timestamp=$(date '+%Y%m%d-%H%M%S')
-commit_hash=$(git -C "$work_dir" rev-parse --short=7 HEAD 2>/dev/null || true)
-if [[ -z "$commit_hash" ]]; then
-    echo -e " ERROR! could not determine git commit hash. " | tee -a "$LOGFILE"
-    exit 3
+if [[ ! -x "${ROOT_DIR}/build/webdav" ]]; then
+  echo "webdav binary not found: ${ROOT_DIR}/build/webdav" >&2
+  exit 1
 fi
 
-build_dir=${work_dir}/build
-dist_dir=${work_dir}/web/dist
-output_dir=${work_dir}/output
-config_template=${work_dir}/config.yaml.template
-scripts_dir=${work_dir}/scripts
-
-index=$((index+1))
-echo -e "step $index -- compile build and dist (logs in ${LOGFILE})" | tee -a "$LOGFILE"
-if [[ -d "${build_dir}" ]]; then
-    rm -rf "${build_dir}"
-fi
-if [[ -d "${dist_dir}" ]]; then
-    rm -rf "${dist_dir}"
+if [[ ! -d "${ASSETS_DIR}" ]]; then
+  echo "frontend assets not found: ${ASSETS_DIR}" >&2
+  echo "run: cd web && npm install && npm run build" >&2
+  exit 1
 fi
 
-pushd "$work_dir" > /dev/null
-if ! make build >> "$LOGFILE" 2>&1; then
-    echo -e "ERROR! make build failed. check log: ${LOGFILE}" | tee -a "$LOGFILE"
-    popd > /dev/null
-    exit 1
-fi
-popd > /dev/null
+rm -rf "${STAGING_DIR}"
+mkdir -p "${STAGING_DIR}/bin" "${STAGING_DIR}/scripts" "${STAGING_DIR}/web"
 
-pushd "${work_dir}/web" > /dev/null
-if ! npm run build >> "$LOGFILE" 2>&1; then
-    echo -e "ERROR! npm run build failed. check log: ${LOGFILE}" | tee -a "$LOGFILE"
-    popd > /dev/null
-    exit 1
-fi
-popd > /dev/null
+cp "${ROOT_DIR}/build/webdav" "${STAGING_DIR}/bin/"
+cp "${ROOT_DIR}/config.yaml.template" "${STAGING_DIR}/"
+cp "${ROOT_DIR}/scripts/starter.sh" "${STAGING_DIR}/scripts/"
+cp -R "${ASSETS_DIR}" "${STAGING_DIR}/web/"
 
-if [[ ! -d "${build_dir}" ]]; then
-    echo -e "ERROR! build directory is missing after make build" | tee -a "$LOGFILE"
-    exit 1
-fi
-if [[ ! -d "${dist_dir}" ]]; then
-    echo -e "ERROR! dist directory is missing after npm run build" | tee -a "$LOGFILE"
-    exit 1
-fi
-if [[ ! -f "${config_template}" ]]; then
-    echo -e "ERROR! config.yaml.template is missing" | tee -a "$LOGFILE"
-    exit 1
-fi
-if [[ ! -d "${scripts_dir}" ]]; then
-    echo -e "ERROR! scripts directory is missing" | tee -a "$LOGFILE"
-    exit 1
-fi
+mkdir -p "${OUTPUT_DIR}"
+tar -C "${OUTPUT_DIR}" -czf "${OUTPUT_DIR}/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
+rm -rf "${STAGING_DIR}"
 
-if [[ -d "${output_dir}" ]]; then
-    rm -rf "${output_dir}"
-fi
-
-index=$((index+1))
-echo -e "step $index -- prepare package files under directroy: ${output_dir} " | tee -a "$LOGFILE"
-file_base=$(printf "%s-%s-%s" "$service_name" "$package_timestamp" "$commit_hash" | tr '[:upper:]' '[:lower:]')
-file_name="${file_base}.tar.gz"
-package_dir=${output_dir}/${service_name}
-mkdir -p "${package_dir}"
-
-index=$((index+1))
-echo -e "step $index -- copy necessary file to ${package_dir} " | tee -a "$LOGFILE"
-cp -a "${build_dir}" "${package_dir}/"
-cp -a "${dist_dir}" "${package_dir}/"
-if [[ -f "${config_template}" ]]; then
-    cp -a "${config_template}" "${package_dir}/"
-fi
-if [[ -d "${scripts_dir}" ]]; then
-    cp -a "${scripts_dir}" "${package_dir}/"
-fi
-formatted_date=$(date '+%Y%m%d-%H%M%S')
-VERSION_FILE="version_information_${formatted_date}"
-record_version_information "$VERSION_FILE"
-mv "$VERSION_FILE" "${package_dir}/"
-
-sleep 1
-index=$((index+1))
-echo -e "step $index -- generate package file. " | tee -a "$LOGFILE"
-pushd "${output_dir}" > /dev/null || exit 2
-tar -zcf "${file_name}" "${service_name}"
-rm -rf "${service_name}"
-popd > /dev/null || exit 2
-
-index=$((index+1))
-echo -e "step $index -- package : ${file_name} under [ ${output_dir} ] is ready. [$(date)] " | tee -a "$LOGFILE"
+echo "Package created: ${OUTPUT_DIR}/${PACKAGE_NAME}.tar.gz"

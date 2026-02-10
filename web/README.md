@@ -28,5 +28,5 @@ npm run build
 ### The packaging path points to
 
 ```sh
-构建后的文件将生成在：./assets/
+构建后的文件将生成在：./dist/
 ```
