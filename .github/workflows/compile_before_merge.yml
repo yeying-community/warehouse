@@ -1,0 +1,46 @@
+name: compile before merge
+
+# 触发条件：当有pull_request事件发生到main分支时
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  #
+  operation_before_merge:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build backend
+        run: make build
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm install
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
