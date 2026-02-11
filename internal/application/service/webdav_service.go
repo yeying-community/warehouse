@@ -218,8 +218,9 @@ func isIgnoredWebDAVPath(rawPath string) bool {
 
 // handleDeleteWithRecycle 处理删除请求（带回收站功能）
 func (s *WebDAVService) handleDeleteWithRecycle(w http.ResponseWriter, r *http.Request, u *user.User, userDir string, handler *webdav.Handler, rec *statusRecorder) {
-	// 获取文件相对路径
-	filePath := strings.TrimPrefix(r.URL.Path, "/")
+	// 获取文件相对路径（剥离 WebDAV 前缀）
+	normalizedPath := s.normalizeWebdavRequestPath(r.URL.Path)
+	filePath := strings.TrimPrefix(normalizedPath, "/")
 
 	// 获取文件的完整路径
 	fullPath := filepath.Join(userDir, filePath)
@@ -656,7 +657,8 @@ func (s *WebDAVService) checkPermission(ctx context.Context, u *user.User, r *ht
 	if userDir == "" {
 		userDir = u.Username
 	}
-	fullPath := filepath.Join(userDir, strings.TrimPrefix(r.URL.Path, "/"))
+	normalizedPath := s.normalizeWebdavRequestPath(r.URL.Path)
+	fullPath := filepath.Join(userDir, strings.TrimPrefix(normalizedPath, "/"))
 
 	// 检查权限
 	return s.permissionCheck.Check(ctx, u, fullPath, operation)
