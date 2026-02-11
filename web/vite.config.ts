@@ -54,16 +54,15 @@ export default defineConfig(({ command, mode }) => {
     base: command === 'serve' ? '' : "./",
     server: {
       proxy: {
-        // API 请求保持 /api 前缀（必须在前面）
-        '/api/v1': {
+        // API 请求保持 /api 前缀
+        '/api': {
           target: 'http://localhost:6065',
           changeOrigin: true
         },
-        // WebDAV 请求去掉 /api 前缀
-        '/api': {
+        // WebDAV 使用 /dav 前缀
+        '/dav': {
           target: 'http://localhost:6065',
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, '')
         }
       },
     },

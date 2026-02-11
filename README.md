@@ -90,22 +90,22 @@ brew install libxml2
 sudo apt-get install libxml2-utils
 
 # 2. 列出目录（PROPFIND）
-curl -s -X PROPFIND -u alice:password123  -H "Depth: 1"  http://127.0.0.1:6065/ | xq .
+curl -s -X PROPFIND -u alice:password123  -H "Depth: 1"  http://127.0.0.1:6065/dav/ | xq .
 
 # 3. 上传文件（PUT）
-echo "Test content" | curl -X PUT -u alice:password123 --data-binary @-  http://127.0.0.1:6065/upload.txt
+echo "Test content" | curl -X PUT -u alice:password123 --data-binary @-  http://127.0.0.1:6065/dav/upload.txt
 
 # 4. 下载文件（GET）
-curl -u alice:password123 http://127.0.0.1:6065/upload.txt
+curl -u alice:password123 http://127.0.0.1:6065/dav/upload.txt
 
 # 5. 删除文件（DELETE）
-curl -X DELETE -u alice:password123 http://127.0.0.1:6065/upload.txt
+curl -X DELETE -u alice:password123 http://127.0.0.1:6065/dav/upload.txt
 
 # 6. 创建目录（MKCOL）
-curl -X MKCOL -u alice:password123 http://127.0.0.1:6065/new
+curl -X MKCOL -u alice:password123 http://127.0.0.1:6065/dav/new
 
 # 7. 测试错误的密码
-curl -u alice:wrongpassword http://127.0.0.1:6065/
+curl -u alice:wrongpassword http://127.0.0.1:6065/dav/
 
 # 8. 查询quota使用情况
 curl -u alice:password123 -s http://localhost:6065/api/v1/public/webdav/quota | jq .

@@ -457,18 +457,14 @@ function encodePath(path: string): string {
   return '/' + encoded + (hasTrailing ? '/' : '')
 }
 
-function buildApiPath(path: string): string {
-  const encodedPath = encodePath(path)
-  return encodedPath === '/' ? '/api' : '/api' + encodedPath
-}
-
 function ensureAuthCookie(token: string): void {
   if (!token) return
   document.cookie = `authToken=${token}; path=/; max-age=86400`
 }
 
 function buildDavPath(path: string): string {
-  return encodePath(path)
+  const encodedPath = encodePath(path)
+  return encodedPath === '/' ? '/dav/' : '/dav' + encodedPath
 }
 
 async function confirmAction(message: string, title = '提示'): Promise<boolean> {
@@ -524,7 +520,7 @@ async function handlePasswordLogin() {
 // 获取文件列表 (WebDAV PROPFIND)
 async function fetchFiles(path: string = '/') {
   loading.value = true
-  const apiPath = buildApiPath(path)
+  const apiPath = buildDavPath(path)
   console.log('fetchFiles:', path, '→', apiPath)
   try {
     const token = localStorage.getItem('authToken') || ''
@@ -764,7 +760,7 @@ async function openFilePreview(item: FileItem) {
               shareId: sharedActive.value.id,
               path: normalizeShareRelative(item.path)
             }))
-          : buildApiPath(item.path),
+          : buildDavPath(item.path),
         {
           method: 'GET',
           headers: {
@@ -785,7 +781,7 @@ async function openFilePreview(item: FileItem) {
               shareId: sharedActive.value.id,
               path: normalizeShareRelative(item.path)
             }))
-          : buildApiPath(item.path),
+          : buildDavPath(item.path),
         {
           method: 'GET',
           headers: {
@@ -862,7 +858,7 @@ async function savePreview() {
       showSuccess('已保存')
       fetchSharedEntries(sharedPath.value)
     } else {
-      const response = await fetch(buildApiPath(previewTarget.value.path), {
+      const response = await fetch(buildDavPath(previewTarget.value.path), {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1004,7 +1000,7 @@ async function downloadFile(item: FileItem) {
     await downloadSharedFile(item)
     return
   }
-  const apiPath = buildApiPath(item.path)
+  const apiPath = buildDavPath(item.path)
   showInfo('下载中...')
 
   try {
@@ -1209,7 +1205,7 @@ async function submitRename() {
       const sourcePath = context.isDir ? context.normalized + '/' : context.normalized
       const destinationPath = (context.parentPath === '/' ? '/' + newName : context.parentPath + newName) + (context.isDir ? '/' : '')
       const token = localStorage.getItem('authToken') || ''
-      const response = await fetch(buildApiPath(sourcePath), {
+      const response = await fetch(buildDavPath(sourcePath), {
         method: 'MOVE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1311,7 +1307,7 @@ async function ensureDirectories(path: string, ensured: Set<string>, token: stri
   for (const segment of segments) {
     current += '/' + segment
     if (ensured.has(current)) continue
-    const apiPath = buildApiPath(current)
+    const apiPath = buildDavPath(current)
     const response = await fetch(apiPath, {
       method: 'MKCOL',
       headers: {
@@ -1456,7 +1452,7 @@ function getUploadUrlForTask(task: UploadTask): string | null {
     return buildShareUserUrl('/api/v1/public/share/user/upload', params)
   }
   const targetPath = task.targetPath || buildTargetPath('', task.relativePath || task.name)
-  return buildApiPath(targetPath)
+  return buildDavPath(targetPath)
 }
 
 function uploadFileWithProgress(
@@ -1766,7 +1762,7 @@ async function deleteFile(item: FileItem) {
   if (!proceed) return
   if (!skipConfirm && !(await confirmAction(`确定删除 ${item.name} 吗？删除后可在回收站恢复`, '删除确认'))) return
 
-  const apiPath = buildApiPath(item.path)
+  const apiPath = buildDavPath(item.path)
   try {
     const token = localStorage.getItem('authToken') || ''
     const response = await fetch(apiPath, {
@@ -2185,7 +2181,7 @@ function createFolder() {
 async function createFolderWithName(name: string) {
   const cleanPath = currentPath.value.replace(/^\/+/, '').replace(/\/$/, '')
   const targetPath = cleanPath ? '/' + cleanPath + '/' + name : '/' + name
-  const apiPath = buildApiPath(targetPath)
+  const apiPath = buildDavPath(targetPath)
   const token = localStorage.getItem('authToken') || ''
   const response = await fetch(apiPath, {
     method: 'MKCOL',

@@ -27,7 +27,7 @@ database:
 
 # WebDAV Configuration
 webdav:
-  prefix: "/"
+  prefix: "/dav"
   directory: "./test_data"
   no_sniff: true
   permissions: "R"  # Default permissions: C=Create, R=Read, U=Update, D=Delete
