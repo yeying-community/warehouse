@@ -14,17 +14,10 @@ cp config.yaml.template config.yaml
 # 修改config.yaml中的数据库配置
 ```
 
-## 初始化数据库
-
-```shell
-make build && make migrate-up
-```
-
 ## 本地启动
 
 ```shell
-# 创建根目录，配置文件默认为test_data
-mkdir test_data
+# 启动时会自动检查并创建 webdav.directory 指定目录（如 ./test_data）
 go run cmd/server/main.go -c config.yaml
 
 # 或者使用二级制文件启动
@@ -48,20 +41,6 @@ curl http://127.0.0.1:6065/api/v1/public/health/heartbeat
 
 - 中文：`docs/zh/README.md`
 - English: `docs/en/README.md`
-
-# 测试环境
-
-## 打包操作
-将代码进行编译然后打包，打包文件放置在当前节点的/opt/package目录下
-```shell
-bash scripts/package.sh 
-```
-
-## 升级操作
-从webdav中获取最新的版本包，放置在当前节点的/opt/package目录下，然后对/opt/deploy/webdav下的版本进行升级
-```shell
-bash scripts/upgrade_current_env.sh 
-```
 
 
 # UCAN 认证
@@ -89,6 +68,9 @@ brew install libxml2
 # Ubuntu/Debian
 sudo apt-get install libxml2-utils
 
+# 注意：以下示例默认使用 webdav.prefix=/dav；
+# 如果你在 config.yaml 中改成了其他前缀，请替换为你的实际前缀。
+# 详细变更清单见：docs/webdav-api.md（“修改 webdav.prefix 需要同步的地方”）
 # 2. 列出目录（PROPFIND）
 curl -s -X PROPFIND -u alice:password123  -H "Depth: 1"  http://127.0.0.1:6065/dav/ | xq .
 
@@ -117,6 +99,41 @@ curl -u alice:password123 -s http://localhost:6065/api/v1/public/webdav/quota | 
 MACOS
 打开访达 -> 选择前往菜单 -> 连接服务器 -> 输入连接地址 -> 输入用户名和密码
 ```
+
+# 脚本使用说明
+
+## scripts/starter.sh
+
+用于启动/停止/重启服务，默认无参数为 `start`：
+
+```shell
+# 启动
+bash scripts/starter.sh
+
+# 停止
+bash scripts/starter.sh stop
+
+# 重启
+bash scripts/starter.sh restart
+```
+
+说明：
+- 默认读取 `config.yaml`，若不存在则使用 `config.yaml.template`
+- PID 文件：`run/webdav.pid`
+- 日志文件：`logs/webdav.log`
+
+## scripts/package.sh
+
+用于构建前端 + 后端并生成安装包：
+
+```shell
+bash scripts/package.sh
+```
+
+说明：
+- 会先构建前端产物到 `web/dist`
+- 后端二进制输出为 `build/webdav`
+- 安装包输出到 `output/`
 
 # 用户相关的操作
 

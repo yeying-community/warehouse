@@ -20,6 +20,7 @@ import UploadTaskListView from './components/UploadTaskListView.vue'
 import type { DropEntry, FileItem, UploadItem, UploadTask } from './types'
 
 const FilePreviewDialog = defineAsyncComponent(() => import('./components/FilePreviewDialog.vue'))
+const DAV_PREFIX = normalizeDavPrefix((import.meta as any)?.env?.VITE_WEBDAV_PREFIX || '/dav')
 
 // 状态
 const loading = ref(false)
@@ -457,14 +458,51 @@ function encodePath(path: string): string {
   return '/' + encoded + (hasTrailing ? '/' : '')
 }
 
-function ensureAuthCookie(token: string): void {
-  if (!token) return
-  document.cookie = `authToken=${token}; path=/; max-age=86400`
+function normalizeDavPrefix(prefix: string): string {
+  let normalized = (prefix || '').trim()
+  if (!normalized) {
+    return '/dav'
+  }
+  if (!normalized.startsWith('/')) {
+    normalized = '/' + normalized
+  }
+  if (normalized.length > 1) {
+    normalized = normalized.replace(/\/+$/, '')
+    if (normalized === '') return '/'
+  }
+  return normalized
+}
+
+function stripUrlToPath(raw: string): string {
+  if (!raw) return '/'
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    try {
+      return new URL(raw).pathname || '/'
+    } catch {
+      return raw
+    }
+  }
+  return raw
+}
+
+function ensureDavPrefixedPath(path: string): string {
+  const cleanedInput = stripUrlToPath(path)
+  const encodedPath = encodePath(cleanedInput)
+
+  if (DAV_PREFIX === '/') return encodedPath
+  if (encodedPath === '/') return DAV_PREFIX + '/'
+  if (encodedPath === DAV_PREFIX) return DAV_PREFIX + '/'
+  if (encodedPath.startsWith(DAV_PREFIX + '/')) return encodedPath
+  return DAV_PREFIX + encodedPath
 }
 
 function buildDavPath(path: string): string {
-  const encodedPath = encodePath(path)
-  return encodedPath === '/' ? '/dav/' : '/dav' + encodedPath
+  return ensureDavPrefixedPath(path)
+}
+
+function ensureAuthCookie(token: string): void {
+  if (!token) return
+  document.cookie = `authToken=${token}; path=/; max-age=86400`
 }
 
 async function confirmAction(message: string, title = '提示'): Promise<boolean> {

@@ -1,6 +1,5 @@
 # Variables
 BINARY_NAME=webdav
-MIGRATE_BINARY=migrate
 USER_BINARY=user
 VERSION=$(shell git describe --tags --always --dirty)
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
@@ -18,7 +17,7 @@ GOMOD=$(GOCMD) mod
 # Build directory
 BUILD_DIR=build
 
-.PHONY: all build clean test coverage deps run help migrate user
+.PHONY: all build clean test coverage deps run help user
 
 all: deps build
 
@@ -27,8 +26,6 @@ build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) cmd/server/main.go
-	@echo "Building $(MIGRATE_BINARY)..."
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(MIGRATE_BINARY) cmd/migrate/main.go
 	@echo "Building $(USER_BINARY)..."
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(USER_BINARY) cmd/user/main.go
 	@echo "Build complete!"
@@ -62,21 +59,6 @@ deps:
 run: build
 	@echo "Running $(BINARY_NAME)..."
 	./$(BUILD_DIR)/$(BINARY_NAME) -c config.yaml
-
-## migrate-up: Run database migrations
-migrate-up: build
-	@echo "Running migrations..."
-	./$(BUILD_DIR)/$(MIGRATE_BINARY) -config config.yaml -action up
-
-## migrate-down: Rollback database migrations
-migrate-down: build
-	@echo "Rolling back migrations..."
-	./$(BUILD_DIR)/$(MIGRATE_BINARY) -config config.yaml -action down
-
-## migrate-status: Check migration status
-migrate-status: build
-	@echo "Checking migration status..."
-	./$(BUILD_DIR)/$(MIGRATE_BINARY) -config config.yaml -action status
 
 ## user-add: Add a new user
 user-add: build

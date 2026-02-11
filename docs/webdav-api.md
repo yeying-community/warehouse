@@ -5,9 +5,50 @@
 ## 1. 基本信息
 
 - Base URL：`http(s)://<host>:<port>`
-- WebDAV 前缀：来自 `webdav.prefix`（默认为 `/`）
+- WebDAV 前缀：来自 `webdav.prefix`（默认为 `/dav`）
   - 例如 `webdav.prefix: "/dav"`，则 WebDAV 路由为 `/dav/`
 - 每个用户的根目录为其配置的用户目录（服务端自动映射）
+
+### 1.1 修改 `webdav.prefix` 要改哪些地方（直接照做）
+
+下面按顺序改，保持一致即可：
+
+1) **后端配置**
+   - `config.yaml`：
+     ```yaml
+     webdav:
+       prefix: "/dav"   # 改成你想要的前缀，例如 "/" 或 "/webdav"
+     ```
+
+2) **WebDAV 客户端地址**
+   - 把客户端 URL 的前缀改成上面配置值  
+     例：前缀 `/dav` → `http://host:6065/dav/`  
+     例：前缀 `/` → `http://host:6065/`
+
+3) **前端 Web UI（构建时）**
+   - 设置环境变量 `VITE_WEBDAV_PREFIX` 与后端一致：
+     ```bash
+     VITE_WEBDAV_PREFIX=/dav   # 或 /
+     ```
+
+4) **Nginx/Ingress 代理**
+   - 后端前缀 **就是** `/dav`（保留前缀）：
+     ```nginx
+     location /dav/ { proxy_pass http://127.0.0.1:6065; }
+     ```
+   - 后端前缀 **是** `/`（需要剥离 `/dav`）：
+     ```nginx
+     location /dav/ { proxy_pass http://127.0.0.1:6065/; }
+     ```
+
+5) **开发环境（Vite）**
+   - 后端前缀 `/dav`：`web/vite.config.ts` 的 `/dav` 代理 **不要** rewrite
+   - 后端前缀 `/`：给 `/dav` 代理加 rewrite：
+     ```ts
+     rewrite: (path) => path.replace(/^\/dav(?=\/|$)/, '') || '/'
+     ```
+
+> API 接口（如 `/api/v1/public/*`）不受 `webdav.prefix` 影响，无需修改。
 
 ## 2. 认证方式
 

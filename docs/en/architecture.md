@@ -63,7 +63,7 @@ flowchart TB
   - Health: `/api/v1/public/health/heartbeat`
   - Web3 auth: `/api/v1/public/auth/*`
 - Protected APIs: quota, user info, recycle, share, address book
-- WebDAV: all requests under `webdav.prefix` (default `/`)
+- WebDAV: all requests under `webdav.prefix` (default `/dav`)
 
 ## Middleware + Auth Chain
 

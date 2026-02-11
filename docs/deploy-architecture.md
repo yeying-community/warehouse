@@ -104,7 +104,7 @@ server {
     try_files $uri /index.html;
   }
 
-  location /api/v1/ {
+  location /api/ {
     proxy_pass http://127.0.0.1:6065;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -123,7 +123,18 @@ location /dav/ { proxy_pass http://127.0.0.1:6065; }
 location / { try_files $uri /index.html; }
 ```
 
-并在 WebDAV 服务配置中把 `webdav.prefix` 设置为 `/dav`，避免路径错乱。
+后端保持 `webdav.prefix: "/dav"`（默认值）即可。
+如需后端使用 `/` 前缀，可将 `proxy_pass` 改为带尾斜杠版本以剥离 `/dav`。
+
+### 4.1 修改 `webdav.prefix` 的代理规则对照
+
+| 前端访问路径 | 后端 `webdav.prefix` | Nginx 配置 | 说明 |
+| --- | --- | --- | --- |
+| `/dav/` | `/dav` | `location /dav/ { proxy_pass http://127.0.0.1:6065; }` | 保留前缀 |
+| `/dav/` | `/` | `location /dav/ { proxy_pass http://127.0.0.1:6065/; }` | 剥离前缀 |
+| `/webdav/` | `/webdav` | `location /webdav/ { proxy_pass http://127.0.0.1:6065; }` | 自定义前缀 |
+
+> `proxy_pass` 末尾是否带 `/` 决定是否剥离前缀。
 
 ## 5. 请求流说明
 

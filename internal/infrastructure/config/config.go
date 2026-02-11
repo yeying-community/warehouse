@@ -124,7 +124,7 @@ func DefaultConfig() *Config {
 			MaxLifetime:  5 * time.Minute,
 		},
 		WebDAV: WebDAVConfig{
-			Prefix:      "/",
+			Prefix:      "/dav",
 			Directory:   "/data",
 			NoSniff:     true,
 			Permissions: "R",

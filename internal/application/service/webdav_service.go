@@ -674,6 +674,12 @@ func (s *WebDAVService) checkAppScope(ctx context.Context, r *http.Request) erro
 	}
 
 	sourcePath := s.normalizeWebdavRequestPath(r.URL.Path)
+	if isAppScopeRootPath(sourcePath, scope.prefix) {
+		if isAppScopeRootMethod(r.Method) {
+			return nil
+		}
+		return auth.ErrAppScopeDenied
+	}
 	actions := requiredActionsForWebdavMethod(r.Method)
 	if !scope.allowsAny(sourcePath, actions...) {
 		return auth.ErrAppScopeDenied
@@ -683,6 +689,9 @@ func (s *WebDAVService) checkAppScope(ctx context.Context, r *http.Request) erro
 		dest := strings.TrimSpace(r.Header.Get("Destination"))
 		if dest != "" {
 			destPath := s.normalizeWebdavRequestPath(dest)
+			if isAppScopeRootPath(destPath, scope.prefix) {
+				return auth.ErrAppScopeDenied
+			}
 			if !scope.allowsAny(destPath, actions...) {
 				return auth.ErrAppScopeDenied
 			}
@@ -690,6 +699,21 @@ func (s *WebDAVService) checkAppScope(ctx context.Context, r *http.Request) erro
 	}
 
 	return nil
+}
+
+func isAppScopeRootPath(rawPath, prefix string) bool {
+	normalizedPath := normalizeScopePath(rawPath)
+	normalizedPrefix := strings.TrimSuffix(normalizeScopePrefix(prefix), "/")
+	return normalizedPath == normalizedPrefix
+}
+
+func isAppScopeRootMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case "GET", "HEAD", "OPTIONS", "PROPFIND", "REPORT", "SEARCH", "MKCOL":
+		return true
+	default:
+		return false
+	}
 }
 
 func requiredActionsForWebdavMethod(method string) []string {

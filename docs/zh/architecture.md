@@ -63,7 +63,7 @@ flowchart TB
   - 健康检查 `/api/v1/public/health/heartbeat`
   - Web3 登录流程 `/api/v1/public/auth/*`
 - 受保护 API：配额、用户信息、回收站、分享、地址簿等
-- WebDAV：`webdav.prefix` 前缀下的所有请求（默认 `/`）
+- WebDAV：`webdav.prefix` 前缀下的所有请求（默认 `/dav`）
 
 ## 中间件与认证链路
 

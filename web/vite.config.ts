@@ -62,7 +62,7 @@ export default defineConfig(({ command, mode }) => {
         // WebDAV 使用 /dav 前缀
         '/dav': {
           target: 'http://localhost:6065',
-          changeOrigin: true,
+          changeOrigin: true
         }
       },
     },
