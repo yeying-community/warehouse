@@ -1066,6 +1066,16 @@ function normalizeShareRelative(path: string) {
   return path.replace(/^\/+/, '').replace(/\/$/, '')
 }
 
+function stripDavPrefix(path: string): string {
+  if (DAV_PREFIX === '/') return path
+  if (path === DAV_PREFIX) return '/'
+  if (path.startsWith(DAV_PREFIX + '/')) {
+    const trimmed = path.slice(DAV_PREFIX.length)
+    return trimmed || '/'
+  }
+  return path
+}
+
 function formatRecycleFullPath(path: string): string {
   const trimmed = String(path || '').replace(/^\/+/, '').replace(/\/+$/, '')
   if (!trimmed) return '/'
@@ -1082,8 +1092,9 @@ function formatRecycleLocation(path: string): string {
 
 function normalizeSharePath(path: string): string {
   if (!path) return '/'
-  let cleaned = path.trim()
+  let cleaned = stripUrlToPath(path).trim()
   if (!cleaned.startsWith('/')) cleaned = '/' + cleaned
+  cleaned = stripDavPrefix(cleaned)
   cleaned = cleaned.replace(/\/+$/, '')
   return cleaned || '/'
 }

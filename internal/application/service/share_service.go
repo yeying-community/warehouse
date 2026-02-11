@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,7 +42,7 @@ func NewShareService(
 
 // Create 创建分享链接
 func (s *ShareService) Create(ctx context.Context, u *user.User, rawPath string, expiresIn int64) (*share.ShareItem, error) {
-	cleanPath, err := normalizeSharePath(rawPath)
+	cleanPath, err := normalizeSharePath(rawPath, s.webdavPrefix())
 	if err != nil {
 		return nil, err
 	}
@@ -90,11 +91,31 @@ func (s *ShareService) List(ctx context.Context, u *user.User) ([]*share.ShareIt
 		return nil, err
 	}
 	if !scope.active {
+		for _, item := range items {
+			normalized, err := s.normalizeItemPath(item.Path)
+			if err != nil {
+				s.logger.Warn("invalid share path",
+					zap.String("username", u.Username),
+					zap.String("path", item.Path),
+					zap.Error(err))
+				continue
+			}
+			item.Path = normalized
+		}
 		return items, nil
 	}
 	filtered := make([]*share.ShareItem, 0, len(items))
 	for _, item := range items {
-		if scope.allowsAny(item.Path, "read") {
+		normalized, err := s.normalizeItemPath(item.Path)
+		if err != nil {
+			s.logger.Warn("invalid share path",
+				zap.String("username", u.Username),
+				zap.String("path", item.Path),
+				zap.Error(err))
+			continue
+		}
+		item.Path = normalized
+		if scope.allowsAny(normalized, "read") {
 			filtered = append(filtered, item)
 		}
 	}
@@ -110,7 +131,12 @@ func (s *ShareService) Revoke(ctx context.Context, u *user.User, token string) e
 	if item.UserID != u.ID {
 		return fmt.Errorf("permission denied: not your share")
 	}
-	if err := enforceAppScope(ctx, s.config, item.Path, "delete"); err != nil {
+	normalized, err := s.normalizeItemPath(item.Path)
+	if err != nil {
+		return err
+	}
+	item.Path = normalized
+	if err := enforceAppScope(ctx, s.config, normalized, "delete"); err != nil {
 		return err
 	}
 	return s.shareRepo.DeleteByToken(ctx, token)
@@ -141,7 +167,12 @@ func (s *ShareService) Resolve(ctx context.Context, token string) (*share.ShareI
 		return nil, nil, nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	fullPath := s.resolveFullPath(u, item.Path)
+	normalized, err := s.normalizeItemPath(item.Path)
+	if err != nil {
+		return nil, nil, nil, share.ErrInvalidShare
+	}
+	item.Path = normalized
+	fullPath := s.resolveFullPath(u, normalized)
 	f, err := os.Open(fullPath)
 	if err != nil {
 		return nil, nil, nil, err
@@ -175,7 +206,19 @@ func (s *ShareService) getUserRootDir(u *user.User) string {
 	return filepath.Join(s.config.WebDAV.Directory, userDir)
 }
 
-func normalizeSharePath(raw string) (string, error) {
+func (s *ShareService) webdavPrefix() string {
+	if s == nil || s.config == nil {
+		return ""
+	}
+	return s.config.WebDAV.Prefix
+}
+
+func (s *ShareService) normalizeItemPath(raw string) (string, error) {
+	return normalizeSharePath(raw, s.webdavPrefix())
+}
+
+func normalizeSharePath(raw string, prefix string) (string, error) {
+	raw = stripWebdavPrefix(raw, prefix)
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", fmt.Errorf("path is required")
@@ -186,4 +229,39 @@ func normalizeSharePath(raw string) (string, error) {
 	}
 	clean = strings.TrimSuffix(clean, "/")
 	return clean, nil
+}
+
+func stripWebdavPrefix(rawPath string, prefix string) string {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return "/"
+	}
+	if strings.HasPrefix(rawPath, "http://") || strings.HasPrefix(rawPath, "https://") {
+		if u, err := url.Parse(rawPath); err == nil && u.Path != "" {
+			rawPath = u.Path
+		}
+	}
+	if !strings.HasPrefix(rawPath, "/") {
+		rawPath = "/" + rawPath
+	}
+
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || prefix == "/" {
+		return rawPath
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
+	if rawPath == prefix {
+		return "/"
+	}
+	if strings.HasPrefix(rawPath, prefix+"/") {
+		trimmed := strings.TrimPrefix(rawPath, prefix)
+		if trimmed == "" {
+			return "/"
+		}
+		return trimmed
+	}
+	return rawPath
 }

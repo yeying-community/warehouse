@@ -45,7 +45,7 @@ func NewShareUserService(
 
 // Create 创建定向分享
 func (s *ShareUserService) Create(ctx context.Context, owner *user.User, targetWallet string, rawPath string, permissions string, expiresIn int64) (*shareuser.ShareUserItem, error) {
-	cleanPath, err := normalizeSharePath(rawPath)
+	cleanPath, err := normalizeSharePath(rawPath, s.webdavPrefix())
 	if err != nil {
 		return nil, err
 	}
@@ -123,6 +123,17 @@ func (s *ShareUserService) autoTrackAddress(ctx context.Context, owner *user.Use
 	}
 }
 
+func (s *ShareUserService) webdavPrefix() string {
+	if s == nil || s.config == nil {
+		return ""
+	}
+	return s.config.WebDAV.Prefix
+}
+
+func (s *ShareUserService) normalizeItemPath(raw string) (string, error) {
+	return normalizeSharePath(raw, s.webdavPrefix())
+}
+
 func shortenWallet(address string) string {
 	trimmed := strings.TrimSpace(address)
 	if len(trimmed) <= 10 {
@@ -142,11 +153,31 @@ func (s *ShareUserService) ListByOwner(ctx context.Context, owner *user.User) ([
 		return nil, err
 	}
 	if !scope.active {
+		for _, item := range items {
+			normalized, err := s.normalizeItemPath(item.Path)
+			if err != nil {
+				s.logger.Warn("invalid share user path",
+					zap.String("owner", owner.Username),
+					zap.String("path", item.Path),
+					zap.Error(err))
+				continue
+			}
+			item.Path = normalized
+		}
 		return items, nil
 	}
 	filtered := make([]*shareuser.ShareUserItem, 0, len(items))
 	for _, item := range items {
-		if scope.allowsAny(item.Path, "read") {
+		normalized, err := s.normalizeItemPath(item.Path)
+		if err != nil {
+			s.logger.Warn("invalid share user path",
+				zap.String("owner", owner.Username),
+				zap.String("path", item.Path),
+				zap.Error(err))
+			continue
+		}
+		item.Path = normalized
+		if scope.allowsAny(normalized, "read") {
 			filtered = append(filtered, item)
 		}
 	}
@@ -164,11 +195,31 @@ func (s *ShareUserService) ListByTarget(ctx context.Context, target *user.User) 
 		return nil, err
 	}
 	if !scope.active {
+		for _, item := range items {
+			normalized, err := s.normalizeItemPath(item.Path)
+			if err != nil {
+				s.logger.Warn("invalid share user path",
+					zap.String("target", target.Username),
+					zap.String("path", item.Path),
+					zap.Error(err))
+				continue
+			}
+			item.Path = normalized
+		}
 		return items, nil
 	}
 	filtered := make([]*shareuser.ShareUserItem, 0, len(items))
 	for _, item := range items {
-		if scope.allowsAny(item.Path, "read") {
+		normalized, err := s.normalizeItemPath(item.Path)
+		if err != nil {
+			s.logger.Warn("invalid share user path",
+				zap.String("target", target.Username),
+				zap.String("path", item.Path),
+				zap.Error(err))
+			continue
+		}
+		item.Path = normalized
+		if scope.allowsAny(normalized, "read") {
 			filtered = append(filtered, item)
 		}
 	}
@@ -202,7 +253,12 @@ func (s *ShareUserService) ResolveForTarget(ctx context.Context, target *user.Us
 	if item.TargetUserID != target.ID {
 		return nil, nil, fmt.Errorf("permission denied: not your share")
 	}
-	if err := enforceAppScope(ctx, s.config, item.Path, requiredActions...); err != nil {
+	normalized, err := s.normalizeItemPath(item.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	item.Path = normalized
+	if err := enforceAppScope(ctx, s.config, normalized, requiredActions...); err != nil {
 		return nil, nil, err
 	}
 	owner, err := s.userRepo.FindByID(ctx, item.OwnerUserID)
@@ -214,7 +270,12 @@ func (s *ShareUserService) ResolveForTarget(ctx context.Context, target *user.Us
 
 // ResolveSharePath 解析分享路径并确保在分享范围内
 func (s *ShareUserService) ResolveSharePath(owner *user.User, item *shareuser.ShareUserItem, relative string) (string, string, error) {
-	baseRel := strings.TrimPrefix(item.Path, "/")
+	normalized, err := s.normalizeItemPath(item.Path)
+	if err != nil {
+		return "", "", err
+	}
+	item.Path = normalized
+	baseRel := strings.TrimPrefix(normalized, "/")
 	baseRel = path.Clean("/" + baseRel)
 	if baseRel == "/" || strings.HasPrefix(baseRel, "/..") {
 		return "", "", fmt.Errorf("invalid share path")
