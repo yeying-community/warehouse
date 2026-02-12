@@ -24,10 +24,8 @@ if [[ ! -d "${ROOT_DIR}/web/node_modules" ]]; then
 fi
 (cd "${ROOT_DIR}/web" && npm run build)
 
-if [[ ! -x "${ROOT_DIR}/build/webdav" ]]; then
-  echo "Building backend binary..."
-  (cd "${ROOT_DIR}" && make build)
-fi
+echo "Building backend binary..."
+(cd "${ROOT_DIR}" && make build)
 
 if [[ ! -x "${ROOT_DIR}/build/webdav" ]]; then
   echo "webdav binary not found: ${ROOT_DIR}/build/webdav" >&2
