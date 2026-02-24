@@ -126,6 +126,14 @@ sequenceDiagram
 - 校验用户密码后，要求用户必须绑定钱包地址。
 - 使用钱包地址生成 JWT access/refresh 令牌。
 
+### 邮箱验证码登录
+
+- `email.enabled=true` 时开放接口。
+- `/api/v1/public/auth/email/code` 发送验证码到邮箱。
+- `/api/v1/public/auth/email/login` 使用邮箱 + 验证码登录。
+- `email.auto_create_on_login=true` 时邮箱不存在会自动创建账号。
+- 登录成功后颁发 JWT access/refresh 令牌，并写入 `refresh_token` Cookie。
+
 ## UCAN 支持
 
 - 当 `web3.ucan.enabled=true` 时，Bearer token 若是 UCAN JWS 格式，将走 UCAN 验证。

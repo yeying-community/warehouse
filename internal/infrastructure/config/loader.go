@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
@@ -90,7 +92,9 @@ func (l *Loader) overrideFromEnv(config *Config) {
 		config.Server.Address = v
 	}
 	if v := os.Getenv("WEBDAV_PORT"); v != "" {
-		// 解析端口...
+		if port, err := strconv.Atoi(v); err == nil {
+			config.Server.Port = port
+		}
 	}
 	if v := os.Getenv("WEBDAV_JWT_SECRET"); v != "" {
 		config.Web3.JWTSecret = v
@@ -118,6 +122,66 @@ func (l *Loader) overrideFromEnv(config *Config) {
 	if v := os.Getenv("WEBDAV_ADMIN_ADDRESSES"); v != "" {
 		config.Security.AdminAddresses = strings.Split(v, ",")
 	}
+
+	if v := os.Getenv("WEBDAV_EMAIL_ENABLED"); v != "" {
+		config.Email.Enabled = parseEnvBool(v)
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_SMTP_HOST"); v != "" {
+		config.Email.SMTPHost = v
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_SMTP_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			config.Email.SMTPPort = port
+		}
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_SMTP_USERNAME"); v != "" {
+		config.Email.SMTPUsername = v
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_SMTP_PASSWORD"); v != "" {
+		config.Email.SMTPPassword = v
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_FROM"); v != "" {
+		config.Email.From = v
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_FROM_NAME"); v != "" {
+		config.Email.FromName = v
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_TEMPLATE_PATH"); v != "" {
+		config.Email.TemplatePath = v
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_CODE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			config.Email.CodeTTL = d
+		}
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_SEND_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			config.Email.SendInterval = d
+		}
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_CODE_LENGTH"); v != "" {
+		if length, err := strconv.Atoi(v); err == nil {
+			config.Email.CodeLength = length
+		}
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_AUTO_CREATE_ON_LOGIN"); v != "" {
+		config.Email.AutoCreateOnLogin = parseEnvBool(v)
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_USE_TLS"); v != "" {
+		config.Email.UseTLS = parseEnvBool(v)
+	}
+	if v := os.Getenv("WEBDAV_EMAIL_INSECURE_SKIP_VERIFY"); v != "" {
+		config.Email.InsecureSkipVerify = parseEnvBool(v)
+	}
+}
+
+func parseEnvBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // validate 验证配置
@@ -132,6 +196,9 @@ func (l *Loader) validate(config *Config) error {
 	}
 	if err := l.validateWeb3(config); err != nil {
 		return fmt.Errorf("web3 config: %w", err)
+	}
+	if err := l.validateEmail(config); err != nil {
+		return fmt.Errorf("email config: %w", err)
 	}
 	if err := l.validateDatabase(config); err != nil {
 		return fmt.Errorf("database config: %w", err)
@@ -196,6 +263,38 @@ func (l *Loader) validateWeb3(config *Config) error {
 		return errors.New("jwt_secret must be at least 32 characters")
 	}
 
+	return nil
+}
+
+// validateEmail 验证邮箱登录配置
+func (l *Loader) validateEmail(config *Config) error {
+	if !config.Email.Enabled {
+		return nil
+	}
+	if config.Email.SMTPHost == "" {
+		return errors.New("smtp_host is required when email login is enabled")
+	}
+	if config.Email.SMTPPort <= 0 || config.Email.SMTPPort > 65535 {
+		return errors.New("smtp_port is invalid")
+	}
+	if config.Email.From == "" {
+		return errors.New("from is required when email login is enabled")
+	}
+	if config.Email.CodeTTL <= 0 {
+		return errors.New("code_ttl must be positive")
+	}
+	if config.Email.SendInterval < 0 {
+		return errors.New("send_interval must be non-negative")
+	}
+	if config.Email.CodeLength < 4 || config.Email.CodeLength > 10 {
+		return errors.New("code_length must be between 4 and 10")
+	}
+	if config.Email.TemplatePath == "" {
+		return errors.New("template_path is required when email login is enabled")
+	}
+	if _, err := os.Stat(config.Email.TemplatePath); err != nil {
+		return fmt.Errorf("template_path not found: %w", err)
+	}
 	return nil
 }
 

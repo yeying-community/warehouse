@@ -61,19 +61,33 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 		return nil, fmt.Errorf("invalid credentials type")
 	}
 
-	isUcan := isUcanToken(creds.Token)
-
 	// 验证 Token (UCAN 或 JWT)
-	address, err := a.verifyToken(creds.Token)
+	subject, subjectType, err := a.verifyTokenSubject(creds.Token)
 	if err != nil {
 		return nil, err
 	}
 
-	u, err := a.EnsureUserByWallet(ctx, address, isUcan && a.autoCreateOnUCAN)
+	if subjectType == "email" {
+		u, err := a.userRepo.FindByEmail(ctx, subject)
+		if err != nil {
+			if err == user.ErrUserNotFound {
+				a.logger.Debug("email not found", zap.String("email", subject))
+				return nil, err
+			}
+			return nil, err
+		}
+		a.logger.Debug("user authenticated via email token",
+			zap.String("username", u.Username),
+			zap.String("email", subject))
+		return u, nil
+	}
+
+	isUcan := isUcanToken(creds.Token)
+	u, err := a.EnsureUserByWallet(ctx, subject, isUcan && a.autoCreateOnUCAN)
 	if err != nil {
 		if err == user.ErrUserNotFound {
 			a.logger.Debug("wallet address not found",
-				zap.String("address", address))
+				zap.String("address", subject))
 			return nil, err
 		}
 		return nil, err
@@ -81,7 +95,7 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 
 	a.logger.Debug("user authenticated via web3",
 		zap.String("username", u.Username),
-		zap.String("address", address))
+		zap.String("address", subject))
 
 	return u, nil
 }
@@ -166,29 +180,47 @@ func (a *Web3Authenticator) EnrichContext(ctx context.Context, credentials inter
 	return middleware.WithUcanContext(ctx, &middleware.UcanContext{AppCaps: appCaps})
 }
 
-func (a *Web3Authenticator) verifyToken(token string) (string, error) {
+func (a *Web3Authenticator) verifyTokenSubject(token string) (string, string, error) {
 	if token == "" {
-		return "", auth.ErrInvalidToken
+		return "", "", auth.ErrInvalidToken
 	}
 
 	if isUcanToken(token) {
 		if a.ucanVerifier == nil || !a.ucanVerifier.Enabled() {
-			return "", auth.ErrInvalidToken
+			return "", "", auth.ErrInvalidToken
 		}
 		address, err := a.ucanVerifier.VerifyInvocation(token)
 		if err != nil {
 			a.logger.Debug("ucan verification failed", zap.Error(err))
-			return "", err
+			return "", "", err
 		}
-		return address, nil
+		return address, "wallet", nil
 	}
 
-	address, err := a.jwtManager.Verify(token)
+	claims, err := a.jwtManager.VerifyClaims(token)
 	if err != nil {
 		a.logger.Debug("jwt verification failed", zap.Error(err))
-		return "", err
+		return "", "", err
 	}
-	return address, nil
+
+	email := strings.TrimSpace(claims.Email)
+	if claims.SubjectType == "email" && email != "" {
+		return strings.ToLower(email), "email", nil
+	}
+
+	if claims.Address != "" {
+		return strings.ToLower(claims.Address), "wallet", nil
+	}
+
+	if email != "" {
+		return strings.ToLower(email), "email", nil
+	}
+
+	if claims.Subject != "" {
+		return strings.ToLower(claims.Subject), "wallet", nil
+	}
+
+	return "", "", auth.ErrInvalidToken
 }
 
 // CanHandle 是否可以处理该凭证
@@ -260,14 +292,48 @@ func (a *Web3Authenticator) GenerateAccessToken(address string) (*auth.Token, er
 	return a.jwtManager.Generate(address)
 }
 
+// GenerateAccessTokenForEmail 生成邮箱登录访问令牌
+func (a *Web3Authenticator) GenerateAccessTokenForEmail(email string) (*auth.Token, error) {
+	return a.jwtManager.GenerateForEmail(email)
+}
+
 // GenerateRefreshToken 生成刷新令牌
 func (a *Web3Authenticator) GenerateRefreshToken(address string) (*auth.Token, error) {
 	return a.jwtManager.GenerateRefresh(address, a.refreshExpiration)
 }
 
+// GenerateRefreshTokenForEmail 生成邮箱登录刷新令牌
+func (a *Web3Authenticator) GenerateRefreshTokenForEmail(email string) (*auth.Token, error) {
+	return a.jwtManager.GenerateRefreshForEmail(email, a.refreshExpiration)
+}
+
 // VerifyRefreshToken 验证刷新令牌
 func (a *Web3Authenticator) VerifyRefreshToken(token string) (string, error) {
-	return a.jwtManager.VerifyRefresh(token)
+	subject, _, err := a.VerifyRefreshTokenWithSubject(token)
+	return subject, err
+}
+
+// VerifyRefreshTokenWithSubject 验证刷新令牌并返回类型
+func (a *Web3Authenticator) VerifyRefreshTokenWithSubject(token string) (string, string, error) {
+	claims, err := a.jwtManager.VerifyRefreshClaims(token)
+	if err != nil {
+		return "", "", err
+	}
+
+	email := strings.TrimSpace(claims.Email)
+	if claims.SubjectType == "email" && email != "" {
+		return strings.ToLower(email), "email", nil
+	}
+	if claims.Address != "" {
+		return strings.ToLower(claims.Address), "wallet", nil
+	}
+	if email != "" {
+		return strings.ToLower(email), "email", nil
+	}
+	if claims.Subject != "" {
+		return strings.ToLower(claims.Subject), "wallet", nil
+	}
+	return "", "", auth.ErrInvalidToken
 }
 
 // GetJWTManager 获取 JWT 管理器（用于其他地方验证 token）

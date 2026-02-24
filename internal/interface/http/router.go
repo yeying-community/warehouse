@@ -17,6 +17,7 @@ type Router struct {
 	authenticators     []auth.Authenticator
 	healthHandler      *handler.HealthHandler
 	web3Handler        *handler.Web3Handler
+	emailAuthHandler   *handler.EmailAuthHandler
 	webdavHandler      *handler.WebDAVHandler
 	quotaHandler       *handler.QuotaHandler
 	userHandler        *handler.UserHandler
@@ -34,6 +35,7 @@ func NewRouter(
 	authenticators []auth.Authenticator,
 	healthHandler *handler.HealthHandler,
 	web3Handler *handler.Web3Handler,
+	emailAuthHandler *handler.EmailAuthHandler,
 	webdavHandler *handler.WebDAVHandler,
 	quotaHandler *handler.QuotaHandler,
 	userHandler *handler.UserHandler,
@@ -49,6 +51,7 @@ func NewRouter(
 		authenticators:     authenticators,
 		healthHandler:      healthHandler,
 		web3Handler:        web3Handler,
+		emailAuthHandler:   emailAuthHandler,
 		webdavHandler:      webdavHandler,
 		quotaHandler:       quotaHandler,
 		userHandler:        userHandler,
@@ -74,6 +77,10 @@ func (r *Router) Setup() http.Handler {
 	mux.HandleFunc("/api/v1/public/auth/refresh", r.web3Handler.HandleRefresh)
 	mux.HandleFunc("/api/v1/public/auth/logout", r.web3Handler.HandleLogout)
 	mux.HandleFunc("/api/v1/public/auth/password/login", r.web3Handler.HandlePasswordLogin)
+	if r.emailAuthHandler != nil {
+		mux.HandleFunc("/api/v1/public/auth/email/code", r.emailAuthHandler.HandleSendCode)
+		mux.HandleFunc("/api/v1/public/auth/email/login", r.emailAuthHandler.HandleLogin)
+	}
 
 	// API 路由（需要认证）
 	mux.Handle("/api/v1/public/webdav/quota", r.createAuthenticatedHandler(http.HandlerFunc(r.quotaHandler.GetUserQuota)))

@@ -15,8 +15,10 @@ var (
 	ErrInvalidUsername   = errors.New("invalid username")
 	ErrInvalidPassword   = errors.New("invalid password")
 	ErrInvalidAddress    = errors.New("invalid wallet address")
+	ErrInvalidEmail      = errors.New("invalid email")
 	ErrDuplicateUsername = errors.New("username already exists")
 	ErrDuplicateAddress  = errors.New("wallet address already exists")
+	ErrDuplicateEmail    = errors.New("email already exists")
 	ErrQuotaExceeded     = errors.New("storage quota exceeded") // 新增
 	ErrInvalidQuota      = errors.New("invalid quota value")    // 新增
 )
@@ -27,6 +29,7 @@ type User struct {
 	Username      string
 	Password      string // 加密后的密码
 	WalletAddress string // 以太坊钱包地址
+	Email         string
 	Directory     string
 	Permissions   *Permissions
 	Rules         []*Rule
@@ -82,6 +85,20 @@ func (u *User) SetWalletAddress(address string) error {
 		return ErrInvalidAddress
 	}
 	u.WalletAddress = strings.ToLower(address)
+	u.UpdatedAt = time.Now()
+	return nil
+}
+
+// SetEmail 设置邮箱
+func (u *User) SetEmail(email string) error {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" {
+		return ErrInvalidEmail
+	}
+	if !IsValidEmail(normalized) {
+		return ErrInvalidEmail
+	}
+	u.Email = normalized
 	u.UpdatedAt = time.Now()
 	return nil
 }
@@ -158,6 +175,11 @@ func (u *User) HasWalletAddress() bool {
 	return u.WalletAddress != ""
 }
 
+// HasEmail 是否设置了邮箱
+func (u *User) HasEmail() bool {
+	return u.Email != ""
+}
+
 // CanAccess 检查是否可以访问路径
 func (u *User) CanAccess(path string, requiredPerm string) bool {
 	// 先检查规则
@@ -202,6 +224,15 @@ func ParsePermissions(s string) *Permissions {
 	p.Delete = strings.Contains(s, "D")
 
 	return p
+}
+
+func IsValidEmail(email string) bool {
+	if len(email) > 254 {
+		return false
+	}
+	// 简单验证，避免过度复杂的正则
+	re := regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$`)
+	return re.MatchString(email)
 }
 
 // String 权限字符串表示

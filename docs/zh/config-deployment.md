@@ -21,6 +21,7 @@
 - `database.type` 仅支持 `postgres` / `postgresql`
 - `webdav.directory` 必须存在或可创建
 - 启用 TLS 时必须提供 `cert_file` / `key_file`
+- `email.enabled=true` 时需配置 SMTP 相关参数与模板路径
 
 ## 关键配置块
 
@@ -28,6 +29,7 @@
 - `database`：PostgreSQL 连接信息与连接池
 - `webdav`：根目录、前缀、NoSniff
 - `web3`：JWT 秘钥、Token 过期时间、UCAN 规则
+- `email`：邮箱验证码登录（SMTP、模板、TTL、频率）
 - `security`：无密码模式、反向代理标记、管理员地址白名单
 - `cors`：跨域设置
 

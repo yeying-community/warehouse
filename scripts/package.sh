@@ -44,6 +44,9 @@ mkdir -p "${STAGING_DIR}/bin" "${STAGING_DIR}/scripts" "${STAGING_DIR}/web"
 cp "${ROOT_DIR}/build/webdav" "${STAGING_DIR}/bin/"
 cp "${ROOT_DIR}/config.yaml.template" "${STAGING_DIR}/"
 cp "${ROOT_DIR}/scripts/starter.sh" "${STAGING_DIR}/scripts/"
+if [[ -d "${ROOT_DIR}/resources" ]]; then
+  cp -R "${ROOT_DIR}/resources" "${STAGING_DIR}/"
+fi
 cp -R "${ASSETS_DIR}" "${STAGING_DIR}/web/"
 
 mkdir -p "${OUTPUT_DIR}"

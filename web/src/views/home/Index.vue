@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, FolderAdd, FolderOpened, Refresh, Upload, DocumentCopy, Share, UserFilled, Search, MoreFilled } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, type RecycleItem, type ShareItem, type DirectShareItem } from '@/api'
-import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
+import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
@@ -30,6 +30,7 @@ const quota = ref({ quota: 0, used: 0, available: 0, percentage: 0, unlimited: t
 const userInfo = ref<{
   username: string
   wallet_address?: string
+  email?: string
   permissions: string[]
   created_at?: string
   updated_at?: string
@@ -42,6 +43,15 @@ const passwordLoginForm = ref({
   username: '',
   password: ''
 })
+const showEmailLoginForm = ref(false)
+const emailLoginForm = ref({
+  email: '',
+  code: ''
+})
+const emailCodeSending = ref(false)
+const emailLoginSubmitting = ref(false)
+const emailCodeCountdown = ref(0)
+let emailCodeTimer: number | null = null
 const walletHistory = ref<string[]>([])
 const selectedWalletAccount = ref('')
 let stopAccountWatch: (() => void) | null = null
@@ -555,6 +565,64 @@ async function handlePasswordLogin() {
   }
 }
 
+function clearEmailCodeTimer() {
+  if (emailCodeTimer !== null) {
+    clearInterval(emailCodeTimer)
+    emailCodeTimer = null
+  }
+}
+
+function startEmailCountdown(seconds: number) {
+  clearEmailCodeTimer()
+  emailCodeCountdown.value = Math.max(0, Math.floor(seconds))
+  if (emailCodeCountdown.value <= 0) return
+  emailCodeTimer = window.setInterval(() => {
+    if (emailCodeCountdown.value <= 1) {
+      emailCodeCountdown.value = 0
+      clearEmailCodeTimer()
+      return
+    }
+    emailCodeCountdown.value -= 1
+  }, 1000)
+}
+
+async function handleSendEmailCode() {
+  const email = emailLoginForm.value.email.trim()
+  if (!email) {
+    showError('请输入邮箱')
+    return
+  }
+  emailCodeSending.value = true
+  try {
+    const data = await sendEmailCode(email)
+    const retryAfter = Number(data?.retryAfter || 60)
+    startEmailCountdown(retryAfter)
+    showSuccess('验证码已发送')
+  } catch (error: any) {
+    showError(error?.message || '发送验证码失败')
+  } finally {
+    emailCodeSending.value = false
+  }
+}
+
+async function handleEmailLogin() {
+  const email = emailLoginForm.value.email.trim()
+  const code = emailLoginForm.value.code.trim()
+  if (!email || !code) {
+    showError('请输入邮箱和验证码')
+    return
+  }
+  emailLoginSubmitting.value = true
+  try {
+    await loginWithEmailCode(email, code)
+    window.location.reload()
+  } catch (error: any) {
+    showError(error?.message || '登录失败')
+  } finally {
+    emailLoginSubmitting.value = false
+  }
+}
+
 // 获取文件列表 (WebDAV PROPFIND)
 async function fetchFiles(path: string = '/') {
   loading.value = true
@@ -619,6 +687,8 @@ async function fetchUserInfo() {
     }
     if (data.wallet_address) {
       localStorage.setItem('walletAddress', data.wallet_address)
+    } else {
+      localStorage.removeItem('walletAddress')
     }
     if (Array.isArray(data.permissions)) {
       localStorage.setItem('permissions', JSON.stringify(data.permissions))
@@ -2543,6 +2613,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopAccountWatch?.()
+  clearEmailCodeTimer()
 })
 </script>
 
@@ -2605,6 +2676,50 @@ onBeforeUnmount(() => {
                 type="primary"
                 native-type="submit"
                 :loading="loginSubmitting"
+                class="login-submit"
+              >
+                登录
+              </el-button>
+            </el-form>
+          </div>
+        </div>
+        <div class="login-divider">或</div>
+        <div class="login-section">
+          <el-button type="primary" @click="showEmailLoginForm = !showEmailLoginForm">
+            邮箱登陆
+          </el-button>
+          <div class="login-form-shell" :class="{ 'is-collapsed': !showEmailLoginForm }">
+            <el-form class="login-form" @submit.prevent="handleEmailLogin">
+              <el-form-item>
+                <el-input
+                  v-model="emailLoginForm.email"
+                  placeholder="邮箱"
+                  autocomplete="email"
+                />
+              </el-form-item>
+              <el-form-item>
+                <div class="email-code-row">
+                  <el-input
+                    v-model="emailLoginForm.code"
+                    placeholder="验证码"
+                    autocomplete="one-time-code"
+                  />
+                  <el-button
+                    type="primary"
+                    class="email-code-button"
+                    native-type="button"
+                    :loading="emailCodeSending"
+                    :disabled="emailCodeCountdown > 0"
+                    @click="handleSendEmailCode"
+                  >
+                    {{ emailCodeCountdown > 0 ? `${emailCodeCountdown}s` : '发送验证码' }}
+                  </el-button>
+                </div>
+              </el-form-item>
+              <el-button
+                type="primary"
+                native-type="submit"
+                :loading="emailLoginSubmitting"
                 class="login-submit"
               >
                 登录
@@ -3360,6 +3475,21 @@ onBeforeUnmount(() => {
 
 .login-submit {
   width: 100%;
+}
+
+.email-code-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.email-code-row :deep(.el-input) {
+  flex: 1;
+}
+
+.email-code-button {
+  flex: none;
+  white-space: nowrap;
 }
 
 .login-form-shell {

@@ -21,6 +21,7 @@ Startup validation fails fast on:
 - `database.type` must be `postgres` / `postgresql`
 - `webdav.directory` must exist or be creatable
 - TLS requires `cert_file` / `key_file`
+- when `email.enabled=true`, SMTP settings and template path are required
 
 ## Key Config Blocks
 
@@ -28,6 +29,7 @@ Startup validation fails fast on:
 - `database`: PostgreSQL connection + pool
 - `webdav`: root directory, prefix, NoSniff
 - `web3`: JWT secret, token TTLs, UCAN rules
+- `email`: email code login (SMTP, template, TTL, rate limit)
 - `security`: no-password mode, reverse proxy flag, admin allowlist
 - `cors`: CORS settings
 

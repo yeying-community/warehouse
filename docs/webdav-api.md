@@ -199,7 +199,63 @@ Body：
 - 用户必须已绑定钱包地址，否则会返回 `NO_WALLET`。
 - 成功后会设置 `refresh_token` HttpOnly Cookie。
 
-### 3.5 Logout
+### 3.5 邮箱验证码登录（可选）
+
+发送验证码：
+
+- 方法：`POST`
+- 路径：`/api/v1/public/auth/email/code`
+
+Body：
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+成功响应 `data`：
+
+```json
+{
+  "email": "user@example.com",
+  "expiresAt": 1710000000000,
+  "retryAfter": 60
+}
+```
+
+使用验证码登录：
+
+- 方法：`POST`
+- 路径：`/api/v1/public/auth/email/login`
+
+Body：
+
+```json
+{
+  "email": "user@example.com",
+  "code": "123456"
+}
+```
+
+成功响应 `data`：
+
+```json
+{
+  "email": "user@example.com",
+  "username": "user",
+  "token": "<access_token>",
+  "expiresAt": 1710000000000,
+  "refreshExpiresAt": 1710000000000
+}
+```
+
+说明：
+- `email.enabled=true` 时生效。
+- `email.auto_create_on_login=true` 时，邮箱不存在会自动创建账号。
+- 成功后会设置 `refresh_token` HttpOnly Cookie。
+
+### 3.6 Logout
 
 - 方法：`POST`
 - 路径：`/api/v1/public/auth/logout`
@@ -214,7 +270,7 @@ Body：
 
 说明：服务端会清理 `refresh_token` Cookie。
 
-### 3.6 返回码字段说明
+### 3.7 返回码字段说明
 
 认证接口统一返回以下字段：
 
@@ -436,6 +492,7 @@ curl -u alice:password123 \
 {
   "username": "alice",
   "wallet_address": "0x...",
+  "email": "alice@example.com",
   "permissions": ["create", "read", "update", "delete"],
   "created_at": "2024-01-01 12:00:00",
   "updated_at": "2024-01-02 12:00:00",

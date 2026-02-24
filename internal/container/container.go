@@ -12,6 +12,7 @@ import (
 	infraAuth "github.com/yeying-community/webdav/internal/infrastructure/auth"
 	"github.com/yeying-community/webdav/internal/infrastructure/config"
 	"github.com/yeying-community/webdav/internal/infrastructure/database"
+	infraEmail "github.com/yeying-community/webdav/internal/infrastructure/email"
 	"github.com/yeying-community/webdav/internal/infrastructure/logger"
 	"github.com/yeying-community/webdav/internal/infrastructure/permission"
 	"github.com/yeying-community/webdav/internal/infrastructure/repository"
@@ -52,6 +53,7 @@ type Container struct {
 	// Handlers
 	HealthHandler      *handler.HealthHandler
 	Web3Handler        *handler.Web3Handler
+	EmailAuthHandler   *handler.EmailAuthHandler
 	WebDAVHandler      *handler.WebDAVHandler
 	QuotaHandler       *handler.QuotaHandler
 	UserHandler        *handler.UserHandler
@@ -285,6 +287,18 @@ func (c *Container) initHandlers() error {
 		)
 	}
 
+	// 邮箱验证码登录处理器
+	emailStore := infraAuth.NewEmailCodeStore()
+	emailSender := infraEmail.NewSender(c.Config.Email, c.Logger)
+	c.EmailAuthHandler = handler.NewEmailAuthHandler(
+		c.Web3Auth,
+		c.UserRepository,
+		emailStore,
+		emailSender,
+		c.Config.Email,
+		c.Logger,
+	)
+
 	// WebDAV 处理器
 	c.WebDAVHandler = handler.NewWebDAVHandler(
 		c.WebDAVService,
@@ -330,6 +344,7 @@ func (c *Container) initHTTP() error {
 		c.Authenticators,
 		c.HealthHandler,
 		c.Web3Handler,
+		c.EmailAuthHandler,
 		c.WebDAVHandler,
 		c.QuotaHandler,
 		c.UserHandler,

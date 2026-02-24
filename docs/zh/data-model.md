@@ -21,6 +21,7 @@ erDiagram
         string username
         string password
         string wallet_address
+        string email
         string directory
         string permissions
         int quota
@@ -109,8 +110,8 @@ erDiagram
 
 - `users.username` 唯一
 - `users.wallet_address` 唯一（非空时）
+- `users.email` 唯一（非空时）
 - `share_items.token` 唯一
 - `recycle_items.hash` 唯一
 - `address_groups(user_id, name)` 唯一
 - `address_contacts(user_id, wallet_address)` 唯一
-

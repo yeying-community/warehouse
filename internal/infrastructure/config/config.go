@@ -10,6 +10,7 @@ type Config struct {
 	Database DatabaseConfig `yaml:"database"` // 新增
 	WebDAV   WebDAVConfig   `yaml:"webdav"`
 	Web3     Web3Config     `yaml:"web3"`
+	Email    EmailConfig    `yaml:"email"`
 	Security SecurityConfig `yaml:"security"`
 	CORS     CORSConfig     `yaml:"cors"`
 	Log      LogConfig      `yaml:"log"`
@@ -58,6 +59,24 @@ type Web3Config struct {
 	AutoCreateOnChallenge  bool          `yaml:"auto_create_on_challenge"`
 	AutoCreateOnUCAN       bool          `yaml:"auto_create_on_ucan"`
 	UCAN                   UCANConfig    `yaml:"ucan"`
+}
+
+// EmailConfig 邮箱验证码登录配置
+type EmailConfig struct {
+	Enabled            bool          `yaml:"enabled"`
+	SMTPHost           string        `yaml:"smtp_host"`
+	SMTPPort           int           `yaml:"smtp_port"`
+	SMTPUsername       string        `yaml:"smtp_username"`
+	SMTPPassword       string        `yaml:"smtp_password"`
+	From               string        `yaml:"from"`
+	FromName           string        `yaml:"from_name"`
+	TemplatePath       string        `yaml:"template_path"`
+	CodeTTL            time.Duration `yaml:"code_ttl"`
+	SendInterval       time.Duration `yaml:"send_interval"`
+	CodeLength         int           `yaml:"code_length"`
+	AutoCreateOnLogin  bool          `yaml:"auto_create_on_login"`
+	UseTLS             bool          `yaml:"use_tls"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify"`
 }
 
 // UCANConfig UCAN authentication configuration
@@ -139,6 +158,22 @@ func DefaultConfig() *Config {
 					PathPrefix: "/apps",
 				},
 			},
+		},
+		Email: EmailConfig{
+			Enabled:            false,
+			SMTPHost:           "",
+			SMTPPort:           587,
+			SMTPUsername:       "",
+			SMTPPassword:       "",
+			From:               "",
+			FromName:           "WebDAV",
+			TemplatePath:       "resources/email/email_code_login_mail_template_zh-CN.html",
+			CodeTTL:            5 * time.Minute,
+			SendInterval:       60 * time.Second,
+			CodeLength:         6,
+			AutoCreateOnLogin:  true,
+			UseTLS:             false,
+			InsecureSkipVerify: false,
 		},
 		Security: SecurityConfig{
 			NoPassword:     false,

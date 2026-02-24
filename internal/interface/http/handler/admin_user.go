@@ -37,6 +37,7 @@ type adminUserCreateRequest struct {
 	Username      string             `json:"username"`
 	Password      string             `json:"password,omitempty"`
 	WalletAddress string             `json:"wallet_address,omitempty"`
+	Email         string             `json:"email,omitempty"`
 	Directory     string             `json:"directory,omitempty"`
 	Permissions   []string           `json:"permissions,omitempty"`
 	Quota         *int64             `json:"quota,omitempty"`
@@ -47,6 +48,7 @@ type adminUserUpdateRequest struct {
 	Username      string              `json:"username"`
 	NewUsername   *string             `json:"new_username,omitempty"`
 	WalletAddress *string             `json:"wallet_address,omitempty"`
+	Email         *string             `json:"email,omitempty"`
 	Directory     *string             `json:"directory,omitempty"`
 	Permissions   []string            `json:"permissions,omitempty"`
 	Quota         *int64              `json:"quota,omitempty"`
@@ -72,6 +74,7 @@ type adminUserResponse struct {
 	ID            string              `json:"id"`
 	Username      string              `json:"username"`
 	WalletAddress string              `json:"wallet_address,omitempty"`
+	Email         string              `json:"email,omitempty"`
 	Directory     string              `json:"directory"`
 	Permissions   []string            `json:"permissions"`
 	Quota         int64               `json:"quota"`
@@ -162,6 +165,13 @@ func (h *AdminUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if strings.TrimSpace(req.Email) != "" {
+		if err := u.SetEmail(strings.TrimSpace(req.Email)); err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid email")
+			return
+		}
+	}
+
 	if len(req.Permissions) > 0 {
 		perms, err := parsePermissionList(req.Permissions)
 		if err != nil {
@@ -188,7 +198,7 @@ func (h *AdminUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.userRepository.Save(r.Context(), u); err != nil {
-		if err == user.ErrDuplicateUsername || err == user.ErrDuplicateAddress {
+		if err == user.ErrDuplicateUsername || err == user.ErrDuplicateAddress || err == user.ErrDuplicateEmail {
 			h.writeError(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -261,6 +271,18 @@ func (h *AdminUserHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if req.Email != nil {
+		emailValue := strings.TrimSpace(*req.Email)
+		if emailValue == "" {
+			h.writeError(w, http.StatusBadRequest, "email cannot be empty")
+			return
+		}
+		if err := u.SetEmail(emailValue); err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid email")
+			return
+		}
+	}
+
 	if len(req.Permissions) > 0 {
 		perms, err := parsePermissionList(req.Permissions)
 		if err != nil {
@@ -293,7 +315,7 @@ func (h *AdminUserHandler) HandleUpdate(w http.ResponseWriter, r *http.Request) 
 	u.UpdatedAt = time.Now()
 
 	if err := h.userRepository.Save(r.Context(), u); err != nil {
-		if err == user.ErrDuplicateUsername || err == user.ErrDuplicateAddress {
+		if err == user.ErrDuplicateUsername || err == user.ErrDuplicateAddress || err == user.ErrDuplicateEmail {
 			h.writeError(w, http.StatusConflict, err.Error())
 			return
 		}
@@ -413,6 +435,7 @@ func buildAdminUserResponse(u *user.User) adminUserResponse {
 		ID:            u.ID,
 		Username:      u.Username,
 		WalletAddress: u.WalletAddress,
+		Email:         u.Email,
 		Directory:     u.Directory,
 		Permissions:   permissionsToStrings(u.Permissions),
 		Quota:         u.Quota,

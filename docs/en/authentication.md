@@ -121,6 +121,14 @@ sequenceDiagram
 - User must have a wallet address bound.
 - Access/refresh tokens are issued for that wallet address.
 
+### Email Code Login
+
+- Enabled when `email.enabled=true`.
+- `/api/v1/public/auth/email/code` sends a login code to the email.
+- `/api/v1/public/auth/email/login` verifies email + code and issues tokens.
+- When `email.auto_create_on_login=true`, missing emails are auto-provisioned.
+- Successful login issues JWT access/refresh tokens and sets the `refresh_token` cookie.
+
 ## UCAN Support
 
 - When `web3.ucan.enabled=true`, Bearer tokens that look like UCAN JWS are verified as UCAN.

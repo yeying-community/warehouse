@@ -62,6 +62,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			username VARCHAR(255) UNIQUE NOT NULL,
 			password TEXT,
 			wallet_address VARCHAR(42) UNIQUE,
+			email VARCHAR(255) UNIQUE,
 			directory TEXT NOT NULL,
 			permissions VARCHAR(10) NOT NULL DEFAULT 'R',
 			quota BIGINT NOT NULL DEFAULT 1073741824,
@@ -69,6 +70,10 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
+
+		// 兼容旧表结构：新增 email 字段
+		`ALTER TABLE IF EXISTS users
+			ADD COLUMN IF NOT EXISTS email VARCHAR(255)`,
 
 		// 创建用户规则表
 		`CREATE TABLE IF NOT EXISTS user_rules (
@@ -182,6 +187,9 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 
 		// 创建钱包地址索引
 		`CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address) WHERE wallet_address IS NOT NULL`,
+
+		// 创建邮箱索引
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL`,
 
 		// 创建用户名索引
 		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,

@@ -47,6 +47,23 @@ web3:
     app_scope:
       path_prefix: "/apps"
 
+# Email Login Configuration
+email:
+  enabled: false
+  smtp_host: "smtp.example.com"
+  smtp_port: 587
+  smtp_username: ""
+  smtp_password: ""
+  from: "noreply@example.com"
+  from_name: "WebDAV"
+  template_path: "resources/email/email_code_login_mail_template_zh-CN.html"
+  code_ttl: 5m
+  send_interval: 60s
+  code_length: 6
+  auto_create_on_login: true
+  use_tls: false
+  insecure_skip_verify: false
+
 # Security Configuration
 security:
   no_password: false

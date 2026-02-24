@@ -21,6 +21,7 @@ erDiagram
         string username
         string password
         string wallet_address
+        string email
         string directory
         string permissions
         int quota
@@ -109,8 +110,8 @@ erDiagram
 
 - `users.username` unique
 - `users.wallet_address` unique (when non-null)
+- `users.email` unique (when non-null)
 - `share_items.token` unique
 - `recycle_items.hash` unique
 - `address_groups(user_id, name)` unique
 - `address_contacts(user_id, wallet_address)` unique
-

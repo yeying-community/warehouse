@@ -59,6 +59,26 @@ web3:
     required_action: "read"
 ```
 
+# 邮箱验证码登录
+
+启用邮箱验证码登录需要在 `config.yaml` 中配置 SMTP，并把 `email.enabled` 设为 `true`：
+
+```yaml
+email:
+  enabled: true
+  smtp_host: "smtp.example.com"
+  smtp_port: 587
+  smtp_username: "user@example.com"
+  smtp_password: "your-password"
+  from: "noreply@example.com"
+  from_name: "WebDAV"
+  template_path: "resources/email/email_code_login_mail_template_zh-CN.html"
+```
+
+接口：
+- 发送验证码：`POST /api/v1/public/auth/email/code`
+- 邮箱登录：`POST /api/v1/public/auth/email/login`
+
 # 常用命令行操作
 
 ```shell

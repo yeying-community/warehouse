@@ -381,7 +381,7 @@ func (h *Web3Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	address, err := h.web3Auth.VerifyRefreshToken(cookie.Value)
+	subject, subjectType, err := h.web3Auth.VerifyRefreshTokenWithSubject(cookie.Value)
 	if err != nil {
 		h.logger.Warn("invalid refresh token", zap.Error(err))
 		h.sendError(w, http.StatusUnauthorized, "INVALID_REFRESH_TOKEN", "Invalid refresh token")
@@ -390,24 +390,61 @@ func (h *Web3Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// 确认用户存在
 	ctx := r.Context()
-	if _, err := h.userRepo.FindByWalletAddress(ctx, address); err != nil {
-		if err == user.ErrUserNotFound {
-			h.sendError(w, http.StatusNotFound, "USER_NOT_FOUND", "Wallet address not registered")
+	switch subjectType {
+	case "email":
+		if _, err := h.userRepo.FindByEmail(ctx, subject); err != nil {
+			if err == user.ErrUserNotFound {
+				h.sendError(w, http.StatusNotFound, "USER_NOT_FOUND", "Email not registered")
+				return
+			}
+			h.logger.Error("failed to find user", zap.String("email", subject), zap.Error(err))
+			h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to process request")
 			return
 		}
-		h.logger.Error("failed to find user", zap.String("address", address), zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to process request")
+	default:
+		if _, err := h.userRepo.FindByWalletAddress(ctx, subject); err != nil {
+			if err == user.ErrUserNotFound {
+				h.sendError(w, http.StatusNotFound, "USER_NOT_FOUND", "Wallet address not registered")
+				return
+			}
+			h.logger.Error("failed to find user", zap.String("address", subject), zap.Error(err))
+			h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to process request")
+			return
+		}
+	}
+
+	if subjectType == "email" {
+		accessToken, err := h.web3Auth.GenerateAccessTokenForEmail(subject)
+		if err != nil {
+			h.logger.Error("failed to generate access token", zap.Error(err))
+			h.sendError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "Failed to generate token")
+			return
+		}
+		refreshToken, err := h.web3Auth.GenerateRefreshTokenForEmail(subject)
+		if err != nil {
+			h.logger.Error("failed to generate refresh token", zap.Error(err))
+			h.sendError(w, http.StatusInternalServerError, "REFRESH_TOKEN_FAILED", "Failed to generate refresh token")
+			return
+		}
+		h.setRefreshCookie(w, r, refreshToken.Value, refreshToken.ExpiresAt)
+
+		data := map[string]interface{}{
+			"address":          subject,
+			"token":            accessToken.Value,
+			"expiresAt":        accessToken.ExpiresAt.UnixMilli(),
+			"refreshExpiresAt": refreshToken.ExpiresAt.UnixMilli(),
+		}
+		h.sendSDKSuccess(w, data)
 		return
 	}
 
-	accessToken, err := h.web3Auth.GenerateAccessToken(address)
+	accessToken, err := h.web3Auth.GenerateAccessToken(subject)
 	if err != nil {
 		h.logger.Error("failed to generate access token", zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "TOKEN_GENERATION_FAILED", "Failed to generate token")
 		return
 	}
-
-	refreshToken, err := h.web3Auth.GenerateRefreshToken(address)
+	refreshToken, err := h.web3Auth.GenerateRefreshToken(subject)
 	if err != nil {
 		h.logger.Error("failed to generate refresh token", zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "REFRESH_TOKEN_FAILED", "Failed to generate refresh token")
@@ -417,7 +454,7 @@ func (h *Web3Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	h.setRefreshCookie(w, r, refreshToken.Value, refreshToken.ExpiresAt)
 
 	data := map[string]interface{}{
-		"address":          address,
+		"address":          subject,
 		"token":            accessToken.Value,
 		"expiresAt":        accessToken.ExpiresAt.UnixMilli(),
 		"refreshExpiresAt": refreshToken.ExpiresAt.UnixMilli(),

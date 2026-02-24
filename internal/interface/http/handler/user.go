@@ -32,6 +32,7 @@ func NewUserHandler(logger *zap.Logger, userRepo user.Repository) *UserHandler {
 type UserInfoResponse struct {
 	Username      string   `json:"username"`
 	WalletAddress string   `json:"wallet_address,omitempty"`
+	Email         string   `json:"email,omitempty"`
 	Permissions   []string `json:"permissions"`
 	CreatedAt     string   `json:"created_at,omitempty"`
 	UpdatedAt     string   `json:"updated_at,omitempty"`
@@ -57,6 +58,7 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 	response := UserInfoResponse{
 		Username:      u.Username,
 		WalletAddress: u.WalletAddress,
+		Email:         u.Email,
 		Permissions:   permissionsToStrings(u.Permissions),
 		HasPassword:   u.HasPassword(),
 	}

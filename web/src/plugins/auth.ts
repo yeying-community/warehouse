@@ -244,6 +244,72 @@ export async function loginWithPassword(username: string, password: string): Pro
   document.cookie = `authToken=${token}; path=/; max-age=86400`
 }
 
+// 发送邮箱验证码
+export async function sendEmailCode(email: string): Promise<{ expiresAt?: number; retryAfter?: number }> {
+  const response = await fetch(`${AUTH_BASE}/email/code`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'accept': 'application/json'
+    },
+    body: JSON.stringify({ email })
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || `HTTP ${response.status}`)
+  }
+
+  const payload = await response.json()
+  if (payload?.code !== 0) {
+    throw new Error(payload?.message || '发送验证码失败')
+  }
+
+  return payload?.data || {}
+}
+
+// 邮箱验证码登录
+export async function loginWithEmailCode(email: string, code: string): Promise<void> {
+  const response = await fetch(`${AUTH_BASE}/email/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'accept': 'application/json'
+    },
+    body: JSON.stringify({ email, code })
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(error || `HTTP ${response.status}`)
+  }
+
+  const payload = await response.json()
+  if (payload?.code !== 0) {
+    throw new Error(payload?.message || '登录失败')
+  }
+
+  const data = payload?.data || {}
+  const token = data.token
+  if (!token) {
+    throw new Error('登录失败：未返回 token')
+  }
+
+  setAccessToken(token)
+
+  const account = data.email || email
+  if (account) {
+    localStorage.setItem('currentAccount', account)
+  }
+  localStorage.removeItem('walletAddress')
+
+  if (data.username) {
+    localStorage.setItem('username', data.username)
+  }
+
+  document.cookie = `authToken=${token}; path=/; max-age=86400`
+}
+
 // 登出
 export function logout(): void {
   void sdkLogout({ baseUrl: AUTH_BASE }).catch((error) => {

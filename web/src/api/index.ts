@@ -96,6 +96,7 @@ export const userApi = {
     return request<{
       username: string
       wallet_address?: string
+      email?: string
       permissions: string[]
       created_at?: string
       updated_at?: string

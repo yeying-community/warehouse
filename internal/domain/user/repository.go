@@ -10,6 +10,9 @@ type Repository interface {
 	// FindByWalletAddress 根据钱包地址查找用户
 	FindByWalletAddress(ctx context.Context, address string) (*User, error)
 
+	// FindByEmail 根据邮箱查找用户
+	FindByEmail(ctx context.Context, email string) (*User, error)
+
 	// FindByID 根据ID查找用户
 	FindByID(ctx context.Context, id string) (*User, error)
 

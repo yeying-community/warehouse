@@ -23,7 +23,7 @@ func NewPostgresUserRepository(db *database.PostgresDB) (*PostgresUserRepository
 // FindByUsername 根据用户名查找用户
 func (r *PostgresUserRepository) FindByUsername(ctx context.Context, username string) (*user.User, error) {
 	query := `
-		SELECT id, username, password, wallet_address, directory, permissions, 
+		SELECT id, username, password, wallet_address, email, directory, permissions,
 		       quota, used_space, created_at, updated_at
 		FROM users
 		WHERE username = $1
@@ -32,6 +32,7 @@ func (r *PostgresUserRepository) FindByUsername(ctx context.Context, username st
 	u := &user.User{}
 	var walletAddress sql.NullString
 	var password sql.NullString
+	var email sql.NullString
 	var permissionsStr string
 
 	err := r.db.DB.QueryRowContext(ctx, query, username).Scan(
@@ -39,6 +40,7 @@ func (r *PostgresUserRepository) FindByUsername(ctx context.Context, username st
 		&u.Username,
 		&password,
 		&walletAddress,
+		&email,
 		&u.Directory,
 		&permissionsStr,
 		&u.Quota,
@@ -56,6 +58,7 @@ func (r *PostgresUserRepository) FindByUsername(ctx context.Context, username st
 
 	u.Password = password.String
 	u.WalletAddress = walletAddress.String
+	u.Email = email.String
 	u.Permissions = user.ParsePermissions(permissionsStr)
 
 	// 加载用户规则
@@ -71,7 +74,7 @@ func (r *PostgresUserRepository) FindByUsername(ctx context.Context, username st
 // FindByWalletAddress 根据钱包地址查找用户
 func (r *PostgresUserRepository) FindByWalletAddress(ctx context.Context, address string) (*user.User, error) {
 	query := `
-		SELECT id, username, password, wallet_address, directory, permissions,
+		SELECT id, username, password, wallet_address, email, directory, permissions,
 		       quota, used_space, created_at, updated_at
 		FROM users
 		WHERE LOWER(wallet_address) = LOWER($1)
@@ -80,6 +83,7 @@ func (r *PostgresUserRepository) FindByWalletAddress(ctx context.Context, addres
 	u := &user.User{}
 	var walletAddress sql.NullString
 	var password sql.NullString
+	var email sql.NullString
 	var permissionsStr string
 
 	err := r.db.DB.QueryRowContext(ctx, query, address).Scan(
@@ -87,6 +91,7 @@ func (r *PostgresUserRepository) FindByWalletAddress(ctx context.Context, addres
 		&u.Username,
 		&password,
 		&walletAddress,
+		&email,
 		&u.Directory,
 		&permissionsStr,
 		&u.Quota,
@@ -105,6 +110,7 @@ func (r *PostgresUserRepository) FindByWalletAddress(ctx context.Context, addres
 
 	u.Password = password.String
 	u.WalletAddress = walletAddress.String
+	u.Email = email.String
 	u.Permissions = user.ParsePermissions(permissionsStr)
 
 	// 加载用户规则
@@ -117,25 +123,27 @@ func (r *PostgresUserRepository) FindByWalletAddress(ctx context.Context, addres
 	return u, nil
 }
 
-// FindByID 根据ID查找用户
-func (r *PostgresUserRepository) FindByID(ctx context.Context, id string) (*user.User, error) {
+// FindByEmail 根据邮箱查找用户
+func (r *PostgresUserRepository) FindByEmail(ctx context.Context, emailAddress string) (*user.User, error) {
 	query := `
-		SELECT id, username, password, wallet_address, directory, permissions,
+		SELECT id, username, password, wallet_address, email, directory, permissions,
 		       quota, used_space, created_at, updated_at
 		FROM users
-		WHERE id = $1
+		WHERE LOWER(email) = LOWER($1)
 	`
 
 	u := &user.User{}
 	var walletAddress sql.NullString
 	var password sql.NullString
+	var email sql.NullString
 	var permissionsStr string
 
-	err := r.db.DB.QueryRowContext(ctx, query, id).Scan(
+	err := r.db.DB.QueryRowContext(ctx, query, emailAddress).Scan(
 		&u.ID,
 		&u.Username,
 		&password,
 		&walletAddress,
+		&email,
 		&u.Directory,
 		&permissionsStr,
 		&u.Quota,
@@ -153,6 +161,57 @@ func (r *PostgresUserRepository) FindByID(ctx context.Context, id string) (*user
 
 	u.Password = password.String
 	u.WalletAddress = walletAddress.String
+	u.Email = email.String
+	u.Permissions = user.ParsePermissions(permissionsStr)
+
+	rules, err := r.loadUserRules(ctx, u.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load user rules: %w", err)
+	}
+	u.Rules = rules
+
+	return u, nil
+}
+
+// FindByID 根据ID查找用户
+func (r *PostgresUserRepository) FindByID(ctx context.Context, id string) (*user.User, error) {
+	query := `
+		SELECT id, username, password, wallet_address, email, directory, permissions,
+		       quota, used_space, created_at, updated_at
+		FROM users
+		WHERE id = $1
+	`
+
+	u := &user.User{}
+	var walletAddress sql.NullString
+	var password sql.NullString
+	var email sql.NullString
+	var permissionsStr string
+
+	err := r.db.DB.QueryRowContext(ctx, query, id).Scan(
+		&u.ID,
+		&u.Username,
+		&password,
+		&walletAddress,
+		&email,
+		&u.Directory,
+		&permissionsStr,
+		&u.Quota,
+		&u.UsedSpace,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, user.ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query user: %w", err)
+	}
+
+	u.Password = password.String
+	u.WalletAddress = walletAddress.String
+	u.Email = email.String
 	u.Permissions = user.ParsePermissions(permissionsStr)
 
 	// 加载用户规则
@@ -185,6 +244,11 @@ func (r *PostgresUserRepository) Save(ctx context.Context, u *user.User) error {
 		walletAddress = &u.WalletAddress
 	}
 
+	var email *string
+	if u.Email != "" {
+		email = &u.Email
+	}
+
 	var password *string
 	if u.Password != "" {
 		password = &u.Password
@@ -194,14 +258,15 @@ func (r *PostgresUserRepository) Save(ctx context.Context, u *user.User) error {
 		// 更新用户
 		query := `
 			UPDATE users
-			SET username = $1, password = $2, wallet_address = $3, directory = $4,
-			    permissions = $5, quota = $6, used_space = $7
-			WHERE id = $8
+			SET username = $1, password = $2, wallet_address = $3, email = $4, directory = $5,
+			    permissions = $6, quota = $7, used_space = $8
+			WHERE id = $9
 		`
 		_, err = tx.ExecContext(ctx, query,
 			u.Username,
 			password,
 			walletAddress,
+			email,
 			u.Directory,
 			u.Permissions.String(),
 			u.Quota,
@@ -211,14 +276,15 @@ func (r *PostgresUserRepository) Save(ctx context.Context, u *user.User) error {
 	} else {
 		// 插入新用户
 		query := `
-			INSERT INTO users (id, username, password, wallet_address, directory, permissions, quota, used_space, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			INSERT INTO users (id, username, password, wallet_address, email, directory, permissions, quota, used_space, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		`
 		_, err = tx.ExecContext(ctx, query,
 			u.ID,
 			u.Username,
 			password,
 			walletAddress,
+			email,
 			u.Directory,
 			u.Permissions.String(),
 			u.Quota,
@@ -235,6 +301,9 @@ func (r *PostgresUserRepository) Save(ctx context.Context, u *user.User) error {
 			}
 			if strings.Contains(err.Error(), "wallet_address") {
 				return user.ErrDuplicateAddress
+			}
+			if strings.Contains(err.Error(), "email") {
+				return user.ErrDuplicateEmail
 			}
 		}
 		return fmt.Errorf("failed to save user: %w", err)
@@ -290,7 +359,7 @@ func (r *PostgresUserRepository) Delete(ctx context.Context, username string) er
 // List 列出所有用户
 func (r *PostgresUserRepository) List(ctx context.Context) ([]*user.User, error) {
 	query := `
-		SELECT id, username, password, wallet_address, directory, permissions,
+		SELECT id, username, password, wallet_address, email, directory, permissions,
 		       quota, used_space, created_at, updated_at
 		FROM users
 		ORDER BY created_at DESC
@@ -308,6 +377,7 @@ func (r *PostgresUserRepository) List(ctx context.Context) ([]*user.User, error)
 		u := &user.User{}
 		var walletAddress sql.NullString
 		var password sql.NullString
+		var email sql.NullString
 		var permissionsStr string
 
 		err := rows.Scan(
@@ -315,6 +385,7 @@ func (r *PostgresUserRepository) List(ctx context.Context) ([]*user.User, error)
 			&u.Username,
 			&password,
 			&walletAddress,
+			&email,
 			&u.Directory,
 			&permissionsStr,
 			&u.Quota,
@@ -328,6 +399,7 @@ func (r *PostgresUserRepository) List(ctx context.Context) ([]*user.User, error)
 
 		u.Password = password.String
 		u.WalletAddress = walletAddress.String
+		u.Email = email.String
 		u.Permissions = user.ParsePermissions(permissionsStr)
 
 		// 加载用户规则
