@@ -155,6 +155,29 @@ bash scripts/package.sh
 - 后端二进制输出为 `build/webdav`
 - 安装包输出到 `output/`
 
+## scripts/mount_davfs.sh
+
+用于 Linux 下通过 `davfs2` 将 WebDAV 目录挂载到本地目录，并支持 `fstab` 开机自动挂载：
+
+```shell
+# 一次性挂载
+bash scripts/mount_davfs.sh mount https://example.com/dav /mnt/webdav alice
+
+# 配置开机自动挂载（写入 /etc/fstab）
+bash scripts/mount_davfs.sh install-fstab https://example.com/dav /mnt/webdav alice
+
+# 取消开机自动挂载
+bash scripts/mount_davfs.sh remove-fstab /mnt/webdav
+
+# 卸载
+bash scripts/mount_davfs.sh umount /mnt/webdav
+```
+
+说明：
+- 依赖 `davfs2`（`mount.davfs`）
+- 账号密码写入 `/etc/davfs2/secrets`（`600` 权限）
+- `install-fstab` 默认写入 `nofail,_netdev`，避免开机网络未就绪导致启动失败
+
 # 用户相关的操作
 
 ```shell
