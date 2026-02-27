@@ -34,4 +34,4 @@ go.work.sum
 test_data/
 config.yaml
 build
-output
+output/
