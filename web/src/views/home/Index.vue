@@ -2621,110 +2621,138 @@ onBeforeUnmount(() => {
   <div class="home-container">
     <!-- 未登录状态 -->
     <div v-if="!isLoggedIn()" class="login-page">
-      <div class="login-card">
-        <div class="login-section">
-          <el-button
-            v-if="hasWallet()"
-            type="primary"
-            @click="handleWalletLogin"
-          >
-            钱包登陆
-          </el-button>
-          <div v-else class="login-warning">未检测到钱包插件</div>
-          <div v-if="hasWallet() && walletHistory.length" class="login-history">
-            <div class="login-history-title">选择历史账户</div>
-            <el-select
-              v-model="selectedWalletAccount"
-              placeholder="选择历史账户"
-              class="login-history-select"
-            >
-              <el-option
-                v-for="accountItem in walletHistory"
-                :key="accountItem"
-                :value="accountItem"
-                :label="shortenAddress(accountItem)"
-              >
-                <span class="mono">{{ accountItem }}</span>
-              </el-option>
-            </el-select>
+      <div class="login-floating-container">
+        <div class="login-top-banner">
+          <div class="login-top-banner-inner">
+            <div class="login-top-banner-logo"></div>
+            <span>
+              资产空间 · 支持钱包与账号登录
+              <a href="https://www.yeying.pub" target="_blank" rel="noopener noreferrer">
+                了解夜莺社区
+              </a>
+            </span>
           </div>
         </div>
-        <div class="login-divider">或</div>
-        <div class="login-section">
-          <el-button type="primary" @click="showPasswordLoginForm = !showPasswordLoginForm">
-            密码登陆
-          </el-button>
-          <div class="login-form-shell" :class="{ 'is-collapsed': !showPasswordLoginForm }">
-            <el-form class="login-form" @submit.prevent="handlePasswordLogin">
-              <el-form-item>
-                <el-input
-                  v-model="passwordLoginForm.username"
-                  placeholder="用户名"
-                  autocomplete="username"
-                />
-              </el-form-item>
-              <el-form-item>
-                <el-input
-                  v-model="passwordLoginForm.password"
-                  type="password"
-                  show-password
-                  placeholder="密码"
-                  autocomplete="current-password"
-                />
-              </el-form-item>
+        <div class="login-hero">
+          <div class="login-brand-block">
+            <div class="login-brand-mark"></div>
+            <p class="login-brand-sub">连接钱包或账号后，安全管理文件、分享与回收站</p>
+          </div>
+          <div class="login-card">
+            <div class="login-section">
+              <el-button
+                v-if="hasWallet()"
+                type="primary"
+                class="login-main-btn"
+                @click="handleWalletLogin"
+              >
+                钱包登陆
+              </el-button>
+              <div v-else class="login-warning">未检测到钱包插件</div>
+              <div v-if="hasWallet() && walletHistory.length" class="login-history">
+                <div class="login-history-title">选择历史账户</div>
+                <el-select
+                  v-model="selectedWalletAccount"
+                  placeholder="选择历史账户"
+                  class="login-history-select"
+                >
+                  <el-option
+                    v-for="accountItem in walletHistory"
+                    :key="accountItem"
+                    :value="accountItem"
+                    :label="shortenAddress(accountItem)"
+                  >
+                    <span class="mono">{{ accountItem }}</span>
+                  </el-option>
+                </el-select>
+              </div>
+            </div>
+            <div class="login-divider"><span>或</span></div>
+            <div class="login-section">
               <el-button
                 type="primary"
-                native-type="submit"
-                :loading="loginSubmitting"
-                class="login-submit"
+                class="login-main-btn"
+                @click="showPasswordLoginForm = !showPasswordLoginForm"
               >
-                登录
+                密码登陆
               </el-button>
-            </el-form>
-          </div>
-        </div>
-        <div class="login-divider">或</div>
-        <div class="login-section">
-          <el-button type="primary" @click="showEmailLoginForm = !showEmailLoginForm">
-            邮箱登陆
-          </el-button>
-          <div class="login-form-shell" :class="{ 'is-collapsed': !showEmailLoginForm }">
-            <el-form class="login-form" @submit.prevent="handleEmailLogin">
-              <el-form-item>
-                <el-input
-                  v-model="emailLoginForm.email"
-                  placeholder="邮箱"
-                  autocomplete="email"
-                />
-              </el-form-item>
-              <el-form-item>
-                <div class="email-code-row">
-                  <el-input
-                    v-model="emailLoginForm.code"
-                    placeholder="验证码"
-                    autocomplete="one-time-code"
-                  />
+              <div class="login-form-shell" :class="{ 'is-collapsed': !showPasswordLoginForm }">
+                <el-form class="login-form" @submit.prevent="handlePasswordLogin">
+                  <el-form-item>
+                    <el-input
+                      v-model="passwordLoginForm.username"
+                      placeholder="用户名"
+                      autocomplete="username"
+                    />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-input
+                      v-model="passwordLoginForm.password"
+                      type="password"
+                      show-password
+                      placeholder="密码"
+                      autocomplete="current-password"
+                    />
+                  </el-form-item>
                   <el-button
                     type="primary"
-                    class="email-code-button"
-                    native-type="button"
-                    :loading="emailCodeSending"
-                    :disabled="emailCodeCountdown > 0"
-                    @click="handleSendEmailCode"
+                    native-type="submit"
+                    :loading="loginSubmitting"
+                    class="login-submit"
                   >
-                    {{ emailCodeCountdown > 0 ? `${emailCodeCountdown}s` : '发送验证码' }}
+                    登录
                   </el-button>
-                </div>
-              </el-form-item>
+                </el-form>
+              </div>
+            </div>
+            <div class="login-divider"><span>或</span></div>
+            <div class="login-section">
               <el-button
                 type="primary"
-                native-type="submit"
-                :loading="emailLoginSubmitting"
-                class="login-submit"
+                class="login-main-btn"
+                @click="showEmailLoginForm = !showEmailLoginForm"
               >
-                登录
+                邮箱登陆
               </el-button>
-            </el-form>
+              <div class="login-form-shell" :class="{ 'is-collapsed': !showEmailLoginForm }">
+                <el-form class="login-form" @submit.prevent="handleEmailLogin">
+                  <el-form-item>
+                    <el-input
+                      v-model="emailLoginForm.email"
+                      placeholder="邮箱"
+                      autocomplete="email"
+                    />
+                  </el-form-item>
+                  <el-form-item>
+                    <div class="email-code-row">
+                      <el-input
+                        v-model="emailLoginForm.code"
+                        placeholder="验证码"
+                        autocomplete="one-time-code"
+                      />
+                      <el-button
+                        type="primary"
+                        class="email-code-button"
+                        native-type="button"
+                        :loading="emailCodeSending"
+                        :disabled="emailCodeCountdown > 0"
+                        @click="handleSendEmailCode"
+                      >
+                        {{ emailCodeCountdown > 0 ? `${emailCodeCountdown}s` : '发送验证码' }}
+                      </el-button>
+                    </div>
+                  </el-form-item>
+                  <el-button
+                    type="primary"
+                    native-type="submit"
+                    :loading="emailLoginSubmitting"
+                    class="login-submit"
+                  >
+                    登录
+                  </el-button>
+                </el-form>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -3415,37 +3443,140 @@ onBeforeUnmount(() => {
 
 .login-page {
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
   align-items: center;
+  width: 100%;
   height: 100%;
-  flex-direction: column;
-  gap: 16px;
+  padding: 24px;
+  box-sizing: border-box;
   color: #606266;
-  font-size: 16px;
-  padding-top: clamp(48px, 18vh, 180px);
+}
+
+.login-floating-container {
+  width: min(1080px, 94vw);
+  height: min(860px, 90vh);
+  min-height: 620px;
+  background: #ffffff;
+  border: 1px solid #dbe5f2;
+  border-radius: 20px;
+  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.14);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.login-top-banner {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 14px 24px;
+  box-sizing: border-box;
+  background: #eaf1fb;
+  border-bottom: 1px solid #dce7f7;
+}
+
+.login-top-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: #2f3f57;
+
+  span {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1.5;
+  }
+
+  a {
+    color: #2f7df6;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+}
+
+.login-top-banner-logo {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #2f7df6 0%, #6ab5ff 100%);
+}
+
+.login-hero {
+  flex: 1;
+  width: 100%;
+  padding: clamp(24px, 4vw, 44px);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: clamp(20px, 3vw, 40px);
+}
+
+.login-brand-block {
+  flex: 1;
+  align-items: flex-start;
+  text-align: left;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.login-brand-mark {
+  width: 74px;
+  height: 74px;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #2f7df6 0%, #79c4ff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 14px 30px rgba(47, 125, 246, 0.22);
+}
+
+.login-brand-sub {
+  margin: 0;
+  font-size: 14px;
+  color: #5f6b7b;
 }
 
 .login-warning {
-  color: #e6a23c;
+  color: #cf8a1f;
   font-size: 14px;
+  text-align: center;
+  background: #fff8eb;
+  border: 1px solid #f5dfb8;
+  border-radius: 10px;
+  padding: 8px 12px;
 }
 
 .login-card {
-  width: min(520px, 92vw);
+  width: min(430px, 100%);
   background: #fff;
-  border: 1px solid #eef1f4;
-  border-radius: 16px;
-  padding: 20px 24px;
+  border: 1px solid #e3ebf7;
+  border-radius: 14px;
+  padding: 18px 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
+  gap: 14px;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
 }
 
 .login-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+}
+
+.login-main-btn {
+  width: 100%;
+  height: 40px;
+  border-radius: 10px;
+  font-weight: 500;
 }
 
 .login-history {
@@ -3456,7 +3587,7 @@ onBeforeUnmount(() => {
 
 .login-history-title {
   font-size: 13px;
-  color: #909399;
+  color: #7b8797;
 }
 
 .login-history-select {
@@ -3464,9 +3595,20 @@ onBeforeUnmount(() => {
 }
 
 .login-divider {
-  color: #c0c4cc;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #9aa5b5;
   font-size: 12px;
-  text-align: center;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: #edf1f6;
 }
 
 .login-form :deep(.el-form-item) {
@@ -3493,16 +3635,91 @@ onBeforeUnmount(() => {
 }
 
 .login-form-shell {
+  width: 100%;
   overflow: hidden;
   max-height: 300px;
   opacity: 1;
-  transition: max-height 0.25s ease, opacity 0.2s ease;
+  transform-origin: top;
+  transition: max-height 0.28s ease, opacity 0.2s ease;
 }
 
 .login-form-shell.is-collapsed {
   max-height: 0;
   opacity: 0;
   pointer-events: none;
+}
+
+@media (max-width: 980px) {
+  .login-hero {
+    flex-direction: column;
+    justify-content: flex-start;
+  }
+
+  .login-brand-block {
+    align-items: center;
+    text-align: center;
+    max-width: none;
+  }
+
+  .login-card {
+    width: min(430px, 100%);
+  }
+}
+
+@media (max-width: 700px) {
+  .login-page {
+    padding: 0;
+  }
+
+  .login-floating-container {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border-radius: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .login-top-banner {
+    padding: 10px 12px;
+  }
+
+  .login-top-banner-inner {
+    font-size: 12px;
+  }
+
+  .login-hero {
+    padding: 18px 14px;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: stretch;
+    gap: 14px;
+  }
+
+  .login-brand-block {
+    align-items: center;
+    text-align: center;
+    max-width: none;
+  }
+
+  .login-brand-mark {
+    width: 62px;
+    height: 62px;
+    border-radius: 16px;
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 14px;
+  }
+
+  .email-code-row {
+    flex-wrap: wrap;
+  }
+
+  .email-code-button {
+    width: 100%;
+  }
 }
 
 .app-shell {

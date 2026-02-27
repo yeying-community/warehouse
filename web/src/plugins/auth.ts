@@ -4,6 +4,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || ''
 const AUTH_BASE = API_BASE ? `${API_BASE.replace(/\/+$/, '')}/api/v1/public/auth` : '/api/v1/public/auth'
 const ACCOUNT_HISTORY_KEY = 'webdav:accountHistory'
 const ACCOUNT_CHANGED_KEY = 'webdav:accountChanged'
+export const AUTH_CHANGED_EVENT = 'webdav:auth-changed'
 
 // 钱包 Provider 类型
 interface WalletProvider {
@@ -195,6 +196,7 @@ export async function loginWithWallet(preferredAccount?: string): Promise<void> 
       // 用于 Range/下载请求携带认证
       document.cookie = `authToken=${result.token}; path=/; max-age=86400`
     }
+    window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
   } catch (error) {
     throw new Error(`登录失败: ${error}`)
   }
@@ -242,6 +244,7 @@ export async function loginWithPassword(username: string, password: string): Pro
   }
 
   document.cookie = `authToken=${token}; path=/; max-age=86400`
+  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
 }
 
 // 发送邮箱验证码
@@ -308,6 +311,7 @@ export async function loginWithEmailCode(email: string, code: string): Promise<v
   }
 
   document.cookie = `authToken=${token}; path=/; max-age=86400`
+  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
 }
 
 // 登出
@@ -323,6 +327,7 @@ export function logout(): void {
   localStorage.removeItem('createdAt')
   // 清除 cookie
   document.cookie = 'authToken=; path=/; max-age=0'
+  window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
   window.location.reload()
 }
 
