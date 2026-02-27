@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeying-community/webdav/internal/application/assetspace"
 	"github.com/yeying-community/webdav/internal/domain/user"
 	infraAuth "github.com/yeying-community/webdav/internal/infrastructure/auth"
 	"github.com/yeying-community/webdav/internal/infrastructure/config"
@@ -19,30 +20,33 @@ import (
 
 // EmailAuthHandler 邮箱验证码登录处理器
 type EmailAuthHandler struct {
-	web3Auth *infraAuth.Web3Authenticator
-	userRepo user.Repository
-	store    *infraAuth.EmailCodeStore
-	sender   *email.Sender
-	config   config.EmailConfig
-	logger   *zap.Logger
+	web3Auth          *infraAuth.Web3Authenticator
+	userRepo          user.Repository
+	assetSpaceManager *assetspace.Manager
+	store             *infraAuth.EmailCodeStore
+	sender            *email.Sender
+	config            config.EmailConfig
+	logger            *zap.Logger
 }
 
 // NewEmailAuthHandler 创建邮箱验证码登录处理器
 func NewEmailAuthHandler(
 	web3Auth *infraAuth.Web3Authenticator,
 	userRepo user.Repository,
+	assetSpaceManager *assetspace.Manager,
 	store *infraAuth.EmailCodeStore,
 	sender *email.Sender,
 	cfg config.EmailConfig,
 	logger *zap.Logger,
 ) *EmailAuthHandler {
 	return &EmailAuthHandler{
-		web3Auth: web3Auth,
-		userRepo: userRepo,
-		store:    store,
-		sender:   sender,
-		config:   cfg,
-		logger:   logger,
+		web3Auth:          web3Auth,
+		userRepo:          userRepo,
+		assetSpaceManager: assetSpaceManager,
+		store:             store,
+		sender:            sender,
+		config:            cfg,
+		logger:            logger,
 	}
 }
 
@@ -154,6 +158,11 @@ func (h *EmailAuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.ensureAssetSpaces(u); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to initialize user spaces")
+		return
+	}
+
 	accessToken, err := h.web3Auth.GenerateAccessTokenForEmail(emailAddr)
 	if err != nil {
 		h.logger.Error("failed to generate access token", zap.Error(err))
@@ -220,6 +229,20 @@ func (h *EmailAuthHandler) createUserFromEmail(ctx context.Context, emailAddr st
 	}
 
 	return nil, fmt.Errorf("failed to create user: duplicate username")
+}
+
+func (h *EmailAuthHandler) ensureAssetSpaces(u *user.User) error {
+	if h == nil || h.assetSpaceManager == nil || u == nil {
+		return nil
+	}
+	if err := h.assetSpaceManager.EnsureForUser(u); err != nil {
+		h.logger.Error("failed to ensure user asset spaces",
+			zap.String("username", u.Username),
+			zap.String("directory", u.Directory),
+			zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 func sanitizeEmailUsername(emailAddr string) string {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeying-community/webdav/internal/application/assetspace"
 	"github.com/yeying-community/webdav/internal/domain/auth"
 	"github.com/yeying-community/webdav/internal/domain/user"
 	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
@@ -22,6 +23,7 @@ type Web3Authenticator struct {
 	ucanVerifier      *UcanVerifier
 	challengeStore    *ChallengeStore
 	ethSigner         *crypto.EthereumSigner
+	assetSpaceManager *assetspace.Manager
 	logger            *zap.Logger
 	refreshExpiration time.Duration
 	autoCreateOnUCAN  bool
@@ -34,6 +36,7 @@ func NewWeb3Authenticator(
 	tokenExpiration time.Duration,
 	refreshTokenExpiration time.Duration,
 	ucanVerifier *UcanVerifier,
+	assetSpaceManager *assetspace.Manager,
 	logger *zap.Logger,
 	autoCreateOnUCAN bool,
 ) *Web3Authenticator {
@@ -43,6 +46,7 @@ func NewWeb3Authenticator(
 		ucanVerifier:      ucanVerifier,
 		challengeStore:    NewChallengeStore(),
 		ethSigner:         crypto.NewEthereumSigner(),
+		assetSpaceManager: assetSpaceManager,
 		logger:            logger,
 		refreshExpiration: refreshTokenExpiration,
 		autoCreateOnUCAN:  autoCreateOnUCAN,
@@ -76,6 +80,9 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 			}
 			return nil, err
 		}
+		if err := a.ensureUserAssetSpaces(u); err != nil {
+			return nil, err
+		}
 		a.logger.Debug("user authenticated via email token",
 			zap.String("username", u.Username),
 			zap.String("email", subject))
@@ -103,11 +110,21 @@ func (a *Web3Authenticator) Authenticate(ctx context.Context, credentials interf
 func (a *Web3Authenticator) EnsureUserByWallet(ctx context.Context, address string, createIfMissing bool) (*user.User, error) {
 	u, err := a.userRepo.FindByWalletAddress(ctx, address)
 	if err == nil {
+		if ensureErr := a.ensureUserAssetSpaces(u); ensureErr != nil {
+			return nil, ensureErr
+		}
 		return u, nil
 	}
 	if err == user.ErrUserNotFound {
 		if createIfMissing {
-			return a.createUserFromWallet(ctx, address)
+			created, createErr := a.createUserFromWallet(ctx, address)
+			if createErr != nil {
+				return nil, createErr
+			}
+			if ensureErr := a.ensureUserAssetSpaces(created); ensureErr != nil {
+				return nil, ensureErr
+			}
+			return created, nil
 		}
 		return nil, err
 	}
@@ -159,6 +176,20 @@ func generateHumanReadableName() string {
 	return fmt.Sprintf("%s%s%d", adj, noun, num)
 }
 
+func (a *Web3Authenticator) ensureUserAssetSpaces(u *user.User) error {
+	if a == nil || a.assetSpaceManager == nil || u == nil {
+		return nil
+	}
+	if err := a.assetSpaceManager.EnsureForUser(u); err != nil {
+		a.logger.Error("failed to ensure user asset spaces",
+			zap.String("username", u.Username),
+			zap.String("directory", u.Directory),
+			zap.Error(err))
+		return err
+	}
+	return nil
+}
+
 // EnrichContext attaches UCAN scope info to the request context.
 func (a *Web3Authenticator) EnrichContext(ctx context.Context, credentials interface{}) context.Context {
 	creds, ok := credentials.(*auth.BearerCredentials)
@@ -173,11 +204,25 @@ func (a *Web3Authenticator) EnrichContext(ctx context.Context, credentials inter
 	caps, err := parseUcanCaps(token)
 	if err != nil {
 		a.logger.Debug("failed to parse ucan caps", zap.Error(err))
-		return middleware.WithUcanContext(ctx, &middleware.UcanContext{AppCaps: map[string][]string{}})
+		return middleware.WithUcanContext(ctx, &middleware.UcanContext{
+			AppCaps:        map[string][]string{},
+			HasAppCaps:     false,
+			InvalidAppCaps: []string{},
+		})
 	}
 
-	appCaps := extractAppCapsFromCaps(caps, "app:")
-	return middleware.WithUcanContext(ctx, &middleware.UcanContext{AppCaps: appCaps})
+	extracted := extractAppCapsFromCaps(caps, "app:")
+	if len(extracted.InvalidAppCaps) > 0 {
+		a.logger.Warn("ucan invalid app capability detected",
+			zap.String("invalid_app_caps", strings.Join(extracted.InvalidAppCaps, ", ")),
+			zap.String("hint", "use resource `app:<appId>` without wildcard, e.g. app:dapp.example.com"),
+		)
+	}
+	return middleware.WithUcanContext(ctx, &middleware.UcanContext{
+		AppCaps:        extracted.AppCaps,
+		HasAppCaps:     extracted.HasAppCaps,
+		InvalidAppCaps: extracted.InvalidAppCaps,
+	})
 }
 
 func (a *Web3Authenticator) verifyTokenSubject(token string) (string, string, error) {

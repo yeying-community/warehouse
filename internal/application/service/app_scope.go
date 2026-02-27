@@ -30,14 +30,25 @@ func resolveAppScope(ctx context.Context, cfg *config.Config) (appScopeInfo, err
 	if cfg == nil {
 		return appScopeInfo{}, nil
 	}
+	requireAppScope := requiresAppScope(cfg)
+	prefix := normalizeScopePrefix(cfg.Web3.UCAN.AppScope.PathPrefix)
+
 	ucanCtx, ok := middleware.GetUcanContext(ctx)
 	if !ok {
 		return appScopeInfo{}, nil
 	}
+	if len(ucanCtx.InvalidAppCaps) > 0 {
+		return appScopeInfo{}, auth.ErrAppScopeDenied
+	}
+	if requireAppScope && !ucanCtx.HasAppCaps {
+		return appScopeInfo{}, auth.ErrAppScopeRequired
+	}
 	if len(ucanCtx.AppCaps) == 0 {
+		if requireAppScope {
+			return appScopeInfo{active: true, prefix: prefix, actions: map[string]appActionSet{}}, nil
+		}
 		return appScopeInfo{}, nil
 	}
-	prefix := normalizeScopePrefix(cfg.Web3.UCAN.AppScope.PathPrefix)
 	allowedActions, hasFilter := parseAllowedActions(cfg.Web3.UCAN.RequiredAction)
 	actions := make(map[string]appActionSet, len(ucanCtx.AppCaps))
 	for appID, rawActions := range ucanCtx.AppCaps {
@@ -244,4 +255,25 @@ func splitActionList(raw string) []string {
 		out = append(out, part)
 	}
 	return out
+}
+
+func requiresAppScope(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	resource := strings.TrimSpace(cfg.Web3.UCAN.RequiredResource)
+	if resource == "" {
+		return false
+	}
+	resource = strings.ReplaceAll(resource, "|", ",")
+	for _, part := range strings.Split(resource, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			continue
+		}
+		if strings.HasPrefix(part, "app:") {
+			return true
+		}
+	}
+	return false
 }

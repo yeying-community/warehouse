@@ -155,22 +155,33 @@ func parseUcanCaps(token string) ([]UcanCapability, error) {
 	return payload.Cap, nil
 }
 
-func extractAppCapsFromCaps(caps []UcanCapability, resourcePrefix string) map[string][]string {
+type appCapExtraction struct {
+	AppCaps        map[string][]string
+	HasAppCaps     bool
+	InvalidAppCaps []string
+}
+
+func extractAppCapsFromCaps(caps []UcanCapability, resourcePrefix string) appCapExtraction {
 	prefix := strings.TrimSpace(resourcePrefix)
 	if prefix == "" {
 		prefix = "app:"
 	}
 	actionSets := make(map[string]map[string]struct{}, len(caps))
+	invalid := make([]string, 0)
+	hasAppCaps := false
 	for _, cap := range caps {
 		resource := strings.TrimSpace(cap.Resource)
 		if !strings.HasPrefix(resource, prefix) {
 			continue
 		}
+		hasAppCaps = true
 		appID := strings.TrimSpace(strings.TrimPrefix(resource, prefix))
 		if appID == "" || strings.Contains(appID, "*") {
+			invalid = append(invalid, fmt.Sprintf("%s#%s", resource, strings.TrimSpace(cap.Action)))
 			continue
 		}
 		if !isValidAppID(appID) {
+			invalid = append(invalid, fmt.Sprintf("%s#%s", resource, strings.TrimSpace(cap.Action)))
 			continue
 		}
 		if _, ok := actionSets[appID]; !ok {
@@ -191,7 +202,11 @@ func extractAppCapsFromCaps(caps []UcanCapability, resourcePrefix string) map[st
 		}
 		result[appID] = list
 	}
-	return result
+	return appCapExtraction{
+		AppCaps:        result,
+		HasAppCaps:     hasAppCaps,
+		InvalidAppCaps: invalid,
+	}
 }
 
 func isValidAppID(appID string) bool {

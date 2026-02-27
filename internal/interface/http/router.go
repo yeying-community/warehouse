@@ -18,6 +18,7 @@ type Router struct {
 	healthHandler      *handler.HealthHandler
 	web3Handler        *handler.Web3Handler
 	emailAuthHandler   *handler.EmailAuthHandler
+	assetsHandler      *handler.AssetsHandler
 	webdavHandler      *handler.WebDAVHandler
 	quotaHandler       *handler.QuotaHandler
 	userHandler        *handler.UserHandler
@@ -36,6 +37,7 @@ func NewRouter(
 	healthHandler *handler.HealthHandler,
 	web3Handler *handler.Web3Handler,
 	emailAuthHandler *handler.EmailAuthHandler,
+	assetsHandler *handler.AssetsHandler,
 	webdavHandler *handler.WebDAVHandler,
 	quotaHandler *handler.QuotaHandler,
 	userHandler *handler.UserHandler,
@@ -52,6 +54,7 @@ func NewRouter(
 		healthHandler:      healthHandler,
 		web3Handler:        web3Handler,
 		emailAuthHandler:   emailAuthHandler,
+		assetsHandler:      assetsHandler,
 		webdavHandler:      webdavHandler,
 		quotaHandler:       quotaHandler,
 		userHandler:        userHandler,
@@ -83,6 +86,9 @@ func (r *Router) Setup() http.Handler {
 	}
 
 	// API 路由（需要认证）
+	if r.assetsHandler != nil {
+		mux.Handle("/api/v1/public/assets/spaces", r.createAuthenticatedHandler(http.HandlerFunc(r.assetsHandler.GetSpaces)))
+	}
 	mux.Handle("/api/v1/public/webdav/quota", r.createAuthenticatedHandler(http.HandlerFunc(r.quotaHandler.GetUserQuota)))
 	mux.Handle("/api/v1/public/webdav/user/info", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.GetUserInfo)))
 	mux.Handle("/api/v1/public/webdav/user/update", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.UpdateUsername)))

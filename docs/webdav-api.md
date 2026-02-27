@@ -333,6 +333,33 @@ Body：
 
 因此建议客户端兼容：**先看 HTTP 状态码，再尝试 JSON 解析**。
 
+### 3.9 资产空间接口（个人资产 / 应用资产）
+
+- 方法：`GET`
+- 路径：`/api/v1/public/assets/spaces`
+- 鉴权：需要 Bearer Token（JWT/UCAN）
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "defaultSpace": "personal",
+    "spaces": [
+      { "key": "personal", "name": "个人资产", "path": "/personal" },
+      { "key": "apps", "name": "应用资产", "path": "/apps" }
+    ]
+  },
+  "timestamp": 1710000000000
+}
+```
+
+说明：
+- 服务端会在读取该接口前自动自愈用户空间目录（`personal` / `apps`），确保前端首次登录可直接展示双入口。
+- `spaces[].path` 中 `apps` 路径来自服务端配置的 app scope 前缀（默认 `/apps`）。
+
 ## 4. CRUD 方法矩阵
 
 | 目的 | 方法 | 路径 | 说明 |

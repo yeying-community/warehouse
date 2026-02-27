@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"github.com/yeying-community/webdav/internal/application/assetspace"
 	"github.com/yeying-community/webdav/internal/domain/user"
 	"github.com/yeying-community/webdav/internal/infrastructure/auth"
 	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
@@ -19,6 +20,7 @@ import (
 type Web3Handler struct {
 	web3Auth              *auth.Web3Authenticator
 	userRepo              user.Repository
+	assetSpaceManager     *assetspace.Manager
 	logger                *zap.Logger
 	autoCreateOnChallenge bool
 }
@@ -36,12 +38,14 @@ type sdkResponse struct {
 func NewWeb3Handler(
 	web3Auth *auth.Web3Authenticator,
 	userRepo user.Repository,
+	assetSpaceManager *assetspace.Manager,
 	logger *zap.Logger,
 	autoCreateOnChallenge bool,
 ) *Web3Handler {
 	return &Web3Handler{
 		web3Auth:              web3Auth,
 		userRepo:              userRepo,
+		assetSpaceManager:     assetSpaceManager,
 		logger:                logger,
 		autoCreateOnChallenge: autoCreateOnChallenge,
 	}
@@ -272,6 +276,11 @@ func (h *Web3Handler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		zap.String("address", req.Address),
 		zap.String("username", u.Username))
 
+	if err := h.ensureAssetSpaces(u); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to initialize user spaces")
+		return
+	}
+
 	refreshToken, err := h.web3Auth.GenerateRefreshToken(req.Address)
 	if err != nil {
 		h.logger.Error("failed to generate refresh token", zap.Error(err))
@@ -342,6 +351,11 @@ func (h *Web3Handler) HandlePasswordLogin(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if err := h.ensureAssetSpaces(u); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to initialize user spaces")
+		return
+	}
+
 	accessToken, err := h.web3Auth.GenerateAccessToken(u.WalletAddress)
 	if err != nil {
 		h.logger.Error("failed to generate access token", zap.Error(err))
@@ -390,9 +404,11 @@ func (h *Web3Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// 确认用户存在
 	ctx := r.Context()
+	var currentUser *user.User
 	switch subjectType {
 	case "email":
-		if _, err := h.userRepo.FindByEmail(ctx, subject); err != nil {
+		currentUser, err = h.userRepo.FindByEmail(ctx, subject)
+		if err != nil {
 			if err == user.ErrUserNotFound {
 				h.sendError(w, http.StatusNotFound, "USER_NOT_FOUND", "Email not registered")
 				return
@@ -402,7 +418,8 @@ func (h *Web3Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	default:
-		if _, err := h.userRepo.FindByWalletAddress(ctx, subject); err != nil {
+		currentUser, err = h.userRepo.FindByWalletAddress(ctx, subject)
+		if err != nil {
 			if err == user.ErrUserNotFound {
 				h.sendError(w, http.StatusNotFound, "USER_NOT_FOUND", "Wallet address not registered")
 				return
@@ -411,6 +428,11 @@ func (h *Web3Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 			h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to process request")
 			return
 		}
+	}
+
+	if err := h.ensureAssetSpaces(currentUser); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to initialize user spaces")
+		return
 	}
 
 	if subjectType == "email" {
@@ -471,6 +493,20 @@ func (h *Web3Handler) HandleLogout(w http.ResponseWriter, r *http.Request) {
 
 	h.clearRefreshCookie(w, r)
 	h.sendSDKSuccess(w, map[string]bool{"logout": true})
+}
+
+func (h *Web3Handler) ensureAssetSpaces(u *user.User) error {
+	if h == nil || h.assetSpaceManager == nil || u == nil {
+		return nil
+	}
+	if err := h.assetSpaceManager.EnsureForUser(u); err != nil {
+		h.logger.Error("failed to ensure user asset spaces",
+			zap.String("username", u.Username),
+			zap.String("directory", u.Directory),
+			zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 // getPermissionStrings 获取权限字符串列表

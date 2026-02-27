@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yeying-community/webdav/internal/application/assetspace"
 	"github.com/yeying-community/webdav/internal/domain/auth"
 	"github.com/yeying-community/webdav/internal/domain/permission"
 	"github.com/yeying-community/webdav/internal/domain/quota"
@@ -33,6 +34,7 @@ type WebDAVService struct {
 	quotaService    quota.Service
 	userRepo        user.Repository
 	recycleRepo     repository.RecycleRepository
+	assetSpace      *assetspace.Manager
 	logger          *zap.Logger
 	lockSystem      webdav.LockSystem
 	recycleDir      string // 回收站目录
@@ -65,6 +67,7 @@ func NewWebDAVService(
 		quotaService:    quotaService,
 		userRepo:        userRepo,
 		recycleRepo:     recycleRepo,
+		assetSpace:      assetspace.NewManager(cfg, logger),
 		logger:          logger,
 		lockSystem:      webdav.NewMemLS(),
 		recycleDir:      recycleDir,
@@ -107,9 +110,9 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 确保 app scope 根目录存在（例如 /apps）
-	if err := s.ensureAppScopeRoot(userDir); err != nil {
-		s.logger.Error("failed to ensure app scope root",
+	// 确保资产空间目录存在（personal + apps）
+	if err := s.ensureAssetSpaces(userDir); err != nil {
+		s.logger.Error("failed to ensure asset spaces",
 			zap.String("directory", userDir),
 			zap.Error(err))
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -619,30 +622,11 @@ func (s *WebDAVService) ensureDirectory(dir string) error {
 	return nil
 }
 
-func (s *WebDAVService) ensureAppScopeRoot(userDir string) error {
-	if s == nil || s.config == nil {
+func (s *WebDAVService) ensureAssetSpaces(userDir string) error {
+	if s == nil || s.assetSpace == nil {
 		return nil
 	}
-	prefix := strings.TrimSpace(s.config.Web3.UCAN.AppScope.PathPrefix)
-	if prefix == "" {
-		return nil
-	}
-	if !strings.HasPrefix(prefix, "/") {
-		prefix = "/" + prefix
-	}
-	clean := path.Clean(prefix)
-	if clean == "." || clean == "/" {
-		return nil
-	}
-	relative := strings.TrimPrefix(clean, "/")
-	if relative == "" {
-		return nil
-	}
-	target := filepath.Join(userDir, relative)
-	if err := os.MkdirAll(target, 0755); err != nil {
-		return fmt.Errorf("failed to create app scope root: %w", err)
-	}
-	return nil
+	return s.assetSpace.EnsureForUserDirectory(userDir)
 }
 
 // checkPermission 检查权限

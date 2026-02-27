@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { Notebook, SwitchButton, User, Wallet, Upload } from '@element-plus/icons-vue'
+import { Notebook, SwitchButton, User, Wallet } from '@element-plus/icons-vue'
 import { isLoggedIn, getCurrentAccount, logout, hasWallet, loginWithWallet, getWalletName, watchWalletAccounts, markAccountChanged } from '@/plugins/auth'
 
 const isAuth = ref(false)
@@ -46,7 +46,7 @@ function handleLogout() {
   logout()
 }
 
-function navigateTo(view: 'quotaManage' | 'addressBook' | 'uploadTasks') {
+function navigateTo(view: 'quotaManage' | 'addressBook') {
   window.dispatchEvent(new CustomEvent('webdav:navigate', { detail: { view } }))
 }
 
@@ -64,10 +64,6 @@ function handleMenuCommand(command: string) {
     activeView.value = 'addressBook'
     navigateTo('addressBook')
     return
-  }
-  if (command === 'uploadTasks') {
-    activeView.value = 'uploadTasks'
-    navigateTo('uploadTasks')
   }
 }
 
@@ -128,13 +124,6 @@ onBeforeUnmount(() => {
               :class="{ 'dropdown-active': activeView === 'addressBook' }"
             >
               地址簿
-            </el-dropdown-item>
-            <el-dropdown-item
-              command="uploadTasks"
-              :icon="Upload"
-              :class="{ 'dropdown-active': activeView === 'uploadTasks' }"
-            >
-              上传任务
             </el-dropdown-item>
             <el-dropdown-item divided command="logout" :icon="SwitchButton">退出</el-dropdown-item>
           </el-dropdown-menu>

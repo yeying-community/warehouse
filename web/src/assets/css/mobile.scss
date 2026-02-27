@@ -157,6 +157,30 @@
     flex: 0 0 auto !important;
   }
 
+  .home-container .space-switch-row {
+    width: 100% !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px !important;
+  }
+
+  .home-container .space-switch-item {
+    flex: 0 0 auto !important;
+  }
+
+  .home-container .app-quick-row {
+    width: 100% !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px !important;
+  }
+
+  .home-container .app-quick-item {
+    flex: 0 0 auto !important;
+  }
+
   .home-container .table-wrapper {
     overflow: auto !important;
     -webkit-overflow-scrolling: touch;

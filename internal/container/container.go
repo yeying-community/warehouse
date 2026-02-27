@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/yeying-community/webdav/internal/application/assetspace"
 	"github.com/yeying-community/webdav/internal/application/service"
 	"github.com/yeying-community/webdav/internal/domain/auth"
 	"github.com/yeying-community/webdav/internal/domain/quota"
@@ -39,6 +40,7 @@ type Container struct {
 
 	// Services
 	QuotaService       quota.Service
+	AssetSpaceManager  *assetspace.Manager
 	WebDAVService      *service.WebDAVService
 	RecycleService     *service.RecycleService
 	ShareService       *service.ShareService
@@ -54,6 +56,7 @@ type Container struct {
 	HealthHandler      *handler.HealthHandler
 	Web3Handler        *handler.Web3Handler
 	EmailAuthHandler   *handler.EmailAuthHandler
+	AssetsHandler      *handler.AssetsHandler
 	WebDAVHandler      *handler.WebDAVHandler
 	QuotaHandler       *handler.QuotaHandler
 	UserHandler        *handler.UserHandler
@@ -177,6 +180,8 @@ func (c *Container) initRepositories() error {
 
 // initServices 初始化服务
 func (c *Container) initServices() error {
+	c.AssetSpaceManager = assetspace.NewManager(c.Config, c.Logger)
+
 	// 配额服务
 	c.QuotaService = quota.NewService(c.UserRepository)
 
@@ -255,6 +260,7 @@ func (c *Container) initAuthenticators() error {
 		c.Config.Web3.TokenExpiration,
 		c.Config.Web3.RefreshTokenExpiration,
 		ucanVerifier,
+		c.AssetSpaceManager,
 		c.Logger,
 		c.Config.Web3.AutoCreateOnUCAN,
 	)
@@ -275,13 +281,14 @@ func (c *Container) initHandlers() error {
 	// 用户信息处理器
 	c.UserHandler = handler.NewUserHandler(c.Logger, c.UserRepository)
 	// 管理员用户处理器
-	c.AdminUserHandler = handler.NewAdminUserHandler(c.Logger, c.UserRepository)
+	c.AdminUserHandler = handler.NewAdminUserHandler(c.Logger, c.UserRepository, c.AssetSpaceManager)
 
 	// Web3 处理器
 	if c.Web3Auth != nil {
 		c.Web3Handler = handler.NewWeb3Handler(
 			c.Web3Auth,
 			c.UserRepository,
+			c.AssetSpaceManager,
 			c.Logger,
 			c.Config.Web3.AutoCreateOnChallenge,
 		)
@@ -293,11 +300,14 @@ func (c *Container) initHandlers() error {
 	c.EmailAuthHandler = handler.NewEmailAuthHandler(
 		c.Web3Auth,
 		c.UserRepository,
+		c.AssetSpaceManager,
 		emailStore,
 		emailSender,
 		c.Config.Email,
 		c.Logger,
 	)
+
+	c.AssetsHandler = handler.NewAssetsHandler(c.AssetSpaceManager, c.Logger)
 
 	// WebDAV 处理器
 	c.WebDAVHandler = handler.NewWebDAVHandler(
@@ -345,6 +355,7 @@ func (c *Container) initHTTP() error {
 		c.HealthHandler,
 		c.Web3Handler,
 		c.EmailAuthHandler,
+		c.AssetsHandler,
 		c.WebDAVHandler,
 		c.QuotaHandler,
 		c.UserHandler,

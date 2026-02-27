@@ -121,6 +121,32 @@ export const userApi = {
   }
 }
 
+export interface AssetSpaceInfo {
+  key: string
+  name: string
+  path: string
+}
+
+export const assetsApi = {
+  async getSpaces() {
+    const response = await request<{
+      code: number
+      message: string
+      data?: {
+        defaultSpace?: string
+        spaces?: AssetSpaceInfo[]
+      }
+      timestamp: number
+    }>('/api/v1/public/assets/spaces')
+
+    const data = response?.data || {}
+    return {
+      defaultSpace: data.defaultSpace || 'personal',
+      spaces: Array.isArray(data.spaces) ? data.spaces : []
+    }
+  }
+}
+
 // 回收站项目类型
 export interface RecycleItem {
   hash: string

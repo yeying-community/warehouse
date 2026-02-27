@@ -4,7 +4,9 @@ import "context"
 
 // UcanContext holds UCAN-related scope information for a request.
 type UcanContext struct {
-	AppCaps map[string][]string
+	AppCaps        map[string][]string
+	HasAppCaps     bool
+	InvalidAppCaps []string
 }
 
 // UcanContextKey UCAN 上下文键

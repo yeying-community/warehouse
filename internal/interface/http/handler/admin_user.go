@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeying-community/webdav/internal/application/assetspace"
 	"github.com/yeying-community/webdav/internal/domain/user"
 	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
 	"go.uber.org/zap"
@@ -13,17 +14,19 @@ import (
 
 // AdminUserHandler manages users with admin permissions.
 type AdminUserHandler struct {
-	logger         *zap.Logger
-	userRepository user.Repository
-	passwordHasher *crypto.PasswordHasher
+	logger            *zap.Logger
+	userRepository    user.Repository
+	passwordHasher    *crypto.PasswordHasher
+	assetSpaceManager *assetspace.Manager
 }
 
 // NewAdminUserHandler creates a new AdminUserHandler.
-func NewAdminUserHandler(logger *zap.Logger, userRepo user.Repository) *AdminUserHandler {
+func NewAdminUserHandler(logger *zap.Logger, userRepo user.Repository, assetSpaceManager *assetspace.Manager) *AdminUserHandler {
 	return &AdminUserHandler{
-		logger:         logger,
-		userRepository: userRepo,
-		passwordHasher: crypto.NewPasswordHasher(),
+		logger:            logger,
+		userRepository:    userRepo,
+		passwordHasher:    crypto.NewPasswordHasher(),
+		assetSpaceManager: assetSpaceManager,
 	}
 }
 
@@ -204,6 +207,11 @@ func (h *AdminUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 		}
 		h.logger.Error("failed to create user", zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to create user")
+		return
+	}
+
+	if err := h.ensureAssetSpaces(u); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "Failed to initialize user spaces")
 		return
 	}
 
@@ -474,6 +482,20 @@ func (e adminRuleError) Error() string {
 
 func errInvalidRule(msg string) error {
 	return adminRuleError{message: msg}
+}
+
+func (h *AdminUserHandler) ensureAssetSpaces(u *user.User) error {
+	if h == nil || h.assetSpaceManager == nil || u == nil {
+		return nil
+	}
+	if err := h.assetSpaceManager.EnsureForUser(u); err != nil {
+		h.logger.Error("failed to ensure user asset spaces",
+			zap.String("username", u.Username),
+			zap.String("directory", u.Directory),
+			zap.Error(err))
+		return err
+	}
+	return nil
 }
 
 func (h *AdminUserHandler) writeJSON(w http.ResponseWriter, code int, data interface{}) {
