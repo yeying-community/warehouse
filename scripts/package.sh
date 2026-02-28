@@ -122,11 +122,16 @@ switch_to_tag() {
 
 build_artifacts() {
   require_cmd npm
+  local web_dir="${ROOT_DIR}/web"
   echo "Building frontend assets..."
-  if [[ ! -d "${ROOT_DIR}/web/node_modules" ]]; then
-    (cd "${ROOT_DIR}/web" && npm install)
+  if [[ ! -x "${web_dir}/node_modules/.bin/vue-tsc" || ! -x "${web_dir}/node_modules/.bin/vite" ]]; then
+    echo "Installing frontend dependencies (including dev dependencies)..."
+    if ! (cd "${web_dir}" && env -u NODE_ENV npm install --include=dev); then
+      echo "npm install --include=dev failed, retrying with npm install..." >&2
+      (cd "${web_dir}" && env -u NODE_ENV npm install)
+    fi
   fi
-  (cd "${ROOT_DIR}/web" && npm run build)
+  (cd "${web_dir}" && npm run build)
 
   echo "Building backend binary..."
   (cd "${ROOT_DIR}" && make build)
@@ -165,9 +170,46 @@ create_package() {
   cp -R "${ASSETS_DIR}" "${staging_dir}/web/"
 
   mkdir -p "${OUTPUT_DIR}"
-  tar -C "${OUTPUT_DIR}" -czf "${OUTPUT_DIR}/${package_name}.tar.gz" "${package_name}"
+  local archive_path="${OUTPUT_DIR}/${package_name}.tar.gz"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # Prevent Apple metadata (._* and xattr headers) from leaking into release tarballs.
+    if command -v xattr >/dev/null 2>&1; then
+      xattr -rc "${staging_dir}" || true
+    fi
+    find "${staging_dir}" -name '._*' -delete || true
+
+    if command -v gtar >/dev/null 2>&1; then
+      COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
+        gtar --format=ustar --no-xattrs --no-acls \
+        -C "${OUTPUT_DIR}" -czf "${archive_path}" "${package_name}"
+    else
+      local tar_cmd=(tar --format=ustar)
+      if tar --help 2>&1 | grep -q -- '--no-mac-metadata'; then
+        tar_cmd+=(--no-mac-metadata)
+      fi
+      if tar --help 2>&1 | grep -q -- '--no-xattrs'; then
+        tar_cmd+=(--no-xattrs)
+      fi
+      if tar --help 2>&1 | grep -q -- '--no-acls'; then
+        tar_cmd+=(--no-acls)
+      fi
+      COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 \
+        "${tar_cmd[@]}" -C "${OUTPUT_DIR}" -czf "${archive_path}" "${package_name}"
+    fi
+  else
+    tar -C "${OUTPUT_DIR}" -czf "${archive_path}" "${package_name}"
+  fi
+
+  if tar -tf "${archive_path}" | grep -E -q '(^|/)\._'; then
+    echo "package contains AppleDouble (._*) files, aborting." >&2
+    exit 1
+  fi
+  if command -v strings >/dev/null 2>&1 && strings "${archive_path}" | grep -q 'LIBARCHIVE.xattr'; then
+    echo "package still contains LIBARCHIVE.xattr metadata, aborting." >&2
+    exit 1
+  fi
   rm -rf "${staging_dir}"
-  echo "Package created: ${OUTPUT_DIR}/${package_name}.tar.gz"
+  echo "Package created: ${archive_path}"
 }
 
 main() {
