@@ -20,8 +20,9 @@ cp config.yaml.template config.yaml
 # 启动时会自动检查并创建 webdav.directory 指定目录（如 ./test_data）
 go run cmd/server/main.go -c config.yaml
 
-# 或者使用二级制文件启动
-make
+# 或者先编译后启动
+mkdir -p build
+go build -o build/warehouse cmd/server/main.go
 build/warehouse -c config.yaml
 
 ```

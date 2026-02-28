@@ -51,7 +51,7 @@ warehouse -c config.yaml
 
 ### 二进制直接部署
 
-- `make` 构建后使用 `build/warehouse` 启动
+- 使用 `go build -o build/warehouse cmd/server/main.go` 构建后，再通过 `build/warehouse` 启动
 - 建议由 systemd/supervisor 进行守护
 
 ### 容器部署（Docker / Compose）

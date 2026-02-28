@@ -122,6 +122,7 @@ switch_to_tag() {
 
 build_artifacts() {
   require_cmd npm
+  require_cmd go
   local web_dir="${ROOT_DIR}/web"
   echo "Building frontend assets..."
   if [[ ! -x "${web_dir}/node_modules/.bin/vue-tsc" || ! -x "${web_dir}/node_modules/.bin/vite" ]]; then
@@ -134,7 +135,13 @@ build_artifacts() {
   (cd "${web_dir}" && npm run build)
 
   echo "Building backend binary..."
-  (cd "${ROOT_DIR}" && make build)
+  local version build_time git_commit ldflags
+  version="$(git -C "${ROOT_DIR}" describe --tags --always --dirty)"
+  build_time="$(date -u '+%Y-%m-%d_%H:%M:%S')"
+  git_commit="$(git -C "${ROOT_DIR}" rev-parse --short HEAD)"
+  ldflags="-X main.version=${version} -X main.buildTime=${build_time} -X main.gitCommit=${git_commit}"
+  mkdir -p "${ROOT_DIR}/build"
+  (cd "${ROOT_DIR}" && go build -ldflags "${ldflags}" -o build/warehouse cmd/server/main.go)
 
   if [[ ! -x "${ROOT_DIR}/build/warehouse" ]]; then
     echo "warehouse binary not found: ${ROOT_DIR}/build/warehouse" >&2

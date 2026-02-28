@@ -51,7 +51,7 @@ warehouse -c config.yaml
 
 ### Direct Binary
 
-- Build via `make`, run `build/warehouse`
+- Build via `go build -o build/warehouse cmd/server/main.go`, then run `build/warehouse`
 - Use systemd/supervisor for process management
 
 ### Container (Docker / Compose)

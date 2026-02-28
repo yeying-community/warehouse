@@ -35,7 +35,10 @@ jobs:
           node-version: '20'
 
       - name: Build backend
-        run: make build
+        run: |
+          mkdir -p build
+          go build -o build/warehouse cmd/server/main.go
+          go build -o build/user cmd/user/main.go
 
       - name: Install frontend dependencies
         working-directory: web
