@@ -75,7 +75,7 @@ func (h *ShareHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		"token":         item.Token,
 		"name":          item.Name,
 		"path":          item.Path,
-		"url":           h.buildShareURL(r, item.Token),
+		"url":           h.buildShareURL(r, item.Token, item.Name),
 		"viewCount":     item.ViewCount,
 		"downloadCount": item.DownloadCount,
 	}
@@ -139,7 +139,7 @@ func (h *ShareHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 			Token:         item.Token,
 			Name:          item.Name,
 			Path:          item.Path,
-			URL:           h.buildShareURL(r, item.Token),
+			URL:           h.buildShareURL(r, item.Token, item.Name),
 			ViewCount:     item.ViewCount,
 			DownloadCount: item.DownloadCount,
 			CreatedAt:     item.CreatedAt.Format(timeLayout),
@@ -210,8 +210,7 @@ func (h *ShareHandler) HandleAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := strings.TrimPrefix(r.URL.Path, "/api/v1/public/share/")
-	token = strings.Split(token, "/")[0]
+	token, hasFilename := parseShareAccessPath(r.URL.Path)
 	if token == "" {
 		http.NotFound(w, r)
 		return
@@ -233,6 +232,15 @@ func (h *ShareHandler) HandleAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	if !hasFilename {
+		location := h.buildShareURL(r, item.Token, item.Name)
+		if r.URL.RawQuery != "" {
+			location += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, location, http.StatusFound)
+		return
+	}
+
 	if shouldCountAccess(r) {
 		_ = h.shareService.IncrementView(r.Context(), token)
 		if r.Method == http.MethodGet {
@@ -240,13 +248,12 @@ func (h *ShareHandler) HandleAccess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filename := url.PathEscape(item.Name)
-	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+filename)
+	setAttachmentContentDisposition(w, item.Name)
 
 	http.ServeContent(w, r, item.Name, info.ModTime(), file)
 }
 
-func (h *ShareHandler) buildShareURL(r *http.Request, token string) string {
+func (h *ShareHandler) buildShareURL(r *http.Request, token, fileName string) string {
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"
@@ -258,7 +265,10 @@ func (h *ShareHandler) buildShareURL(r *http.Request, token string) string {
 	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
 		host = forwardedHost
 	}
-	return scheme + "://" + host + "/api/v1/public/share/" + token
+	if strings.TrimSpace(fileName) == "" {
+		return scheme + "://" + host + "/api/v1/public/share/" + token
+	}
+	return scheme + "://" + host + "/api/v1/public/share/" + token + "/" + url.PathEscape(fileName)
 }
 
 const timeLayout = "2006-01-02 15:04:05"
@@ -270,4 +280,14 @@ func shouldCountAccess(r *http.Request) bool {
 	}
 	// 只统计首段请求，避免 Range 分片导致计数膨胀
 	return strings.HasPrefix(rangeHeader, "bytes=0-")
+}
+
+func parseShareAccessPath(requestPath string) (token string, hasFilename bool) {
+	sharePath := strings.TrimPrefix(requestPath, "/api/v1/public/share/")
+	sharePath = strings.Trim(sharePath, "/")
+	if sharePath == "" {
+		return "", false
+	}
+	parts := strings.Split(sharePath, "/")
+	return parts[0], len(parts) > 1
 }

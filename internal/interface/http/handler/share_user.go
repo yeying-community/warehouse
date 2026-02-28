@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -458,8 +457,7 @@ func (h *ShareUserHandler) HandleDownload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	filename := url.PathEscape(info.Name())
-	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+filename)
+	setAttachmentContentDisposition(w, info.Name())
 
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }

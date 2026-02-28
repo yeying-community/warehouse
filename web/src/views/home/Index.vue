@@ -1775,6 +1775,7 @@ function uploadFileWithProgress(
   url: string,
   file: File,
   token: string,
+  useMultipart: boolean,
   onProgress: (progress: number) => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -1796,9 +1797,17 @@ function uploadFileWithProgress(
       }
     }
     xhr.onerror = () => reject(new Error('上传失败'))
-    const formData = new FormData()
-    formData.append('file', file)
-    xhr.send(formData)
+    if (useMultipart) {
+      const formData = new FormData()
+      formData.append('file', file)
+      xhr.send(formData)
+      return
+    }
+    // WebDAV PUT must upload raw file bytes, not multipart/form-data wrapper.
+    if (file.type) {
+      xhr.setRequestHeader('Content-Type', file.type)
+    }
+    xhr.send(file)
   })
 }
 
@@ -1813,9 +1822,10 @@ async function performUploadTask(task: UploadTask) {
     return
   }
   const token = localStorage.getItem('authToken') || ''
+  const useMultipart = task.isShared
   updateUploadTask(task, { status: 'uploading', progress: 0, error: undefined })
   try {
-    await uploadFileWithProgress(url, task.file, token, progress => {
+    await uploadFileWithProgress(url, task.file, token, useMultipart, progress => {
       updateUploadTask(task, { progress })
     })
     updateUploadTask(task, { status: 'success', progress: 100 })
