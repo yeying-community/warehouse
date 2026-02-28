@@ -76,6 +76,47 @@ export function getWalletName(): string {
   return 'Web3 钱包'
 }
 
+function getWalletErrorMessage(error: unknown): string {
+  if (!error) return ''
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message || String(error)
+  const message = (error as { message?: unknown }).message
+  if (typeof message === 'string') return message
+  return String(error)
+}
+
+function getWalletErrorCode(error: unknown): number | null {
+  const code = Number((error as { code?: unknown }).code)
+  if (!Number.isNaN(code)) return code
+  const causeCode = Number((error as { cause?: { code?: unknown } }).cause?.code)
+  if (!Number.isNaN(causeCode)) return causeCode
+  return null
+}
+
+function isUserRejectedWalletAction(error: unknown): boolean {
+  if (getWalletErrorCode(error) === 4001) return true
+  const message = getWalletErrorMessage(error).toLowerCase()
+  return (
+    message.includes('user rejected') ||
+    message.includes('user denied') ||
+    message.includes('rejected the signature') ||
+    message.includes('denied message signature') ||
+    message.includes('denied transaction signature') ||
+    message.includes('request rejected') ||
+    message.includes('cancelled') ||
+    message.includes('canceled')
+  )
+}
+
+function formatWalletLoginError(error: unknown): string {
+  if (isUserRejectedWalletAction(error)) {
+    return '你已取消钱包签名，请在钱包弹窗中确认后再试。'
+  }
+  const message = getWalletErrorMessage(error).replace(/^ProviderRpcError:\s*/i, '').trim()
+  if (!message) return '钱包登录失败，请稍后重试。'
+  return `钱包登录失败：${message}`
+}
+
 // 连接钱包并登录
 export async function connectWallet(): Promise<string | null> {
   const provider = await getProvider()
@@ -198,7 +239,7 @@ export async function loginWithWallet(preferredAccount?: string): Promise<void> 
     }
     window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
   } catch (error) {
-    throw new Error(`登录失败: ${error}`)
+    throw new Error(formatWalletLoginError(error))
   }
 }
 

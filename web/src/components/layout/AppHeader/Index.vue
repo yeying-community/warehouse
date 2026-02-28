@@ -86,9 +86,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="myHeader">
-    <div class="logo">
-      <img src="/logo.svg" alt="Logo" class="logo-icon" />
-    </div>
+    <a
+      class="logo"
+      href="https://www.yeying.pub"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="打开夜莺社区官网"
+    >
+      <img src="/logo.svg" alt="夜莺社区" class="logo-icon" />
+    </a>
 
     <div class="right">
       <!-- 未登录 + 有钱包 -->
@@ -145,10 +151,13 @@ onBeforeUnmount(() => {
     display: flex;
     align-items: center;
     gap: 0px;
+    text-decoration: none;
 
     .logo-icon {
-      width: 128px;
-      height: 128px;
+      width: 42px;
+      height: 42px;
+      display: block;
+      object-fit: contain;
     }
 
     .title {

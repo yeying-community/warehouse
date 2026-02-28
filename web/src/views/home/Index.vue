@@ -2852,9 +2852,9 @@ onBeforeUnmount(() => {
       <div class="login-floating-container">
         <div class="login-top-banner">
           <div class="login-top-banner-inner">
-            <div class="login-top-banner-logo"></div>
+            <img src="/logo.svg" alt="资产仓库" class="login-top-banner-logo" />
             <span>
-              资产空间 · 支持钱包与账号登录
+              资产仓库 · 连接钱包或账号后，安全管理文件、分享与回收站
               <a href="https://www.yeying.pub" target="_blank" rel="noopener noreferrer">
                 了解夜莺社区
               </a>
@@ -2862,10 +2862,6 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="login-hero">
-          <div class="login-brand-block">
-            <div class="login-brand-mark"></div>
-            <p class="login-brand-sub">连接钱包或账号后，安全管理文件、分享与回收站</p>
-          </div>
           <div class="login-card">
             <div class="login-section">
               <el-button
@@ -2991,7 +2987,6 @@ onBeforeUnmount(() => {
       <aside class="side-panel">
         <div class="brand">
           <div class="brand-main">
-            <div class="brand-mark"></div>
             <div class="brand-text" v-show="!sidePanelCollapsed">
               <div class="brand-sub">资产管理中心</div>
             </div>
@@ -3809,8 +3804,8 @@ onBeforeUnmount(() => {
 .login-top-banner-logo {
   width: 22px;
   height: 22px;
-  border-radius: 7px;
-  background: linear-gradient(135deg, #2f7df6 0%, #6ab5ff 100%);
+  display: block;
+  object-fit: contain;
 }
 
 .login-hero {
@@ -3820,33 +3815,8 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: clamp(20px, 3vw, 40px);
-}
-
-.login-brand-block {
-  flex: 1;
-  align-items: flex-start;
-  text-align: left;
-  max-width: 460px;
-  display: flex;
-  flex-direction: column;
   justify-content: center;
-  gap: 12px;
-}
-
-.login-brand-mark {
-  width: 74px;
-  height: 74px;
-  border-radius: 20px;
-  background: linear-gradient(145deg, #2f7df6 0%, #79c4ff 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 14px 30px rgba(47, 125, 246, 0.22);
-}
-
-.login-brand-sub {
-  margin: 0;
-  font-size: 14px;
-  color: #5f6b7b;
+  gap: clamp(20px, 3vw, 40px);
 }
 
 .login-warning {
@@ -3878,10 +3848,11 @@ onBeforeUnmount(() => {
 }
 
 .login-main-btn {
-  width: 100%;
+  width: min(220px, 100%);
   height: 40px;
   border-radius: 10px;
   font-weight: 500;
+  align-self: center;
 }
 
 .login-history {
@@ -3960,12 +3931,6 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
-  .login-brand-block {
-    align-items: center;
-    text-align: center;
-    max-width: none;
-  }
-
   .login-card {
     width: min(430px, 100%);
   }
@@ -3999,18 +3964,6 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
     align-items: stretch;
     gap: 14px;
-  }
-
-  .login-brand-block {
-    align-items: center;
-    text-align: center;
-    max-width: none;
-  }
-
-  .login-brand-mark {
-    width: 62px;
-    height: 62px;
-    border-radius: 16px;
   }
 
   .login-card {
@@ -4068,14 +4021,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   min-width: 0;
-}
-
-.brand-mark {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #409eff, #7cc6ff);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
 }
 
 .brand-title {
