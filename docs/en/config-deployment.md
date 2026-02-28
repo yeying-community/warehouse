@@ -37,21 +37,21 @@ Startup validation fails fast on:
 
 ```bash
 # 1) Start with config file
-webdav -c config.yaml
+warehouse -c config.yaml
 
 # 2) Override port/dir via flags
-webdav -c config.yaml -p 8080 -d /data
+warehouse -c config.yaml -p 8080 -d /data
 
 # 3) Override JWT secret via env
 export WEBDAV_JWT_SECRET="your-secret"
-webdav -c config.yaml
+warehouse -c config.yaml
 ```
 
 ## Deployment Options
 
 ### Direct Binary
 
-- Build via `make`, run `build/webdav`
+- Build via `make`, run `build/warehouse`
 - Use systemd/supervisor for process management
 
 ### Container (Docker / Compose)

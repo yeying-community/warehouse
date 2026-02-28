@@ -1,4 +1,4 @@
-# WebDAV Server Configuration Example
+# Warehouse Server Configuration Example
 
 # Server Configuration
 server:
@@ -19,7 +19,7 @@ database:
   port: 5432
   username: "postgres"
   password: "postgres"
-  database: "webdav"
+  database: "warehouse"
   ssl_mode: "disable"  # Options: disable, require, verify-ca, verify-full
   max_open_conns: 25
   max_idle_conns: 5
@@ -55,7 +55,7 @@ email:
   smtp_username: ""
   smtp_password: ""
   from: "noreply@example.com"
-  from_name: "WebDAV"
+  from_name: "Warehouse"
   template_path: "resources/email/email_code_login_mail_template_zh-CN.html"
   code_ttl: 5m
   send_interval: 60s

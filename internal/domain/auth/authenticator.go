@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 
-	"github.com/yeying-community/webdav/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 )
 
 // Authenticator 认证器接口

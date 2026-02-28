@@ -2,7 +2,7 @@ package permission
 
 import (
 	"context"
-	"github.com/yeying-community/webdav/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 )
 
 // Checker 权限检查器接口

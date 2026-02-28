@@ -37,21 +37,21 @@
 
 ```bash
 # 1) 配置文件启动
-webdav -c config.yaml
+warehouse -c config.yaml
 
 # 2) 使用命令行覆盖端口/目录
-webdav -c config.yaml -p 8080 -d /data
+warehouse -c config.yaml -p 8080 -d /data
 
 # 3) 通过环境变量覆盖 JWT secret
 export WEBDAV_JWT_SECRET="your-secret"
-webdav -c config.yaml
+warehouse -c config.yaml
 ```
 
 ## 部署方式
 
 ### 二进制直接部署
 
-- `make` 构建后使用 `build/webdav` 启动
+- `make` 构建后使用 `build/warehouse` 启动
 - 建议由 systemd/supervisor 进行守护
 
 ### 容器部署（Docker / Compose）

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/yeying-community/webdav/internal/domain/auth"
+	"github.com/yeying-community/warehouse/internal/domain/auth"
 )
 
 // JWTManager JWT 管理器
@@ -36,7 +36,7 @@ func NewJWTManager(secret string, expiration time.Duration) *JWTManager {
 	return &JWTManager{
 		secret:     []byte(secret),
 		expiration: expiration,
-		issuer:     "webdav-server",
+		issuer:     "warehouse-server",
 	}
 }
 

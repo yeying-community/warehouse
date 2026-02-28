@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yeying-community/webdav/internal/domain/auth"
-	"github.com/yeying-community/webdav/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/domain/auth"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 	"go.uber.org/zap"
 )
 

@@ -109,12 +109,12 @@ ul li {
 
   &.is-refreshing {
     .el-icon {
-      animation: webdav-refresh-spin 0.9s linear infinite;
+      animation: warehouse-refresh-spin 0.9s linear infinite;
     }
   }
 }
 
-@keyframes webdav-refresh-spin {
+@keyframes warehouse-refresh-spin {
   to {
     transform: rotate(360deg);
   }

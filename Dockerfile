@@ -4,7 +4,7 @@ ARG VERSION="untracked"
 
 RUN apk --update add ca-certificates
 
-WORKDIR /webdav/
+WORKDIR /warehouse/
 
 RUN go env -w GOPROXY=https://goproxy.cn,direct
 
@@ -12,14 +12,14 @@ COPY ./go.mod ./
 COPY ./go.sum ./
 RUN go mod download
 
-COPY . /webdav/
-RUN go build -o main -trimpath -ldflags="-s -w -X 'github.com/yeying-community/webdav/v5/cmd.version=$VERSION'" .
+COPY . /warehouse/
+RUN go build -o main -trimpath -ldflags="-s -w -X 'main.version=$VERSION'" ./cmd/server
 
 FROM scratch
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build /webdav/main /bin/webdav
+COPY --from=build /warehouse/main /bin/warehouse
 
 EXPOSE 6065
 
-ENTRYPOINT [ "webdav" ]
+ENTRYPOINT [ "warehouse" ]

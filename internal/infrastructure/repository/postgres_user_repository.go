@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/database"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/database"
 )
 
 // PostgresUserRepository PostgreSQL 用户仓储

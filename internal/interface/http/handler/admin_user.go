@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yeying-community/webdav/internal/application/assetspace"
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
+	"github.com/yeying-community/warehouse/internal/application/assetspace"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/crypto"
 	"go.uber.org/zap"
 )
 

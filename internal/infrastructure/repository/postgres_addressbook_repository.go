@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
-	"github.com/yeying-community/webdav/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/domain/addressbook"
 )
 
 type AddressBookRepository interface {

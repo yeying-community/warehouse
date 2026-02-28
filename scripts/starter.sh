@@ -2,12 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BINARY="${ROOT_DIR}/bin/webdav"
+BINARY="${ROOT_DIR}/bin/warehouse"
 CONFIG="${ROOT_DIR}/config.yaml"
 PID_DIR="${ROOT_DIR}/run"
-PID_FILE="${PID_DIR}/webdav.pid"
+PID_FILE="${PID_DIR}/warehouse.pid"
 LOG_DIR="${ROOT_DIR}/logs"
-LOG_FILE="${LOG_DIR}/webdav.log"
+LOG_FILE="${LOG_DIR}/warehouse.log"
 
 ACTION="${1:-start}"
 
@@ -28,7 +28,7 @@ is_running() {
 
 start() {
   if [[ ! -x "${BINARY}" ]]; then
-    echo "webdav binary not found: ${BINARY}" >&2
+    echo "warehouse binary not found: ${BINARY}" >&2
     exit 1
   fi
   if [[ ! -f "${CONFIG}" ]]; then
@@ -36,7 +36,7 @@ start() {
     exit 1
   fi
   if is_running; then
-    echo "webdav already running (pid=$(cat "${PID_FILE}"))"
+    echo "warehouse already running (pid=$(cat "${PID_FILE}"))"
     return
   fi
 
@@ -46,15 +46,15 @@ start() {
 
   sleep 1
   if ! is_running; then
-    echo "failed to start webdav, check ${LOG_FILE}" >&2
+    echo "failed to start warehouse, check ${LOG_FILE}" >&2
     exit 1
   fi
-  echo "webdav started (pid=$(cat "${PID_FILE}"))"
+  echo "warehouse started (pid=$(cat "${PID_FILE}"))"
 }
 
 stop() {
   if ! is_running; then
-    echo "webdav not running"
+    echo "warehouse not running"
     rm -f "${PID_FILE}"
     return
   fi
@@ -66,16 +66,16 @@ stop() {
   for _ in {1..20}; do
     if ! kill -0 "${pid}" >/dev/null 2>&1; then
       rm -f "${PID_FILE}"
-      echo "webdav stopped"
+      echo "warehouse stopped"
       return
     fi
     sleep 0.5
   done
 
-  echo "webdav did not stop in time, sending SIGKILL" >&2
+  echo "warehouse did not stop in time, sending SIGKILL" >&2
   kill -9 "${pid}" >/dev/null 2>&1 || true
   rm -f "${PID_FILE}"
-  echo "webdav stopped"
+  echo "warehouse stopped"
 }
 
 restart() {

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yeying-community/webdav/internal/domain/addressbook"
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/repository"
+	"github.com/yeying-community/warehouse/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
 )
 
 type AddressBookService struct {

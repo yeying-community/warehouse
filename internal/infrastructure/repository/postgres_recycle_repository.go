@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yeying-community/webdav/internal/domain/recycle"
+	"github.com/yeying-community/warehouse/internal/domain/recycle"
 )
 
 // RecycleRepository 回收站仓储接口

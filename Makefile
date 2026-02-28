@@ -1,5 +1,5 @@
 # Variables
-BINARY_NAME=webdav
+BINARY_NAME=warehouse
 USER_BINARY=user
 VERSION=$(shell git describe --tags --always --dirty)
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
@@ -75,23 +75,23 @@ user-list: build
 ## docker-build: Build Docker image
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t webdav:$(VERSION) .
-	docker tag webdav:$(VERSION) webdav:latest
+	docker build -t warehouse:$(VERSION) .
+	docker tag warehouse:$(VERSION) warehouse:latest
 
 ## docker-run: Run Docker container
 docker-run:
 	@echo "Running Docker container..."
 	docker run -d -p 6065:6065 \
-		-v $(PWD)/configs:/etc/webdav \
+		-v $(PWD)/configs:/etc/warehouse \
 		-v $(PWD)/data:/data \
-		--name webdav \
-		webdav:latest
+		--name warehouse \
+		warehouse:latest
 
 ## docker-stop: Stop Docker container
 docker-stop:
 	@echo "Stopping Docker container..."
-	docker stop webdav
-	docker rm webdav
+	docker stop warehouse
+	docker rm warehouse
 
 ## docker-compose-up: Start with docker-compose
 docker-compose-up:

@@ -8,8 +8,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/pflag"
-	"github.com/yeying-community/webdav/internal/container"
-	"github.com/yeying-community/webdav/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/container"
+	"github.com/yeying-community/warehouse/internal/infrastructure/config"
 	"go.uber.org/zap"
 )
 
@@ -66,7 +66,7 @@ func main() {
 
 // parseFlags 解析命令行参数
 func parseFlags() *pflag.FlagSet {
-	flags := pflag.NewFlagSet("webdav", pflag.ExitOnError)
+	flags := pflag.NewFlagSet("warehouse", pflag.ExitOnError)
 
 	// 基础选项
 	flags.StringP("config", "c", "", "Config file path")
@@ -165,7 +165,7 @@ func validateConfig(cfg *config.Config) error {
 
 // printVersion 打印版本信息
 func printVersion() {
-	fmt.Printf("WebDAV Server with Web3 Authentication\n")
+	fmt.Printf("Warehouse Server with Web3 Authentication\n")
 	fmt.Printf("Version:    %s\n", version)
 	fmt.Printf("Build Time: %s\n", buildTime)
 	fmt.Printf("Git Commit: %s\n", gitCommit)
@@ -173,35 +173,35 @@ func printVersion() {
 
 // printHelp 打印帮助信息
 func printHelp(flags *pflag.FlagSet) {
-	fmt.Println("WebDAV Server with Web3 Authentication")
+	fmt.Println("Warehouse Server with Web3 Authentication")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  webdav [flags]")
+	fmt.Println("  warehouse [flags]")
 	fmt.Println()
 	fmt.Println("Flags:")
 	flags.PrintDefaults()
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  # Start with config file")
-	fmt.Println("  webdav -c config.yaml")
+	fmt.Println("  warehouse -c config.yaml")
 	fmt.Println()
 	fmt.Println("  # Start with command line flags")
-	fmt.Println("  webdav -p 8080 -d /data")
+	fmt.Println("  warehouse -p 8080 -d /data")
 	fmt.Println()
 	fmt.Println("  # Start with TLS")
-	fmt.Println("  webdav -c config.yaml --tls --cert cert.pem --key key.pem")
+	fmt.Println("  warehouse -c config.yaml --tls --cert cert.pem --key key.pem")
 	fmt.Println()
 	fmt.Println("  # Start with PostgreSQL")
-	fmt.Println("  webdav -c config.yaml --db-type postgres --db-host localhost")
+	fmt.Println("  warehouse -c config.yaml --db-type postgres --db-host localhost")
 	fmt.Println()
 	fmt.Println("  # Show version")
-	fmt.Println("  webdav --version")
+	fmt.Println("  warehouse --version")
 }
 
 // printStartupInfo 打印启动信息
 func printStartupInfo(c *container.Container) {
 	c.Logger.Info("=================================")
-	c.Logger.Info("WebDAV Server Starting")
+	c.Logger.Info("Warehouse Server Starting")
 	c.Logger.Info("=================================")
 	c.Logger.Info("version",
 		zap.String("version", version),

@@ -8,11 +8,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/config"
-	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
-	"github.com/yeying-community/webdav/internal/infrastructure/database"
-	"github.com/yeying-community/webdav/internal/infrastructure/repository"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/infrastructure/crypto"
+	"github.com/yeying-community/warehouse/internal/infrastructure/database"
+	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
 )
 
 var (
@@ -100,7 +100,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println("WebDAV User Management Tool")
+	fmt.Println("Warehouse User Management Tool")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  user -action <action> [flags]")

@@ -1,7 +1,7 @@
 services:
-  webdav:
+  warehouse:
     build: .
-    container_name: ${CONTAINER_NAME:-webdav}
+    container_name: ${CONTAINER_NAME:-warehouse}
     ports:
       - "${WEBDAV_PORT:-6065}:6065"
     volumes:

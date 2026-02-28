@@ -1,4 +1,4 @@
-# webdav
+# warehouse
 Browser asset repository
 
 ## Node version

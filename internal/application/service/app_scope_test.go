@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"testing"
 
-	domainauth "github.com/yeying-community/webdav/internal/domain/auth"
-	"github.com/yeying-community/webdav/internal/infrastructure/config"
-	"github.com/yeying-community/webdav/internal/interface/http/middleware"
+	domainauth "github.com/yeying-community/warehouse/internal/domain/auth"
+	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 )
 
 func TestResolveAppScope_RequireAppScopeWithoutAppCaps(t *testing.T) {

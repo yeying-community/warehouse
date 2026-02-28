@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/yeying-community/webdav/internal/domain/auth"
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
+	"github.com/yeying-community/warehouse/internal/domain/auth"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/crypto"
 	"go.uber.org/zap"
 )
 

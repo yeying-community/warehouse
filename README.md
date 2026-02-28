@@ -22,7 +22,7 @@ go run cmd/server/main.go -c config.yaml
 
 # 或者使用二级制文件启动
 make
-build/webdav -c config.yaml
+build/warehouse -c config.yaml
 
 ```
 
@@ -71,7 +71,7 @@ email:
   smtp_username: "user@example.com"
   smtp_password: "your-password"
   from: "noreply@example.com"
-  from_name: "WebDAV"
+  from_name: "Warehouse"
   template_path: "resources/email/email_code_login_mail_template_zh-CN.html"
 ```
 
@@ -139,8 +139,8 @@ bash scripts/starter.sh restart
 
 说明：
 - 默认读取 `config.yaml`，若不存在则使用 `config.yaml.template`
-- PID 文件：`run/webdav.pid`
-- 日志文件：`logs/webdav.log`
+- PID 文件：`run/warehouse.pid`
+- 日志文件：`logs/warehouse.log`
 
 ## scripts/package.sh
 
@@ -152,7 +152,7 @@ bash scripts/package.sh
 
 说明：
 - 会先构建前端产物到 `web/dist`
-- 后端二进制输出为 `build/webdav`
+- 后端二进制输出为 `build/warehouse`
 - 安装包输出到 `output/`
 
 ## scripts/mount_davfs.sh

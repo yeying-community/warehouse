@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yeying-community/webdav/internal/domain/auth"
+	"github.com/yeying-community/warehouse/internal/domain/auth"
 )
 
 // ChallengeStore 挑战存储
@@ -118,7 +118,7 @@ func generateNonce() (string, error) {
 // buildChallengeMessage 构建挑战消息
 func buildChallengeMessage(address, nonce string, timestamp time.Time) string {
 	return fmt.Sprintf(
-		"Welcome to WebDAV!\n\n"+
+		"Welcome to Warehouse!\n\n"+
 			"Sign this message to authenticate.\n\n"+
 			"Address: %s\n"+
 			"Nonce: %s\n"+

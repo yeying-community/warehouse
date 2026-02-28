@@ -2,11 +2,11 @@ package handler
 
 import (
 	"encoding/json"
-	"github.com/yeying-community/webdav/internal/application/assetspace"
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/auth"
-	"github.com/yeying-community/webdav/internal/infrastructure/crypto"
-	"github.com/yeying-community/webdav/internal/interface/http/dto"
+	"github.com/yeying-community/warehouse/internal/application/assetspace"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/auth"
+	"github.com/yeying-community/warehouse/internal/infrastructure/crypto"
+	"github.com/yeying-community/warehouse/internal/interface/http/dto"
 	"go.uber.org/zap"
 	"golang.org/x/crypto/sha3"
 	"net/http"

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yeying-community/webdav/internal/domain/permission"
-	"github.com/yeying-community/webdav/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/domain/permission"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 	"go.uber.org/zap"
 	"golang.org/x/net/webdav"
 )

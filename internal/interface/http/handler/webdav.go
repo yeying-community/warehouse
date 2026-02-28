@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yeying-community/webdav/internal/application/service"
-	"github.com/yeying-community/webdav/internal/domain/quota"
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/interface/http/middleware"
+	"github.com/yeying-community/warehouse/internal/application/service"
+	"github.com/yeying-community/warehouse/internal/domain/quota"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 

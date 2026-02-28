@@ -131,8 +131,8 @@ build_artifacts() {
   echo "Building backend binary..."
   (cd "${ROOT_DIR}" && make build)
 
-  if [[ ! -x "${ROOT_DIR}/build/webdav" ]]; then
-    echo "webdav binary not found: ${ROOT_DIR}/build/webdav" >&2
+  if [[ ! -x "${ROOT_DIR}/build/warehouse" ]]; then
+    echo "warehouse binary not found: ${ROOT_DIR}/build/warehouse" >&2
     exit 1
   fi
   if [[ ! -d "${ASSETS_DIR}" ]]; then
@@ -156,7 +156,7 @@ create_package() {
   rm -rf "${staging_dir}"
   mkdir -p "${staging_dir}/bin" "${staging_dir}/scripts" "${staging_dir}/web"
 
-  cp "${ROOT_DIR}/build/webdav" "${staging_dir}/bin/"
+  cp "${ROOT_DIR}/build/warehouse" "${staging_dir}/bin/"
   cp "${ROOT_DIR}/config.yaml.template" "${staging_dir}/"
   cp "${ROOT_DIR}/scripts/starter.sh" "${staging_dir}/scripts/"
   if [[ -d "${ROOT_DIR}/resources" ]]; then

@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/yeying-community/webdav/internal/domain/permission"
+	"github.com/yeying-community/warehouse/internal/domain/permission"
 	"go.uber.org/zap"
 )
 

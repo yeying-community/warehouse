@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yeying-community/webdav/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 )
 
 // QuotaInfo 配额信息

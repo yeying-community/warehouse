@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yeying-community/webdav/internal/application/assetspace"
-	"github.com/yeying-community/webdav/internal/domain/user"
-	infraAuth "github.com/yeying-community/webdav/internal/infrastructure/auth"
-	"github.com/yeying-community/webdav/internal/infrastructure/config"
-	"github.com/yeying-community/webdav/internal/infrastructure/email"
+	"github.com/yeying-community/warehouse/internal/application/assetspace"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	infraAuth "github.com/yeying-community/warehouse/internal/infrastructure/auth"
+	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/infrastructure/email"
 	"go.uber.org/zap"
 )
 

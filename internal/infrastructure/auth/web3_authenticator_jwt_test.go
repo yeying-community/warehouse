@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yeying-community/webdav/internal/application/assetspace"
-	domainauth "github.com/yeying-community/webdav/internal/domain/auth"
-	"github.com/yeying-community/webdav/internal/domain/user"
-	"github.com/yeying-community/webdav/internal/infrastructure/config"
-	"github.com/yeying-community/webdav/internal/interface/http/middleware"
+	"github.com/yeying-community/warehouse/internal/application/assetspace"
+	domainauth "github.com/yeying-community/warehouse/internal/domain/auth"
+	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 

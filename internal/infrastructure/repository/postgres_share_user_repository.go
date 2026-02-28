@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/yeying-community/webdav/internal/domain/shareuser"
+	"github.com/yeying-community/warehouse/internal/domain/shareuser"
 )
 
 // UserShareRepository 定向分享仓储接口

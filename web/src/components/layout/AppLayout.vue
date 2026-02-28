@@ -48,7 +48,7 @@ onBeforeUnmount(() => {
     height: 100%;
 
     .el-header {
-      padding: 0 10px;
+      padding: 0 16px;
       --el-header-height: 60px;
     }
 

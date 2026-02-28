@@ -7,7 +7,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	"github.com/yeying-community/webdav/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/infrastructure/config"
 )
 
 // PostgresDB PostgreSQL 数据库连接

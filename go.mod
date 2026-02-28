@@ -1,4 +1,4 @@
-module github.com/yeying-community/webdav
+module github.com/yeying-community/warehouse
 
 go 1.24.2
 

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/yeying-community/webdav/internal/application/service"
-	"github.com/yeying-community/webdav/internal/domain/addressbook"
-	"github.com/yeying-community/webdav/internal/interface/http/middleware"
+	"github.com/yeying-community/warehouse/internal/application/service"
+	"github.com/yeying-community/warehouse/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
