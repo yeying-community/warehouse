@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo } from '@/api'
 import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
@@ -347,8 +347,8 @@ const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
   if (showShare.value) return shareTab.value === 'link' ? '下载链接' : '定向分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '定向分享'
-  if (showQuotaManage.value) return '用户中心'
-  if (showAddressBook.value) return '地址簿'
+  if (showQuotaManage.value) return '个人中心'
+  if (showAddressBook.value) return '我的好友'
   if (showUploadTasks.value) return '上传任务'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
@@ -1333,7 +1333,7 @@ async function copyCurrentPath() {
       text = '定向分享'
     }
   } else if (showAddressBook.value) {
-    text = '地址簿'
+    text = '我的好友'
   }
   await copyText(text, '已复制当前路径')
 }
@@ -2541,7 +2541,7 @@ function enterAddressBook() {
   addressBookStore.fetchAddressBook()
 }
 
-// 进入用户中心
+// 进入个人中心
 function enterQuotaManage() {
   detailDrawerVisible.value = false
   showQuotaManage.value = true
@@ -3125,7 +3125,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="nav-group">
-            <div class="nav-group-title" v-show="!sidePanelCollapsed">系统</div>
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">系统工具</div>
             <div class="nav-list">
               <el-tooltip content="上传任务" placement="right" :disabled="!sidePanelCollapsed">
                 <button
@@ -3147,6 +3147,34 @@ onBeforeUnmount(() => {
                 >
                   <el-icon class="nav-icon"><Delete /></el-icon>
                   <span v-show="!sidePanelCollapsed">回收站</span>
+                </button>
+              </el-tooltip>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">账户管理</div>
+            <div class="nav-list">
+              <el-tooltip content="个人中心" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showQuotaManage }"
+                  @click="enterQuotaManage"
+                >
+                  <el-icon class="nav-icon"><User /></el-icon>
+                  <span v-show="!sidePanelCollapsed">个人中心</span>
+                </button>
+              </el-tooltip>
+              <el-tooltip content="我的好友" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showAddressBook }"
+                  @click="enterAddressBook"
+                >
+                  <el-icon class="nav-icon"><Notebook /></el-icon>
+                  <span v-show="!sidePanelCollapsed">我的好友</span>
                 </button>
               </el-tooltip>
             </div>

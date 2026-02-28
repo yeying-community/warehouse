@@ -59,7 +59,7 @@ function copyContactAddress(contact: AddressContact) {
   <div class="address-page">
     <div class="address-hero">
       <div class="address-title-row">
-        <div class="address-title">地址簿</div>
+        <div class="address-title">我的好友</div>
         <el-tooltip content="刷新" placement="top">
           <el-button
             class="refresh-button"
