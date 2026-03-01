@@ -1,12 +1,11 @@
 <script lang="ts" setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { Notebook, SwitchButton, User, Wallet } from '@element-plus/icons-vue'
+import { SwitchButton, Wallet } from '@element-plus/icons-vue'
 import { isLoggedIn, getCurrentAccount, logout, hasWallet, loginWithWallet, getWalletName, watchWalletAccounts, markAccountChanged } from '@/plugins/auth'
 
 const isAuth = ref(false)
 const account = ref<string | null>(null)
 const walletInfo = ref({ present: false, name: '' })
-const activeView = ref<string | null>(localStorage.getItem('warehouse:lastView'))
 let stopAccountWatch: (() => void) | null = null
 
 onMounted(() => {
@@ -46,40 +45,13 @@ function handleLogout() {
   logout()
 }
 
-function navigateTo(view: 'quotaManage' | 'addressBook') {
-  window.dispatchEvent(new CustomEvent('warehouse:navigate', { detail: { view } }))
-}
-
 function handleMenuCommand(command: string) {
   if (command === 'logout') {
     handleLogout()
-    return
-  }
-  if (command === 'userCenter') {
-    activeView.value = 'quotaManage'
-    navigateTo('quotaManage')
-    return
-  }
-  if (command === 'addressBook') {
-    activeView.value = 'addressBook'
-    navigateTo('addressBook')
-    return
   }
 }
-
-function handleViewChanged(event: Event) {
-  const customEvent = event as CustomEvent<{ view?: string }>
-  if (customEvent?.detail?.view) {
-    activeView.value = customEvent.detail.view
-  }
-}
-
-onMounted(() => {
-  window.addEventListener('warehouse:view-changed', handleViewChanged as EventListener)
-})
 
 onBeforeUnmount(() => {
-  window.removeEventListener('warehouse:view-changed', handleViewChanged as EventListener)
   stopAccountWatch?.()
 })
 </script>
@@ -117,20 +89,6 @@ onBeforeUnmount(() => {
         </span>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item
-              command="userCenter"
-              :icon="User"
-              :class="{ 'dropdown-active': activeView === 'quotaManage' }"
-            >
-              用户中心
-            </el-dropdown-item>
-            <el-dropdown-item
-              command="addressBook"
-              :icon="Notebook"
-              :class="{ 'dropdown-active': activeView === 'addressBook' }"
-            >
-              地址簿
-            </el-dropdown-item>
             <el-dropdown-item divided command="logout" :icon="SwitchButton">退出</el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -192,8 +150,4 @@ onBeforeUnmount(() => {
   }
 }
 
-:deep(.dropdown-active) {
-  color: #409eff;
-  font-weight: 600;
-}
 </style>

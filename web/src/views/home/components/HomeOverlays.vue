@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { AddressContact, AddressGroup, DirectShareItem, RecycleItem, ShareItem } from '@/api'
 import type { FileItem } from '../types'
 import { shortenAddress } from '@/utils/address'
@@ -105,10 +105,101 @@ const passwordDialogModel = computed({
   set: value => emit('update:passwordDialogVisible', value)
 })
 
+const viewportWidth = ref(1280)
+const drawerDragActive = ref(false)
+const drawerWidthManual = ref<number | null>(null)
+let drawerDragStartX = 0
+let drawerDragStartWidth = 0
+
+function updateViewportWidth() {
+  if (typeof window === 'undefined') return
+  viewportWidth.value = window.innerWidth
+}
+
+const canResizeDrawer = computed(() => viewportWidth.value > 768)
+
+const detailDrawerBaseWidth = computed(() => {
+  const width = viewportWidth.value
+  if (width <= 480) return Math.max(280, width - 20)
+  if (width <= 768) return Math.max(320, Math.floor(width * 0.9))
+
+  const modeWidthMap: Record<string, number> = {
+    recycle: 520,
+    share: 500,
+    directShare: 540,
+    receivedShare: 520,
+    file: 420,
+    sharedEntry: 420
+  }
+  const mode = String(props.detailMode || '')
+  const ideal = modeWidthMap[mode] || 420
+  const max = Math.floor(width * 0.62)
+  const min = 360
+  const bounded = Math.min(Math.max(ideal, min), max)
+  return Math.max(bounded, min)
+})
+
+const detailDrawerMinWidth = computed(() => (viewportWidth.value <= 480 ? 280 : viewportWidth.value <= 768 ? 320 : 360))
+const detailDrawerMaxWidth = computed(() => {
+  const ratio = viewportWidth.value <= 768 ? 0.95 : 0.8
+  return Math.max(detailDrawerMinWidth.value, Math.floor(viewportWidth.value * ratio))
+})
+
+function clampDrawerWidth(width: number): number {
+  return Math.min(Math.max(width, detailDrawerMinWidth.value), detailDrawerMaxWidth.value)
+}
+
+const detailDrawerWidth = computed(() => {
+  const target = drawerWidthManual.value ?? detailDrawerBaseWidth.value
+  return clampDrawerWidth(target)
+})
+
+const detailDrawerSize = computed(() => `${detailDrawerWidth.value}px`)
+
+function stopDrawerResize() {
+  if (typeof document === 'undefined' || !drawerDragActive.value) return
+  drawerDragActive.value = false
+  document.removeEventListener('mousemove', handleDrawerResizeMove)
+  document.removeEventListener('mouseup', stopDrawerResize)
+  document.body.style.removeProperty('cursor')
+  document.body.style.removeProperty('user-select')
+}
+
+function handleDrawerResizeMove(event: MouseEvent) {
+  if (!drawerDragActive.value) return
+  const delta = drawerDragStartX - event.clientX
+  drawerWidthManual.value = clampDrawerWidth(drawerDragStartWidth + delta)
+}
+
+function startDrawerResize(event: MouseEvent) {
+  if (!canResizeDrawer.value || typeof document === 'undefined') return
+  drawerDragActive.value = true
+  drawerDragStartX = event.clientX
+  drawerDragStartWidth = detailDrawerWidth.value
+  document.addEventListener('mousemove', handleDrawerResizeMove)
+  document.addEventListener('mouseup', stopDrawerResize)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
 function handleEnterDirectory(item: FileItem) {
   props.enterDirectory(item)
   emit('update:detailDrawerVisible', false)
 }
+
+onMounted(() => {
+  updateViewportWidth()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', updateViewportWidth)
+  }
+})
+
+onBeforeUnmount(() => {
+  stopDrawerResize()
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', updateViewportWidth)
+  }
+})
 </script>
 
 <template>
@@ -116,9 +207,15 @@ function handleEnterDirectory(item: FileItem) {
     v-model="detailDrawerModel"
     :title="detailTitle"
     direction="rtl"
-    size="360px"
+    :size="detailDrawerSize"
     class="detail-drawer"
   >
+    <div
+      v-if="canResizeDrawer"
+      class="drawer-resize-handle"
+      :class="{ 'is-active': drawerDragActive }"
+      @mousedown.prevent="startDrawerResize"
+    />
     <div class="detail-panel" v-if="detailMode === 'file' && detailFile">
       <div class="detail-grid">
         <div class="detail-row">
@@ -671,5 +768,40 @@ function handleEnterDirectory(item: FileItem) {
 .detail-empty {
   font-size: 13px;
   color: #909399;
+}
+
+.detail-drawer :deep(.el-drawer) {
+  max-width: calc(100vw - 12px);
+}
+
+.detail-drawer :deep(.el-drawer__body) {
+  position: relative;
+}
+
+.drawer-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  cursor: col-resize;
+  z-index: 20;
+}
+
+.drawer-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  left: 4px;
+  width: 2px;
+  border-radius: 2px;
+  background: rgba(96, 98, 102, 0.14);
+  transition: background 0.2s ease;
+}
+
+.drawer-resize-handle:hover::after,
+.drawer-resize-handle.is-active::after {
+  background: rgba(64, 158, 255, 0.45);
 }
 </style>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo } from '@/api'
 import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
@@ -347,8 +347,8 @@ const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
   if (showShare.value) return shareTab.value === 'link' ? '下载链接' : '定向分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '定向分享'
-  if (showQuotaManage.value) return '用户中心'
-  if (showAddressBook.value) return '地址簿'
+  if (showQuotaManage.value) return '个人中心'
+  if (showAddressBook.value) return '我的好友'
   if (showUploadTasks.value) return '上传任务'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
@@ -1333,7 +1333,7 @@ async function copyCurrentPath() {
       text = '定向分享'
     }
   } else if (showAddressBook.value) {
-    text = '地址簿'
+    text = '我的好友'
   }
   await copyText(text, '已复制当前路径')
 }
@@ -2541,7 +2541,7 @@ function enterAddressBook() {
   addressBookStore.fetchAddressBook()
 }
 
-// 进入用户中心
+// 进入个人中心
 function enterQuotaManage() {
   detailDrawerVisible.value = false
   showQuotaManage.value = true
@@ -2932,20 +2932,10 @@ onBeforeUnmount(() => {
         <div class="login-hero">
           <div class="login-card">
             <div class="login-section">
-              <el-button
-                v-if="hasWallet()"
-                type="primary"
-                class="login-main-btn"
-                @click="handleWalletLogin"
-              >
-                钱包登陆
-              </el-button>
-              <div v-else class="login-warning">未检测到钱包插件</div>
-              <div v-if="hasWallet() && walletHistory.length" class="login-history">
-                <div class="login-history-title">选择历史账户</div>
+              <div v-if="hasWallet() && walletHistory.length" class="login-wallet-row">
                 <el-select
                   v-model="selectedWalletAccount"
-                  placeholder="选择历史账户"
+                  placeholder="历史账户（可选）"
                   class="login-history-select"
                 >
                   <el-option
@@ -2957,13 +2947,29 @@ onBeforeUnmount(() => {
                     <span class="mono">{{ accountItem }}</span>
                   </el-option>
                 </el-select>
+                <el-button
+                  type="primary"
+                  class="login-main-btn login-wallet-btn login-wallet-action-btn"
+                  @click="handleWalletLogin"
+                >
+                  钱包登陆
+                </el-button>
               </div>
+              <el-button
+                v-else-if="hasWallet()"
+                type="primary"
+                class="login-main-btn login-wallet-btn"
+                @click="handleWalletLogin"
+              >
+                钱包登陆
+              </el-button>
+              <div v-else class="login-warning">未检测到钱包插件</div>
             </div>
             <div class="login-divider"><span>或</span></div>
             <div class="login-section">
               <el-button
                 type="primary"
-                class="login-main-btn"
+                class="login-main-btn login-password-btn"
                 @click="showPasswordLoginForm = !showPasswordLoginForm"
               >
                 密码登陆
@@ -2990,7 +2996,7 @@ onBeforeUnmount(() => {
                     type="primary"
                     native-type="submit"
                     :loading="loginSubmitting"
-                    class="login-submit"
+                    class="login-submit login-password-submit-btn"
                   >
                     登录
                   </el-button>
@@ -3001,7 +3007,7 @@ onBeforeUnmount(() => {
             <div class="login-section">
               <el-button
                 type="primary"
-                class="login-main-btn"
+                class="login-main-btn login-email-btn"
                 @click="showEmailLoginForm = !showEmailLoginForm"
               >
                 邮箱登陆
@@ -3024,7 +3030,7 @@ onBeforeUnmount(() => {
                       />
                       <el-button
                         type="primary"
-                        class="email-code-button"
+                        class="email-code-button login-code-btn"
                         native-type="button"
                         :loading="emailCodeSending"
                         :disabled="emailCodeCountdown > 0"
@@ -3038,7 +3044,7 @@ onBeforeUnmount(() => {
                     type="primary"
                     native-type="submit"
                     :loading="emailLoginSubmitting"
-                    class="login-submit"
+                    class="login-submit login-email-submit-btn"
                   >
                     登录
                   </el-button>
@@ -3125,7 +3131,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="nav-group">
-            <div class="nav-group-title" v-show="!sidePanelCollapsed">系统</div>
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">系统工具</div>
             <div class="nav-list">
               <el-tooltip content="上传任务" placement="right" :disabled="!sidePanelCollapsed">
                 <button
@@ -3147,6 +3153,34 @@ onBeforeUnmount(() => {
                 >
                   <el-icon class="nav-icon"><Delete /></el-icon>
                   <span v-show="!sidePanelCollapsed">回收站</span>
+                </button>
+              </el-tooltip>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">账户管理</div>
+            <div class="nav-list">
+              <el-tooltip content="个人中心" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showQuotaManage }"
+                  @click="enterQuotaManage"
+                >
+                  <el-icon class="nav-icon"><User /></el-icon>
+                  <span v-show="!sidePanelCollapsed">个人中心</span>
+                </button>
+              </el-tooltip>
+              <el-tooltip content="我的好友" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showAddressBook }"
+                  @click="enterAddressBook"
+                >
+                  <el-icon class="nav-icon"><Notebook /></el-icon>
+                  <span v-show="!sidePanelCollapsed">我的好友</span>
                 </button>
               </el-tooltip>
             </div>
@@ -3808,9 +3842,9 @@ onBeforeUnmount(() => {
   height: min(860px, 90vh);
   min-height: 620px;
   background: #ffffff;
-  border: 1px solid #dbe5f2;
+  border: 0;
   border-radius: 20px;
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.14);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3883,13 +3917,13 @@ onBeforeUnmount(() => {
 .login-card {
   width: min(430px, 100%);
   background: #fff;
-  border: 1px solid #e3ebf7;
+  border: 0;
   border-radius: 14px;
   padding: 18px 18px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.08);
+  box-shadow: none;
 }
 
 .login-section {
@@ -3899,26 +3933,47 @@ onBeforeUnmount(() => {
 }
 
 .login-main-btn {
-  width: min(220px, 100%);
+  width: 100%;
   height: 40px;
   border-radius: 10px;
   font-weight: 500;
-  align-self: center;
-}
-
-.login-history {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.login-history-title {
-  font-size: 13px;
-  color: #7b8797;
+  align-self: stretch;
 }
 
 .login-history-select {
   width: 100%;
+}
+
+.login-wallet-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-wallet-row .login-history-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.login-wallet-action-btn {
+  width: 132px;
+  flex: none;
+}
+
+:deep(.login-history-select .el-select__wrapper) {
+  min-height: 40px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1.5px #9ab7e6;
+  transition: box-shadow 0.16s ease;
+}
+
+:deep(.login-history-select .el-select__wrapper:hover) {
+  box-shadow: inset 0 0 0 1.5px #6a97dd;
+}
+
+:deep(.login-history-select .el-select__wrapper.is-focused) {
+  box-shadow: inset 0 0 0 2px #3f7fe0;
 }
 
 .login-divider {
@@ -3959,6 +4014,70 @@ onBeforeUnmount(() => {
 .email-code-button {
   flex: none;
   white-space: nowrap;
+}
+
+:deep(.el-button.login-main-btn),
+:deep(.el-button.login-submit),
+:deep(.el-button.email-code-button) {
+  border: 0 !important;
+  color: #ffffff !important;
+  --el-button-border-color: transparent;
+  --el-button-hover-border-color: transparent;
+  --el-button-active-border-color: transparent;
+  --el-button-disabled-border-color: transparent;
+  --el-button-text-color: #ffffff;
+  --el-button-hover-text-color: #ffffff;
+  --el-button-active-text-color: #ffffff;
+  background-color: #3f7fe0 !important;
+  background-image: none !important;
+  box-shadow: none;
+  transition: background-color 0.16s ease, transform 0.12s ease;
+}
+
+:deep(.el-button.login-main-btn:not(.is-disabled):hover),
+:deep(.el-button.login-submit:not(.is-disabled):hover),
+:deep(.el-button.email-code-button:not(.is-disabled):hover) {
+  background-color: #356fc7 !important;
+}
+
+:deep(.el-button.login-main-btn:not(.is-disabled):active),
+:deep(.el-button.login-submit:not(.is-disabled):active),
+:deep(.el-button.email-code-button:not(.is-disabled):active) {
+  background-color: #2e62b2 !important;
+  transform: translateY(0);
+}
+
+:deep(.el-button.login-main-btn.login-password-btn),
+:deep(.el-button.login-main-btn.login-email-btn) {
+  border: 1px solid #b7cae7 !important;
+  color: #2f5fa8 !important;
+  --el-button-text-color: #2f5fa8;
+  --el-button-hover-text-color: #24508f;
+  --el-button-active-text-color: #1f467d;
+  --el-button-border-color: #b7cae7;
+  --el-button-hover-border-color: #9fb8de;
+  --el-button-active-border-color: #8caad7;
+  background-color: #f4f8ff !important;
+}
+
+:deep(.el-button.login-main-btn.login-password-btn:not(.is-disabled):hover),
+:deep(.el-button.login-main-btn.login-email-btn:not(.is-disabled):hover) {
+  background-color: #ecf3ff !important;
+}
+
+:deep(.el-button.login-main-btn.login-password-btn:not(.is-disabled):active),
+:deep(.el-button.login-main-btn.login-email-btn:not(.is-disabled):active) {
+  background-color: #e4eeff !important;
+}
+
+:deep(.el-button.login-main-btn.is-disabled),
+:deep(.el-button.login-submit.is-disabled),
+:deep(.el-button.email-code-button.is-disabled) {
+  border: 0 !important;
+  color: #f3f7ff !important;
+  background-image: none !important;
+  background-color: #b7c7df !important;
+  box-shadow: none !important;
 }
 
 .login-form-shell {
