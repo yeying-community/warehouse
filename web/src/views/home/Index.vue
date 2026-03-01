@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
@@ -54,6 +54,7 @@ const emailCodeCountdown = ref(0)
 let emailCodeTimer: number | null = null
 const walletHistory = ref<string[]>([])
 const selectedWalletAccount = ref('')
+const walletRowRef = ref<HTMLElement | null>(null)
 let stopAccountWatch: (() => void) | null = null
 
 // 回收站相关状态
@@ -744,6 +745,18 @@ async function handleWalletLogin() {
   } catch (error: any) {
     showError(error?.message || '钱包登录失败')
   }
+}
+
+async function handleWalletHistoryVisibleChange(visible: boolean) {
+  if (!visible) return
+  await nextTick()
+  const rowWidth = walletRowRef.value?.offsetWidth
+  if (!rowWidth) return
+  const poppers = Array.from(document.querySelectorAll<HTMLElement>('.login-history-select-popper'))
+  const popper = poppers.find((item) => item.offsetParent !== null) ?? poppers[poppers.length - 1]
+  if (!popper) return
+  popper.style.width = `${rowWidth}px`
+  popper.style.minWidth = `${rowWidth}px`
 }
 
 async function handlePasswordLogin() {
@@ -2932,11 +2945,13 @@ onBeforeUnmount(() => {
         <div class="login-hero">
           <div class="login-card">
             <div class="login-section">
-              <div v-if="hasWallet() && walletHistory.length" class="login-wallet-row">
+              <div v-if="hasWallet() && walletHistory.length" ref="walletRowRef" class="login-wallet-row">
                 <el-select
                   v-model="selectedWalletAccount"
                   placeholder="历史账户（可选）"
                   class="login-history-select"
+                  popper-class="login-history-select-popper"
+                  @visible-change="handleWalletHistoryVisibleChange"
                 >
                   <el-option
                     v-for="accountItem in walletHistory"
