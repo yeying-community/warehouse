@@ -21,7 +21,6 @@ cp config.yaml.template config.yaml
 go run ./cmd/warehouse -c config.yaml
 
 # 或者先编译后启动
-mkdir -p build
 go build -o build/warehouse ./cmd/warehouse
 build/warehouse -c config.yaml
 
