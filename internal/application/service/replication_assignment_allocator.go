@@ -28,6 +28,7 @@ type ReplicationAssignmentAllocator struct {
 	renewInterval time.Duration
 	leaseDuration time.Duration
 	maxStaleness  time.Duration
+	recoverError  bool
 }
 
 // NewReplicationAssignmentAllocator creates an active-side assignment allocator/renewer.
@@ -49,6 +50,7 @@ func NewReplicationAssignmentAllocator(
 		renewInterval: defaultAssignmentRenewInterval,
 		leaseDuration: defaultAssignmentLeaseDuration,
 		maxStaleness:  defaultClusterNodeStaleness,
+		recoverError:  true,
 	}
 }
 
@@ -116,10 +118,31 @@ func (a *ReplicationAssignmentAllocator) SyncOnce(ctx context.Context) error {
 	}
 
 	leaseExpiresAt := a.now().UTC().Add(a.leaseDuration)
+	state := cluster.AssignmentStatePending
+	currentAssignment, err := a.assignments.GetByPair(ctx, activeNodeID, target.NodeID)
+	if err != nil {
+		return fmt.Errorf("load assignment for standby %q: %w", target.NodeID, err)
+	}
+	if currentAssignment != nil {
+		switch {
+		case currentAssignment.Effective():
+			state = currentAssignment.State
+		case currentAssignment.State == cluster.AssignmentStateError && a.recoverError:
+			if a.logger != nil {
+				a.logger.Info("recovering error assignment to pending on allocator startup",
+					zap.String("active_node_id", activeNodeID),
+					zap.String("standby_node_id", target.NodeID),
+					zap.Int64("generation", currentAssignment.Generation))
+			}
+			a.recoverError = false
+		case currentAssignment.State == cluster.AssignmentStateError:
+			state = currentAssignment.State
+		}
+	}
 	assignment := &cluster.ReplicationAssignment{
 		ActiveNodeID:   activeNodeID,
 		StandbyNodeID:  target.NodeID,
-		State:          cluster.AssignmentStateReplicating,
+		State:          state,
 		LeaseExpiresAt: &leaseExpiresAt,
 	}
 	if err := a.assignments.UpsertLease(ctx, assignment); err != nil {

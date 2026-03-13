@@ -54,6 +54,12 @@ func runHAAssignments(args []string) error {
 	switch args[0] {
 	case "status":
 		return runHAAssignmentsStatus(args[1:])
+	case "drain":
+		return runHAAssignmentsDrain(args[1:])
+	case "release":
+		return runHAAssignmentsRelease(args[1:])
+	case "retry":
+		return runHAAssignmentsRetry(args[1:])
 	case "-h", "--help", "help":
 		printHAAssignmentsHelp()
 		return nil
@@ -94,6 +100,77 @@ func runHAAssignmentsStatus(args []string) error {
 	}
 
 	printPrettyJSONFromAny(buildAssignmentStatusResponse(cfg, filter, scope, assignments))
+	return nil
+}
+
+func runHAAssignmentsDrain(args []string) error {
+	return runHAAssignmentStateMutation(args, "drain")
+}
+
+func runHAAssignmentsRelease(args []string) error {
+	return runHAAssignmentStateMutation(args, "release")
+}
+
+func runHAAssignmentsRetry(args []string) error {
+	return runHAAssignmentStateMutation(args, "retry")
+}
+
+func runHAAssignmentStateMutation(args []string, action string) error {
+	flags := newHAAssignmentMutationFlags("assignments-" + action)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if help, _ := flags.GetBool("help"); help {
+		printHAAssignmentMutationUsage(action)
+		return nil
+	}
+
+	cfg, err := loadHAConfigFromFlags(flags)
+	if err != nil {
+		return err
+	}
+	target, err := resolveAssignmentMutationTargetFromFlags(cfg, flags)
+	if err != nil {
+		return err
+	}
+
+	db, err := database.NewPostgresDB(cfg.Database)
+	if err != nil {
+		return fmt.Errorf("connect database: %w", err)
+	}
+	defer db.Close()
+
+	assignmentRepo := repository.NewPostgresClusterReplicationAssignmentRepository(db.DB)
+	assignment, err := assignmentRepo.GetByPair(context.Background(), target.ActiveNodeID, target.StandbyNodeID)
+	if err != nil {
+		return err
+	}
+	if assignment == nil {
+		return fmt.Errorf("assignment %s -> %s not found", target.ActiveNodeID, target.StandbyNodeID)
+	}
+
+	standbyHealthy := false
+	standbyLastHeartbeatAt := (*time.Time)(nil)
+	if node, nodeErr := repository.NewPostgresClusterNodeRepository(db.DB).Get(context.Background(), target.StandbyNodeID); nodeErr == nil {
+		healthy := node.Healthy(time.Now().UTC(), defaultHANodeStaleness)
+		standbyHealthy = healthy
+		standbyLastHeartbeatAt = &node.LastHeartbeatAt
+	} else if nodeErr != nil && nodeErr != cluster.ErrNodeNotFound {
+		return fmt.Errorf("load standby node %q: %w", target.StandbyNodeID, nodeErr)
+	}
+
+	force, _ := flags.GetBool("force")
+	updated, changed, notes, err := planAssignmentStateMutation(action, assignment, standbyHealthy, force, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err := assignmentRepo.UpdateState(context.Background(), updated); err != nil {
+			return err
+		}
+	}
+
+	printPrettyJSONFromAny(buildAssignmentMutationResponse(action, changed, force, standbyHealthy, standbyLastHeartbeatAt, assignment, updated, notes))
 	return nil
 }
 
@@ -482,6 +559,9 @@ func printHAHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  warehouse ha status -c config.yaml [--peer] [--base-url URL]")
 	fmt.Println("  warehouse ha assignments status -c config.yaml [--all] [--active-node-id ID] [--standby-node-id ID] [--state STATE] [--limit N]")
+	fmt.Println("  warehouse ha assignments drain -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	fmt.Println("  warehouse ha assignments release -c config.yaml --standby-node-id ID [--active-node-id ID] [--force]")
+	fmt.Println("  warehouse ha assignments retry -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	fmt.Println("  warehouse ha reconcile start -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 	fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL]")
 	fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--outbox-id N]")
@@ -490,6 +570,9 @@ func printHAHelp() {
 func printHAAssignmentsHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  warehouse ha assignments status -c config.yaml [--all] [--active-node-id ID] [--standby-node-id ID] [--state STATE] [--limit N]")
+	fmt.Println("  warehouse ha assignments drain -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	fmt.Println("  warehouse ha assignments release -c config.yaml --standby-node-id ID [--active-node-id ID] [--force]")
+	fmt.Println("  warehouse ha assignments retry -c config.yaml --standby-node-id ID [--active-node-id ID]")
 }
 
 func printHAReconcileHelp() {
@@ -524,6 +607,22 @@ type haAssignmentStatusResponse struct {
 	Notes       []string                   `json:"notes,omitempty"`
 }
 
+type haAssignmentMutationTarget struct {
+	ActiveNodeID  string
+	StandbyNodeID string
+}
+
+type haAssignmentMutationResponse struct {
+	Action               string                   `json:"action"`
+	Changed              bool                     `json:"changed"`
+	Forced               bool                     `json:"forced"`
+	StandbyHealthy       bool                     `json:"standbyHealthy"`
+	StandbyLastHeartbeat *time.Time               `json:"standbyLastHeartbeatAt,omitempty"`
+	Before               haAssignmentStatusRecord `json:"before"`
+	After                haAssignmentStatusRecord `json:"after"`
+	Notes                []string                 `json:"notes,omitempty"`
+}
+
 type haAssignmentNodeStatus struct {
 	ID   string `json:"id"`
 	Role string `json:"role"`
@@ -549,6 +648,8 @@ type haAssignmentStatusRecord struct {
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
 }
+
+const defaultHANodeStaleness = 15 * time.Second
 
 func resolveAssignmentStatusFilter(cfg *config.Config, flags *pflag.FlagSet) (repository.ClusterReplicationAssignmentFilter, string, error) {
 	filter := repository.ClusterReplicationAssignmentFilter{}
@@ -638,6 +739,176 @@ func buildAssignmentStatusResponse(
 	resp.Notes = []string{
 		"cluster_replication_assignments is maintained by the active-side allocator/renewer",
 		"current assignment state is control-plane observable; replication traffic still follows the existing single-target pipeline",
+	}
+	return resp
+}
+
+func newHAAssignmentMutationFlags(name string) *pflag.FlagSet {
+	flags := pflag.NewFlagSet(name, pflag.ContinueOnError)
+	flags.StringP("config", "c", "", "Config file path")
+	flags.String("active-node-id", "", "Active node id")
+	flags.String("standby-node-id", "", "Standby node id")
+	flags.Bool("force", false, "Bypass safety validation when supported")
+	flags.BoolP("help", "h", false, "Show help")
+	return flags
+}
+
+func printHAAssignmentMutationUsage(action string) {
+	fmt.Println("Usage:")
+	switch action {
+	case "release":
+		fmt.Println("  warehouse ha assignments release -c config.yaml --standby-node-id ID [--active-node-id ID] [--force]")
+	case "retry":
+		fmt.Println("  warehouse ha assignments retry -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	default:
+		fmt.Printf("  warehouse ha assignments %s -c config.yaml --standby-node-id ID [--active-node-id ID]\n", action)
+	}
+}
+
+func resolveAssignmentMutationTargetFromFlags(cfg *config.Config, flags *pflag.FlagSet) (haAssignmentMutationTarget, error) {
+	activeNodeID, _ := flags.GetString("active-node-id")
+	standbyNodeID, _ := flags.GetString("standby-node-id")
+	return resolveAssignmentMutationTarget(cfg, activeNodeID, standbyNodeID)
+}
+
+func resolveAssignmentMutationTarget(cfg *config.Config, activeNodeID, standbyNodeID string) (haAssignmentMutationTarget, error) {
+	target := haAssignmentMutationTarget{
+		ActiveNodeID:  strings.TrimSpace(activeNodeID),
+		StandbyNodeID: strings.TrimSpace(standbyNodeID),
+	}
+	if cfg != nil {
+		switch strings.ToLower(strings.TrimSpace(cfg.Node.Role)) {
+		case "active":
+			if target.ActiveNodeID == "" {
+				target.ActiveNodeID = strings.TrimSpace(cfg.Node.ID)
+			}
+		case "standby":
+			if target.StandbyNodeID == "" {
+				target.StandbyNodeID = strings.TrimSpace(cfg.Node.ID)
+			}
+		}
+	}
+	if target.ActiveNodeID == "" {
+		return target, fmt.Errorf("active node id is required; use --active-node-id or run from an active config")
+	}
+	if target.StandbyNodeID == "" {
+		return target, fmt.Errorf("standby node id is required; use --standby-node-id or run from a standby config")
+	}
+	return target, nil
+}
+
+func planAssignmentStateMutation(
+	action string,
+	assignment *cluster.ReplicationAssignment,
+	standbyHealthy bool,
+	force bool,
+	now time.Time,
+) (*cluster.ReplicationAssignment, bool, []string, error) {
+	if assignment == nil {
+		return nil, false, nil, fmt.Errorf("assignment is required")
+	}
+	assignment.Normalize()
+	updated := *assignment
+	notes := make([]string, 0, 3)
+
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "drain":
+		if assignment.State == cluster.AssignmentStateDraining {
+			notes = append(notes, "assignment is already in draining state")
+			return &updated, false, notes, nil
+		}
+		if !cluster.CanTransitionAssignmentState(assignment.State, cluster.AssignmentStateDraining) {
+			return nil, false, nil, fmt.Errorf("assignment %s -> %s in state %q cannot transition to draining", assignment.ActiveNodeID, assignment.StandbyNodeID, assignment.State)
+		}
+		updated.State = cluster.AssignmentStateDraining
+		notes = append(notes, "draining keeps the assignment effective; standby will still accept the assigned active")
+		return &updated, true, notes, nil
+	case "release":
+		if assignment.State == cluster.AssignmentStateReleased {
+			notes = append(notes, "assignment is already released")
+			return &updated, false, notes, nil
+		}
+		if !cluster.CanTransitionAssignmentState(assignment.State, cluster.AssignmentStateReleased) {
+			if !force {
+				return nil, false, nil, fmt.Errorf("assignment %s -> %s in state %q cannot transition to released without --force", assignment.ActiveNodeID, assignment.StandbyNodeID, assignment.State)
+			}
+			notes = append(notes, "release was forced from a non-standard state transition")
+		}
+		if standbyHealthy && !force {
+			return nil, false, nil, fmt.Errorf("standby %q is still healthy; stop or isolate it first, or retry with --force", assignment.StandbyNodeID)
+		}
+		if standbyHealthy && force {
+			notes = append(notes, "release was forced while standby heartbeat is still healthy; allocator may re-assign it if the active keeps running")
+		}
+		expiredAt := now.UTC()
+		updated.State = cluster.AssignmentStateReleased
+		updated.LeaseExpiresAt = &expiredAt
+		return &updated, true, notes, nil
+	case "retry":
+		if assignment.State == cluster.AssignmentStatePending {
+			notes = append(notes, "assignment is already pending")
+			return &updated, false, notes, nil
+		}
+		if !cluster.CanTransitionAssignmentState(assignment.State, cluster.AssignmentStatePending) {
+			return nil, false, nil, fmt.Errorf("assignment %s -> %s in state %q cannot transition to pending", assignment.ActiveNodeID, assignment.StandbyNodeID, assignment.State)
+		}
+		updated.State = cluster.AssignmentStatePending
+		updated.LastError = nil
+		notes = append(notes, "retry moves the assignment back to pending so active can re-run reconcile and resume generation-bound replication")
+		return &updated, true, notes, nil
+	default:
+		return nil, false, nil, fmt.Errorf("unsupported assignment action %q", action)
+	}
+}
+
+func buildAssignmentMutationResponse(
+	action string,
+	changed bool,
+	force bool,
+	standbyHealthy bool,
+	standbyLastHeartbeatAt *time.Time,
+	before *cluster.ReplicationAssignment,
+	after *cluster.ReplicationAssignment,
+	notes []string,
+) haAssignmentMutationResponse {
+	now := time.Now().UTC()
+	resp := haAssignmentMutationResponse{
+		Action:               action,
+		Changed:              changed,
+		Forced:               force,
+		StandbyHealthy:       standbyHealthy,
+		StandbyLastHeartbeat: standbyLastHeartbeatAt,
+		Notes:                append([]string(nil), notes...),
+	}
+	if before != nil {
+		resp.Before = haAssignmentStatusRecord{
+			ID:                 before.ID,
+			ActiveNodeID:       before.ActiveNodeID,
+			StandbyNodeID:      before.StandbyNodeID,
+			State:              before.State,
+			Generation:         before.Generation,
+			LeaseExpiresAt:     before.LeaseExpiresAt,
+			LeaseExpired:       before.LeaseExpired(now),
+			LastReconcileJobID: before.LastReconcileJobID,
+			LastError:          before.LastError,
+			CreatedAt:          before.CreatedAt,
+			UpdatedAt:          before.UpdatedAt,
+		}
+	}
+	if after != nil {
+		resp.After = haAssignmentStatusRecord{
+			ID:                 after.ID,
+			ActiveNodeID:       after.ActiveNodeID,
+			StandbyNodeID:      after.StandbyNodeID,
+			State:              after.State,
+			Generation:         after.Generation,
+			LeaseExpiresAt:     after.LeaseExpiresAt,
+			LeaseExpired:       after.LeaseExpired(now),
+			LastReconcileJobID: after.LastReconcileJobID,
+			LastError:          after.LastError,
+			CreatedAt:          after.CreatedAt,
+			UpdatedAt:          after.UpdatedAt,
+		}
 	}
 	return resp
 }

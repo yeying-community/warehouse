@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
+	"github.com/yeying-community/warehouse/internal/domain/cluster"
 	"github.com/yeying-community/warehouse/internal/domain/replication"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
@@ -547,6 +551,75 @@ func TestInternalReplicationHandleBootstrapMarkRejectsBackwardOffset(t *testing.
 	}
 }
 
+func TestInternalReplicationHandleBootstrapMarkAllowsGenerationFenceReset(t *testing.T) {
+	offsetGeneration := int64(1)
+	offsets := newMemoryReplicationOffsetStore()
+	offsets.offsets["node-a->node-b"] = &replication.Offset{
+		SourceNodeID:         "node-a",
+		TargetNodeID:         "node-b",
+		AssignmentGeneration: &offsetGeneration,
+		LastAppliedOutboxID:  9,
+		LastAppliedAt:        time.Now(),
+		UpdatedAt:            time.Now(),
+	}
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-b"
+	cfg.Node.Role = "standby"
+	cfg.Internal.Replication.Enabled = true
+	cfg.Internal.Replication.PeerNodeID = "node-a"
+
+	assignmentGeneration := int64(2)
+	assignments := &fakeHandlerAssignmentRepository{
+		standbyAssignments: map[string]*cluster.ReplicationAssignment{
+			"node-b": {
+				ActiveNodeID:   "node-a",
+				StandbyNodeID:  "node-b",
+				State:          cluster.AssignmentStateReplicating,
+				Generation:     assignmentGeneration,
+				LeaseExpiresAt: timePointer(time.Now().UTC().Add(time.Minute)),
+			},
+		},
+	}
+
+	handler := NewInternalReplicationHandler(
+		cfg,
+		zap.NewNop(),
+		fakeReplicationOutboxReader{
+			expectedSource: "node-a",
+			expectedTarget: "node-b",
+			summary:        &replication.OutboxStatus{},
+		},
+		offsets,
+		nil,
+		nil,
+		nil,
+		assignments,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/bootstrap/mark", bytes.NewBufferString(`{"outboxId":12}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Warehouse-Node-Id", "node-a")
+	req.Header.Set("X-Warehouse-Assignment-Generation", "2")
+	recorder := httptest.NewRecorder()
+
+	handler.HandleBootstrapMark(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+
+	offset, err := offsets.Get(context.Background(), "node-a", "node-b")
+	if err != nil {
+		t.Fatalf("expected offset to exist: %v", err)
+	}
+	if offset.AssignmentGeneration == nil || *offset.AssignmentGeneration != 2 {
+		t.Fatalf("expected offset generation to advance, got %#v", offset.AssignmentGeneration)
+	}
+	if offset.LastAppliedOutboxID != 12 {
+		t.Fatalf("expected offset to be re-based to 12, got %#v", offset)
+	}
+}
+
 func TestInternalReplicationHandleReconcileStart(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Node.ID = "node-a"
@@ -557,6 +630,17 @@ func TestInternalReplicationHandleReconcileStart(t *testing.T) {
 	lastOutboxID := int64(15)
 	generation := int64(6)
 	reconcileStore := &fakeReconcileStore{}
+	assignments := &fakeHandlerAssignmentRepository{
+		pairAssignments: map[string]*cluster.ReplicationAssignment{
+			"node-a->node-b": {
+				ActiveNodeID:   "node-a",
+				StandbyNodeID:  "node-b",
+				State:          cluster.AssignmentStatePending,
+				Generation:     generation,
+				LeaseExpiresAt: timePointer(time.Now().UTC().Add(time.Minute)),
+			},
+		},
+	}
 	handler := NewInternalReplicationHandler(
 		cfg,
 		zap.NewNop(),
@@ -581,6 +665,7 @@ func TestInternalReplicationHandleReconcileStart(t *testing.T) {
 				AssignmentGeneration: &generation,
 			},
 		},
+		assignments,
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/reconcile/start", bytes.NewBufferString(`{}`))
@@ -605,6 +690,28 @@ func TestInternalReplicationHandleReconcileStart(t *testing.T) {
 	if len(reconcileStore.items) != 2 {
 		t.Fatalf("expected 2 reconcile items, got %d", len(reconcileStore.items))
 	}
+	if len(assignments.updateCalls) != 2 {
+		t.Fatalf("expected 2 assignment state updates, got %d", len(assignments.updateCalls))
+	}
+	if assignments.updateCalls[0].State != cluster.AssignmentStateReconciling {
+		t.Fatalf("expected first assignment update to be reconciling, got %#v", assignments.updateCalls[0])
+	}
+	if assignments.updateCalls[1].State != cluster.AssignmentStateReplicating {
+		t.Fatalf("expected final assignment update to be replicating, got %#v", assignments.updateCalls[1])
+	}
+	assignment := assignments.pairAssignments["node-a->node-b"]
+	if assignment == nil {
+		t.Fatalf("expected assignment to be persisted")
+	}
+	if assignment.State != cluster.AssignmentStateReplicating {
+		t.Fatalf("unexpected final assignment state: %#v", assignment)
+	}
+	if assignment.LastReconcileJobID == nil || *assignment.LastReconcileJobID != 1 {
+		t.Fatalf("unexpected final assignment reconcile job: %#v", assignment.LastReconcileJobID)
+	}
+	if assignment.LastError != nil {
+		t.Fatalf("expected final assignment error to be cleared, got %#v", assignment.LastError)
+	}
 
 	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/internal/replication/status", nil)
 	statusRecorder := httptest.NewRecorder()
@@ -619,5 +726,208 @@ func TestInternalReplicationHandleReconcileStart(t *testing.T) {
 	}
 	if statusResp.Reconcile == nil || statusResp.Reconcile.Status != replication.ReconcileJobStatusReady {
 		t.Fatalf("expected reconcile status ready, got %#v", statusResp.Reconcile)
+	}
+}
+
+func TestInternalReplicationHandleReconcileStartAutoBootstrapsWatermark(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Internal.Replication.Enabled = true
+	cfg.WebDAV.Directory = t.TempDir()
+
+	lastOutboxID := int64(15)
+	generation := int64(6)
+	reconcileStore := &fakeReconcileStore{}
+	assignments := &fakeHandlerAssignmentRepository{
+		pairAssignments: map[string]*cluster.ReplicationAssignment{
+			"node-a->node-b": {
+				ActiveNodeID:   "node-a",
+				StandbyNodeID:  "node-b",
+				State:          cluster.AssignmentStatePending,
+				Generation:     generation,
+				LeaseExpiresAt: timePointer(time.Now().UTC().Add(time.Minute)),
+			},
+		},
+	}
+
+	var reconcileRequests int
+	var bootstrapRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/internal/replication/reconcile/apply-batch":
+			reconcileRequests++
+			if got := r.Header.Get(middleware.InternalAssignmentGenerationHeader); got != "6" {
+				t.Fatalf("unexpected reconcile generation header: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"applied":1}`))
+		case "/api/v1/internal/replication/bootstrap/mark":
+			bootstrapRequests++
+			if got := r.Header.Get(middleware.InternalAssignmentGenerationHeader); got != "6" {
+				t.Fatalf("unexpected bootstrap generation header: %q", got)
+			}
+			var req internalReplicationBootstrapMarkRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode bootstrap request: %v", err)
+			}
+			if req.OutboxID == nil || *req.OutboxID != 15 {
+				t.Fatalf("unexpected bootstrap outbox id: %#v", req.OutboxID)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"lastAppliedOutboxId":15}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewInternalReplicationHandler(
+		cfg,
+		zap.NewNop(),
+		fakeReplicationOutboxReader{
+			expectedSource: "node-a",
+			expectedTarget: "node-b",
+			summary: &replication.OutboxStatus{
+				LastOutboxID: &lastOutboxID,
+			},
+		},
+		nil,
+		reconcileStore,
+		fakeReconcileScanner{
+			items: []*replication.ReconcileItem{
+				{ID: 1, Path: "/history", IsDir: true, State: replication.ReconcileItemStatePending},
+			},
+		},
+		fakeHandlerPeerResolver{
+			target: &service.ResolvedReplicationPeer{
+				NodeID:               "node-b",
+				AssignmentGeneration: &generation,
+			},
+			dispatch: &service.ResolvedReplicationPeer{
+				NodeID:               "node-b",
+				BaseURL:              server.URL,
+				AssignmentGeneration: &generation,
+			},
+		},
+		assignments,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/reconcile/start", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.HandleReconcileStart(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if reconcileRequests != 1 {
+		t.Fatalf("expected 1 reconcile apply request, got %d", reconcileRequests)
+	}
+	if bootstrapRequests != 1 {
+		t.Fatalf("expected 1 bootstrap mark request, got %d", bootstrapRequests)
+	}
+	if len(assignments.updateCalls) != 2 {
+		t.Fatalf("expected 2 assignment updates, got %d", len(assignments.updateCalls))
+	}
+	if assignments.updateCalls[1].State != cluster.AssignmentStateReplicating {
+		t.Fatalf("expected final assignment state to be replicating, got %#v", assignments.updateCalls[1])
+	}
+}
+
+func TestInternalReplicationHandleReconcileStartPersistsAssignmentError(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Internal.Replication.Enabled = true
+	cfg.Internal.Replication.PeerNodeID = "node-b"
+
+	lastOutboxID := int64(15)
+	generation := int64(6)
+	reconcileStore := &fakeReconcileStore{}
+	assignments := &fakeHandlerAssignmentRepository{
+		pairAssignments: map[string]*cluster.ReplicationAssignment{
+			"node-a->node-b": {
+				ActiveNodeID:   "node-a",
+				StandbyNodeID:  "node-b",
+				State:          cluster.AssignmentStatePending,
+				Generation:     generation,
+				LeaseExpiresAt: timePointer(time.Now().UTC().Add(time.Minute)),
+			},
+		},
+	}
+	handler := NewInternalReplicationHandler(
+		cfg,
+		zap.NewNop(),
+		fakeReplicationOutboxReader{
+			expectedSource: "node-a",
+			expectedTarget: "node-b",
+			summary: &replication.OutboxStatus{
+				LastOutboxID: &lastOutboxID,
+			},
+		},
+		nil,
+		reconcileStore,
+		fakeReconcileScanner{
+			err: fmt.Errorf("scan failed"),
+		},
+		fakeHandlerPeerResolver{
+			target: &service.ResolvedReplicationPeer{
+				NodeID:               "node-b",
+				AssignmentGeneration: &generation,
+			},
+		},
+		assignments,
+	)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/reconcile/start", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.HandleReconcileStart(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if reconcileStore.latestJob == nil || reconcileStore.latestJob.Status != replication.ReconcileJobStatusFailed {
+		t.Fatalf("expected failed reconcile job, got %#v", reconcileStore.latestJob)
+	}
+	if len(assignments.updateCalls) != 2 {
+		t.Fatalf("expected 2 assignment updates, got %d", len(assignments.updateCalls))
+	}
+	assignment := assignments.pairAssignments["node-a->node-b"]
+	if assignment == nil {
+		t.Fatalf("expected assignment to exist")
+	}
+	if assignment.State != cluster.AssignmentStateError {
+		t.Fatalf("expected assignment to move to error on failure, got %#v", assignment)
+	}
+	if assignment.LastReconcileJobID == nil || *assignment.LastReconcileJobID != 1 {
+		t.Fatalf("unexpected assignment reconcile job id: %#v", assignment.LastReconcileJobID)
+	}
+	if assignment.LastError == nil || !strings.Contains(*assignment.LastError, "scan failed") {
+		t.Fatalf("expected assignment last error to be persisted, got %#v", assignment.LastError)
+	}
+}
+
+func TestStartReconcileReturnsAssignmentUnavailableWhenNoEffectiveAssignment(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Internal.Replication.Enabled = true
+
+	handler := NewInternalReplicationHandler(
+		cfg,
+		zap.NewNop(),
+		nil,
+		nil,
+		&fakeReconcileStore{},
+		fakeReconcileScanner{},
+		fakeHandlerPeerResolver{},
+		&fakeHandlerAssignmentRepository{},
+	)
+
+	_, err := handler.startReconcile(context.Background(), "")
+	if !errors.Is(err, service.ErrReplicationAssignmentUnavailable) {
+		t.Fatalf("expected assignment unavailable error, got %v", err)
 	}
 }

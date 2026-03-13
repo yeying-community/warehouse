@@ -91,6 +91,9 @@ func (r *ClusterReplicationPeerResolver) ResolveTarget(ctx context.Context) (*Re
 	if err != nil || peer != nil {
 		return peer, err
 	}
+	if r.assignments != nil {
+		return nil, nil
+	}
 	if r.configuredID != "" {
 		return r.ResolveByNodeID(ctx, r.configuredID, false)
 	}
@@ -105,6 +108,9 @@ func (r *ClusterReplicationPeerResolver) ResolveDispatchTarget(ctx context.Conte
 	peer, err := r.resolveByAssignment(ctx, true)
 	if err != nil || peer != nil {
 		return peer, err
+	}
+	if r.assignments != nil {
+		return nil, nil
 	}
 	if r.configuredID != "" {
 		return r.ResolveByNodeID(ctx, r.configuredID, true)

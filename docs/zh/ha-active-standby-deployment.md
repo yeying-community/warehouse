@@ -77,31 +77,37 @@ standby 不应该：
 
 ### 3.3 历史补齐 + 后续增量
 
-当前实现支持：active 启动后自动触发一次历史 reconcile，并通过 internal 接口把历史文件批量补齐到 standby。
+当前实现支持：active 启动后自动触发一次历史 reconcile，并通过 internal 接口把历史文件批量补齐到 standby；reconcile 成功后，active 还会自动向 standby 发送一次 `bootstrap/mark`，把当前 watermark outbox id 写成该 generation 的 baseline offset。
 
 建议顺序：
 
 1. 确保 active / standby 都已启动，且 internal 鉴权配置一致
 2. 等待 active 完成自动 reconcile（可通过状态接口观察）
-3. 自动 reconcile 完成后，继续依赖 outbox 增量复制追平后续变更
-4. 最后根据复制 lag 与 reconcile 状态判断是否具备切换资格
+3. 自动 reconcile 完成且 standby baseline 初始化成功后，继续依赖 outbox 增量复制追平后续变更
+4. 最后根据复制 lag、assignment 状态与 reconcile 状态判断是否具备切换资格
 
-如果你要显式控制历史基线（例如离线全量拷贝后再接入），仍可走 `bootstrap/mark` 流程。
+如果你要显式控制历史基线（例如离线全量拷贝后再接入），仍可手工走 `bootstrap/mark` 流程；但这已经不是正常启动后的主路径。
 
-仓库中已经提供辅助脚本：
+日常运维统一通过二进制 CLI 操作：
 
 ```shell
-bash scripts/bootstrap_standby.sh \
-  --standby-base-url https://warehouse-standby.internal \
-  --source-node-id warehouse-active \
-  --shared-secret replace-with-a-shared-internal-secret
+# 查看当前节点复制状态
+build/warehouse ha status -c config.yaml
+
+# 查看 peer（例如 standby）复制状态
+build/warehouse ha status -c config.yaml --peer
+
+# 手工触发一次历史补齐
+build/warehouse ha reconcile start -c config.yaml
+
+# 显式写入 bootstrap baseline
+build/warehouse ha bootstrap mark -c config.yaml --peer --outbox-id 123
+
+# 观察 assignment 状态
+build/warehouse ha assignments status -c config.yaml
 ```
 
-该脚本会：
-
-- 调用 `POST /api/v1/internal/replication/bootstrap/mark`
-- 随后调用 `GET /api/v1/internal/replication/status`
-- 打印当前 baseline 和复制状态
+当前 `bootstrap/mark` 已要求携带 assignment generation，常规 baseline 运维统一使用 `build/warehouse ha bootstrap mark ...`。
 
 ## 4. 当前 readiness 的作用与边界
 
@@ -176,12 +182,15 @@ bash scripts/bootstrap_standby.sh \
 
 - `internal` 鉴权与复制接口
 - `replication_outbox` / `replication_offsets` 持久化状态
+- `cluster_nodes` / `cluster_replication_assignments` 控制面
 - standby 侧幂等 apply handler
 - active 侧顺序分发 worker
-- 基础复制状态接口
+- reconcile 与 assignment 生命周期联动
+- reconcile 成功后自动 `bootstrap mark`
+- 基础复制状态接口与 assignment CLI
 
 当前仍需继续补齐：
 
-- standby 首次全量同步基线流程
 - 周期性 reconcile / 漂移修复
 - 更完整的切换自动化与演练沉淀
+- 多 standby 编排与更完整的控制面观察

@@ -64,6 +64,21 @@ func (e *replicationGenerationConflictError) Error() string {
 	)
 }
 
+type replicationGenerationFenceNotInitializedError struct {
+	AssignmentGeneration *int64
+	OffsetGeneration     *int64
+	LastAppliedOutboxID  int64
+}
+
+func (e *replicationGenerationFenceNotInitializedError) Error() string {
+	return fmt.Sprintf(
+		"standby generation fence is not initialized: assignment=%s offset=%s after outbox %d",
+		formatNullableInt64(e.AssignmentGeneration),
+		formatNullableInt64(e.OffsetGeneration),
+		e.LastAppliedOutboxID,
+	)
+}
+
 func (h *InternalReplicationHandler) HandleFSApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -305,6 +320,25 @@ func validateAssignmentGeneration(
 	assignment *cluster.ReplicationAssignment,
 	offset *replication.Offset,
 ) error {
+	if err := validateRequestedAssignmentGeneration(requestGeneration, assignment, offset); err != nil {
+		return err
+	}
+	return validateOffsetGenerationFence(requestGeneration, assignment, offset)
+}
+
+func validateBootstrapAssignmentGeneration(
+	requestGeneration *int64,
+	assignment *cluster.ReplicationAssignment,
+	offset *replication.Offset,
+) error {
+	return validateRequestedAssignmentGeneration(requestGeneration, assignment, offset)
+}
+
+func validateRequestedAssignmentGeneration(
+	requestGeneration *int64,
+	assignment *cluster.ReplicationAssignment,
+	offset *replication.Offset,
+) error {
 	var lastAppliedOutboxID int64
 	if offset != nil {
 		lastAppliedOutboxID = offset.LastAppliedOutboxID
@@ -319,7 +353,36 @@ func validateAssignmentGeneration(
 			LastAppliedOutboxID: lastAppliedOutboxID,
 		}
 	}
+	return nil
+}
+
+func validateOffsetGenerationFence(
+	requestGeneration *int64,
+	assignment *cluster.ReplicationAssignment,
+	offset *replication.Offset,
+) error {
+	if offset == nil {
+		return nil
+	}
+	lastAppliedOutboxID := offset.LastAppliedOutboxID
+	if offset.AssignmentGeneration == nil || *offset.AssignmentGeneration <= 0 {
+		if lastAppliedOutboxID > 0 && assignment != nil && assignment.Generation == *requestGeneration {
+			return &replicationGenerationFenceNotInitializedError{
+				AssignmentGeneration: int64Pointer(assignment.Generation),
+				OffsetGeneration:     offset.AssignmentGeneration,
+				LastAppliedOutboxID:  lastAppliedOutboxID,
+			}
+		}
+		return nil
+	}
 	if offset != nil && offset.AssignmentGeneration != nil && *offset.AssignmentGeneration != *requestGeneration {
+		if assignment != nil && assignment.Generation == *requestGeneration {
+			return &replicationGenerationFenceNotInitializedError{
+				AssignmentGeneration: int64Pointer(assignment.Generation),
+				OffsetGeneration:     offset.AssignmentGeneration,
+				LastAppliedOutboxID:  lastAppliedOutboxID,
+			}
+		}
 		return &replicationGenerationConflictError{
 			ExpectedGeneration:  offset.AssignmentGeneration,
 			ReceivedGeneration:  requestGeneration,
@@ -532,6 +595,18 @@ func (h *InternalReplicationHandler) writeApplyError(w http.ResponseWriter, err 
 			"expectedGeneration":  generationConflict.ExpectedGeneration,
 			"receivedGeneration":  generationConflict.ReceivedGeneration,
 			"lastAppliedOutboxId": generationConflict.LastAppliedOutboxID,
+		})
+		return
+	}
+	var fenceConflict *replicationGenerationFenceNotInitializedError
+	if errors.As(err, &fenceConflict) {
+		h.writeJSON(w, http.StatusConflict, map[string]any{
+			"error":                err.Error(),
+			"code":                 http.StatusConflict,
+			"success":              false,
+			"assignmentGeneration": fenceConflict.AssignmentGeneration,
+			"offsetGeneration":     fenceConflict.OffsetGeneration,
+			"lastAppliedOutboxId":  fenceConflict.LastAppliedOutboxID,
 		})
 		return
 	}

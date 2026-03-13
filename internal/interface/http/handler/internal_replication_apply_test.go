@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yeying-community/warehouse/internal/domain/cluster"
 	"github.com/yeying-community/warehouse/internal/domain/replication"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
@@ -204,5 +205,57 @@ func TestInternalReplicationHandleFileApplyAlreadyApplied(t *testing.T) {
 	}
 	if offsets.upserts != 0 {
 		t.Fatalf("expected no offset updates, got %d", offsets.upserts)
+	}
+}
+
+func TestInternalReplicationHandleFSApplyRejectsUninitializedGenerationFence(t *testing.T) {
+	root := t.TempDir()
+	offsetGeneration := int64(1)
+	offsets := newMemoryReplicationOffsetStore()
+	offsets.offsets["node-a->node-b"] = &replication.Offset{
+		SourceNodeID:         "node-a",
+		TargetNodeID:         "node-b",
+		AssignmentGeneration: &offsetGeneration,
+		LastAppliedOutboxID:  9,
+		LastAppliedAt:        time.Now(),
+		UpdatedAt:            time.Now(),
+	}
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-b"
+	cfg.Node.Role = "standby"
+	cfg.Internal.Replication.Enabled = true
+	cfg.WebDAV.Directory = root
+
+	assignmentGeneration := int64(2)
+	assignments := &fakeHandlerAssignmentRepository{
+		standbyAssignments: map[string]*cluster.ReplicationAssignment{
+			"node-b": {
+				ActiveNodeID:   "node-a",
+				StandbyNodeID:  "node-b",
+				State:          cluster.AssignmentStateReplicating,
+				Generation:     assignmentGeneration,
+				LeaseExpiresAt: timePointer(time.Now().UTC().Add(time.Minute)),
+			},
+		},
+	}
+
+	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil, nil, assignments)
+	body := bytes.NewBufferString(`{"outboxId":10,"op":"ensure_dir","path":"/alice/docs","isDir":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/fs/apply", body)
+	req.Header.Set(middleware.InternalNodeIDHeader, "node-a")
+	req.Header.Set(middleware.InternalAssignmentGenerationHeader, "2")
+	recorder := httptest.NewRecorder()
+
+	handler.HandleFSApply(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got := int64(resp["lastAppliedOutboxId"].(float64)); got != 9 {
+		t.Fatalf("unexpected lastAppliedOutboxId: %v", resp["lastAppliedOutboxId"])
 	}
 }

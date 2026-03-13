@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -174,10 +176,10 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpsertLease(t *testing.T)
 		DO UPDATE SET
 			state = EXCLUDED.state,
 			generation = CASE
-				WHEN cluster_replication_assignments.state = EXCLUDED.state
-				  AND cluster_replication_assignments.state IN ('pending', 'reconciling', 'replicating', 'draining')
-				THEN cluster_replication_assignments.generation
-				ELSE cluster_replication_assignments.generation + 1
+				WHEN cluster_replication_assignments.state IN ('released', 'error')
+				 AND EXCLUDED.state = 'pending'
+				THEN cluster_replication_assignments.generation + 1
+				ELSE cluster_replication_assignments.generation
 			END,
 			lease_expires_at = EXCLUDED.lease_expires_at,
 			last_error = NULL,
@@ -252,6 +254,229 @@ func TestPostgresClusterReplicationAssignmentRepositoryGetEffectiveByStandby(t *
 	}
 	if assignment.ActiveNodeID != "node-a" || assignment.StandbyNodeID != "node-b" {
 		t.Fatalf("unexpected assignment: %#v", assignment)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestPostgresClusterReplicationAssignmentRepositoryGetByPair(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewPostgresClusterReplicationAssignmentRepository(db)
+	leaseExpiresAt := time.Date(2026, 3, 13, 9, 0, 0, 0, time.UTC)
+	createdAt := leaseExpiresAt.Add(-2 * time.Minute)
+	updatedAt := leaseExpiresAt.Add(-time.Second)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, active_node_id, standby_node_id, state, generation,
+		       lease_expires_at, last_reconcile_job_id, last_error,
+		       created_at, updated_at
+		FROM cluster_replication_assignments
+		WHERE active_node_id = $1
+		  AND standby_node_id = $2
+		LIMIT 1
+	`)).
+		WithArgs("node-a", "node-b").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "active_node_id", "standby_node_id", "state", "generation",
+			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"created_at", "updated_at",
+		}).AddRow(
+			int64(31), "node-a", "node-b", cluster.AssignmentStatePending, int64(5),
+			leaseExpiresAt, nil, nil, createdAt, updatedAt,
+		))
+
+	assignment, err := repo.GetByPair(context.Background(), "node-a", "node-b")
+	if err != nil {
+		t.Fatalf("GetByPair: %v", err)
+	}
+	if assignment == nil {
+		t.Fatalf("expected assignment")
+	}
+	if assignment.Generation != 5 || assignment.State != cluster.AssignmentStatePending {
+		t.Fatalf("unexpected assignment: %#v", assignment)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestPostgresClusterReplicationAssignmentRepositoryUpdateState(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewPostgresClusterReplicationAssignmentRepository(db)
+	leaseExpiresAt := time.Date(2026, 3, 13, 9, 1, 0, 0, time.UTC)
+	createdAt := leaseExpiresAt.Add(-3 * time.Minute)
+	updatedAt := leaseExpiresAt.Add(-time.Second)
+	jobID := int64(21)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		UPDATE cluster_replication_assignments
+		SET state = $4,
+		    generation = CASE
+		    	WHEN state IN ('released', 'error')
+		    	 AND $4 = 'pending'
+		    	THEN generation + 1
+		    	ELSE generation
+		    END,
+		    lease_expires_at = $5,
+		    last_reconcile_job_id = $6,
+		    last_error = $7,
+		    updated_at = TIMEZONE('UTC', NOW())
+		WHERE active_node_id = $1
+		  AND standby_node_id = $2
+		  AND generation = $3
+		RETURNING id, generation, created_at, updated_at
+	`)).
+		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStateReconciling, leaseExpiresAt, jobID, nil).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "generation", "created_at", "updated_at",
+		}).AddRow(int64(44), int64(6), createdAt, updatedAt))
+
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:       "node-a",
+		StandbyNodeID:      "node-b",
+		State:              cluster.AssignmentStateReconciling,
+		Generation:         6,
+		LeaseExpiresAt:     &leaseExpiresAt,
+		LastReconcileJobID: &jobID,
+	}
+	if err := repo.UpdateState(context.Background(), assignment); err != nil {
+		t.Fatalf("UpdateState: %v", err)
+	}
+	if assignment.ID != 44 {
+		t.Fatalf("unexpected assignment id: %#v", assignment)
+	}
+	if !assignment.CreatedAt.Equal(createdAt) || !assignment.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("unexpected timestamps: %#v", assignment)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestPostgresClusterReplicationAssignmentRepositoryUpdateStateAdvancesGenerationOnRetry(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewPostgresClusterReplicationAssignmentRepository(db)
+	leaseExpiresAt := time.Date(2026, 3, 13, 9, 1, 0, 0, time.UTC)
+	createdAt := leaseExpiresAt.Add(-3 * time.Minute)
+	updatedAt := leaseExpiresAt.Add(-time.Second)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		UPDATE cluster_replication_assignments
+		SET state = $4,
+		    generation = CASE
+		    	WHEN state IN ('released', 'error')
+		    	 AND $4 = 'pending'
+		    	THEN generation + 1
+		    	ELSE generation
+		    END,
+		    lease_expires_at = $5,
+		    last_reconcile_job_id = $6,
+		    last_error = $7,
+		    updated_at = TIMEZONE('UTC', NOW())
+		WHERE active_node_id = $1
+		  AND standby_node_id = $2
+		  AND generation = $3
+		RETURNING id, generation, created_at, updated_at
+	`)).
+		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStatePending, leaseExpiresAt, nil, nil).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "generation", "created_at", "updated_at",
+		}).AddRow(int64(44), int64(7), createdAt, updatedAt))
+
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:   "node-a",
+		StandbyNodeID:  "node-b",
+		State:          cluster.AssignmentStatePending,
+		Generation:     6,
+		LeaseExpiresAt: &leaseExpiresAt,
+	}
+	if err := repo.UpdateState(context.Background(), assignment); err != nil {
+		t.Fatalf("UpdateState: %v", err)
+	}
+	if assignment.Generation != 7 {
+		t.Fatalf("expected generation to advance on retry, got %#v", assignment)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestPostgresClusterReplicationAssignmentRepositoryUpdateStateDetectsGenerationMismatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewPostgresClusterReplicationAssignmentRepository(db)
+	leaseExpiresAt := time.Date(2026, 3, 13, 9, 1, 0, 0, time.UTC)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		UPDATE cluster_replication_assignments
+		SET state = $4,
+		    generation = CASE
+		    	WHEN state IN ('released', 'error')
+		    	 AND $4 = 'pending'
+		    	THEN generation + 1
+		    	ELSE generation
+		    END,
+		    lease_expires_at = $5,
+		    last_reconcile_job_id = $6,
+		    last_error = $7,
+		    updated_at = TIMEZONE('UTC', NOW())
+		WHERE active_node_id = $1
+		  AND standby_node_id = $2
+		  AND generation = $3
+		RETURNING id, generation, created_at, updated_at
+	`)).
+		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStateReplicating, leaseExpiresAt, nil, nil).
+		WillReturnError(sql.ErrNoRows)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		SELECT id, active_node_id, standby_node_id, state, generation,
+		       lease_expires_at, last_reconcile_job_id, last_error,
+		       created_at, updated_at
+		FROM cluster_replication_assignments
+		WHERE active_node_id = $1
+		  AND standby_node_id = $2
+		LIMIT 1
+	`)).
+		WithArgs("node-a", "node-b").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "active_node_id", "standby_node_id", "state", "generation",
+			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"created_at", "updated_at",
+		}).AddRow(
+			int64(31), "node-a", "node-b", cluster.AssignmentStateReconciling, int64(7),
+			leaseExpiresAt, nil, nil, leaseExpiresAt.Add(-time.Minute), leaseExpiresAt,
+		))
+
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:   "node-a",
+		StandbyNodeID:  "node-b",
+		State:          cluster.AssignmentStateReplicating,
+		Generation:     6,
+		LeaseExpiresAt: &leaseExpiresAt,
+	}
+	err = repo.UpdateState(context.Background(), assignment)
+	if !errors.Is(err, cluster.ErrReplicationAssignmentGenerationMismatch) {
+		t.Fatalf("expected generation mismatch, got %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)

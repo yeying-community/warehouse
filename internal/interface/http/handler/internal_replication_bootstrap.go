@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -69,7 +72,7 @@ func (h *InternalReplicationHandler) HandleBootstrapMark(w http.ResponseWriter, 
 		h.writeError(w, http.StatusInternalServerError, "Failed to load current replication offset")
 		return
 	}
-	if err := validateAssignmentGeneration(requestGeneration, assignment, currentOffset); err != nil {
+	if err := validateBootstrapAssignmentGeneration(requestGeneration, assignment, currentOffset); err != nil {
 		h.writeApplyError(w, err)
 		return
 	}
@@ -145,4 +148,43 @@ func (h *InternalReplicationHandler) resolveBootstrapOutboxID(ctx context.Contex
 		return 0, true, nil
 	}
 	return *summary.LastOutboxID, true, nil
+}
+
+func (h *InternalReplicationHandler) sendBootstrapMark(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	assignmentGeneration int64,
+	outboxID int64,
+) error {
+	body, err := json.Marshal(internalReplicationBootstrapMarkRequest{
+		OutboxID: int64Pointer(outboxID),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal bootstrap mark request: %w", err)
+	}
+
+	requestURL := strings.TrimRight(baseURL, "/") + "/api/v1/internal/replication/bootstrap/mark"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create bootstrap mark request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	h.signInternalRequest(req, payloadSHA256Hex(body))
+	req.Header.Set(middleware.InternalAssignmentGenerationHeader, fmt.Sprintf("%d", assignmentGeneration))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send bootstrap mark request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := strings.TrimSpace(string(respBody))
+		if msg == "" {
+			msg = resp.Status
+		}
+		return fmt.Errorf("bootstrap peer returned %s: %s", resp.Status, msg)
+	}
+	return nil
 }

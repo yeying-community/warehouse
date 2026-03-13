@@ -62,7 +62,7 @@ build/warehouse ha bootstrap mark -c config.yaml --peer --outbox-id 123
 
 说明：
 - CLI 会自动根据 `config.yaml` 构造 internal 签名请求，不需要手工写 `curl`、shell 脚本或 HMAC header
-- 默认访问当前实例的 internal 地址；传 `--peer` 时会优先访问 `internal.replication.peer_base_url`，为空时再从 PostgreSQL 控制面按“effective assignment -> cluster_nodes/静态配置回退”解析 peer
+- 默认访问当前实例的 internal 地址；传 `--peer` 时会优先访问 `internal.replication.peer_base_url`，为空时再从 PostgreSQL 控制面解析当前 effective assignment 对应的 peer
 - 也可以通过 `--base-url` 显式指定目标实例
 - `bootstrap mark` 现在要求携带当前 assignment generation；优先使用 `--peer`，CLI 会自动补齐内部 header
 - `build/warehouse ha assignments status` 直接读取 PostgreSQL 控制面表，不走 HTTP；当前可以直接观察 active 侧 assignment allocator 写入的 lease / generation / state
@@ -201,7 +201,8 @@ bash scripts/local.sh standby
 - 只覆盖本地双实例必需字段：端口、节点身份、internal replication 和数据目录
 - 同时会自动补齐 `node.advertise_url`，让 active / standby 通过共享控制面自动发现彼此
 - 可通过环境变量覆盖本地端口和 internal shared secret，例如 `ACTIVE_PORT`、`STANDBY_PORT`、`INTERNAL_SHARED_SECRET`
-- active / standby 的 `internal.replication.peer_base_url` 默认都可以为空；resolver 会优先按有效 assignment 解析 peer，缺失时再回退到 `peer_node_id` / `cluster_nodes`
+- active / standby 的 `internal.replication.peer_base_url` 默认都可以为空；运行时复制会优先按 effective assignment 解析 peer，再通过 `cluster_nodes` 中的 `advertise_url` 补齐目标 URL
+- 单 standby 场景仍建议保留 `internal.replication.peer_node_id`，作为 allocator 续租与显式 CLI 的稳定锚点
 - standby 的 internal apply / reconcile / bootstrap 请求会校验当前 effective assignment，只接受当前 assigned active
 
 ## 高可用部署提示
@@ -214,43 +215,6 @@ bash scripts/local.sh standby
 - 生产环境建议设置 `webdav.auto_create_directory: false`
 - 切换前除了检查 `/api/v1/public/health/readiness`，还要检查复制状态
 - 详细说明参考 [docs/zh/ha-active-standby-deployment.md](docs/zh/ha-active-standby-deployment.md)
-
-## scripts/bootstrap_standby.sh
-
-用于在离线全量拷贝场景下，调用 internal 接口写入 baseline，并立即查询复制状态：
-
-```shell
-bash scripts/bootstrap_standby.sh \
-  --standby-base-url https://warehouse-standby.internal \
-  --source-node-id warehouse-active \
-  --shared-secret replace-with-a-shared-internal-secret
-```
-
-如果要显式指定基线 outbox 序号：
-
-```shell
-bash scripts/bootstrap_standby.sh \
-  --standby-base-url https://warehouse-standby.internal \
-  --source-node-id warehouse-active \
-  --shared-secret replace-with-a-shared-internal-secret \
-  --outbox-id 12345
-```
-
-如果只想查看 standby 当前复制状态：
-
-```shell
-bash scripts/bootstrap_standby.sh \
-  --standby-base-url https://warehouse-standby.internal \
-  --source-node-id warehouse-active \
-  --shared-secret replace-with-a-shared-internal-secret \
-  --status-only
-```
-
-说明：
-- 脚本会自动按 internal HMAC 规则构造签名，不需要手工计算 header
-- 依赖 `curl`、`openssl`、`xxd`，若安装了 `jq` 会自动格式化 JSON 输出
-- `--outbox-id` 不传时，standby 会使用当前 source -> standby 的最大 outbox 序号作为 baseline
-- 当前代码已支持 active 启动后自动触发一次历史 reconcile 并推送到 standby；`bootstrap_standby.sh` 主要用于你要显式控制基线或做离线流程时
 
 ## scripts/package.sh
 

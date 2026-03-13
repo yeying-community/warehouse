@@ -7,7 +7,7 @@
 - 文件变更由 active 通过 `internal` 接口复制到 standby
 - PostgreSQL 仍然作为元数据的统一来源
 
-> 注意：本文以**目标设计**为主；当前仓库已经落地了节点身份、内部鉴权、outbox / offsets、standby apply handler、active worker、reconcile（active 启动自动触发一次）与基础状态接口。更完整的切换自动化与运维编排仍需继续补齐。
+> 注意：本文以**当前实现 + 后续演进建议**为主。当前仓库已经落地了节点身份、内部鉴权、`cluster_nodes` / `cluster_replication_assignments` 控制面、outbox / offsets / reconcile、standby apply handler、active worker、assignment generation fence，以及 active 启动自动触发一次 reconcile 并在成功后自动 `bootstrap mark` 的主链路。更完整的切换自动化与多 standby 编排仍需继续补齐。
 
 ## 1. 设计目标
 
@@ -37,14 +37,21 @@ flowchart LR
   A --> DA[(Local Data Disk A)]
   S --> DB[(Local Data Disk B)]
 
+  A --> CN[(cluster_nodes)]
+  S --> CN
+  A --> CA[(cluster_replication_assignments)]
+  S --> CA
   A --> O[(replication_outbox)]
   O --> W[replication worker]
   W -->|internal apply| S
+  A --> R[(replication_reconcile_jobs/items)]
+  R --> S
 ```
 
 核心原则：
 
 - **数据库元数据以 PostgreSQL 为准**
+- **复制控制面以 assignment 为准**
 - **文件复制以 outbox 事件为准**
 - **复制是异步的，不做请求内双写**
 - **standby apply 必须幂等**
@@ -130,7 +137,14 @@ flowchart LR
 
 ## 6. Outbox 数据模型
 
-建议新增两张核心表。
+当前代码里核心复制表已经至少包括：
+
+- `replication_outbox`
+- `replication_offsets`
+- `replication_reconcile_jobs`
+- `replication_reconcile_items`
+- `cluster_nodes`
+- `cluster_replication_assignments`
 
 ### 6.1 `replication_outbox`
 
@@ -146,6 +160,7 @@ flowchart LR
 - `is_dir BOOLEAN NOT NULL DEFAULT FALSE`
 - `content_sha256 TEXT NULL`
 - `file_size BIGINT NULL`
+- `assignment_generation BIGINT NULL`
 - `status TEXT NOT NULL DEFAULT 'pending'`
 - `attempt_count INT NOT NULL DEFAULT 0`
 - `next_retry_at TIMESTAMP NOT NULL DEFAULT NOW()`
@@ -165,6 +180,7 @@ flowchart LR
 
 - `source_node_id TEXT NOT NULL`
 - `target_node_id TEXT NOT NULL`
+- `assignment_generation BIGINT NULL`
 - `last_applied_outbox_id BIGINT NOT NULL`
 - `last_applied_at TIMESTAMP NOT NULL`
 - `updated_at TIMESTAMP NOT NULL`
@@ -173,7 +189,27 @@ flowchart LR
 用途：
 
 - 记录 standby 已应用到哪个事件序号
+- 记录当前已初始化的 assignment generation fence
 - 支持切换前比较 `last_applied` 与 outbox 最大序号
+
+### 6.3 `cluster_replication_assignments`
+
+关键字段：
+
+- `active_node_id`
+- `standby_node_id`
+- `state`
+- `generation`
+- `lease_expires_at`
+- `last_reconcile_job_id`
+- `last_error`
+
+当前语义：
+
+- 有效状态为 `pending / reconciling / replicating / draining`
+- 非有效状态为 `released / error`
+- `generation` 只会在 assignment 生命周期重新开始时切换，例如 `released -> pending`、`error -> pending`
+- `pending -> reconciling -> replicating` 这种同一轮生命周期内的推进不会切代
 
 ## 7. 文件内容复制策略
 
@@ -209,6 +245,7 @@ flowchart LR
 - `X-Warehouse-Timestamp`
 - `X-Warehouse-Signature`
 - `X-Warehouse-Content-SHA256`
+- `X-Warehouse-Assignment-Generation`
 
 签名内容建议包含：
 
@@ -234,7 +271,7 @@ flowchart LR
    - 用于切换前检查
 
 4. `POST /api/v1/internal/replication/bootstrap/mark`
-   - 用于记录首次全量同步完成的基线
+   - 用于记录当前 generation 已完成 baseline 初始化
    - 可显式传入基线 `outboxId`
    - 如果请求体不带 `outboxId`，则使用当前 source -> standby 的最大 outbox 序号
 
@@ -246,8 +283,13 @@ active 侧 worker 建议：
 2. 按 `outbox.id` 顺序拉取待分发事件
 3. 对同一 target 串行发送，避免乱序
 4. 成功后更新 outbox 状态
-5. standby apply 成功后更新 `replication_offsets`
+5. standby apply 成功后，由 standby 本地更新 `replication_offsets`
 6. 失败时按退避策略重试
+
+当前代码里还额外有两条约束：
+
+- active 只会分发当前 assignment generation 对应的 outbox 事件
+- standby 如果发现 assignment generation 与本地 offset generation 不一致，会拒绝增量 apply，直到新的 `bootstrap mark` 完成 fence 初始化
 
 standby apply 建议：
 
@@ -269,18 +311,28 @@ standby apply 建议：
 
 ## 11. 首次全量同步与 Reconcile
 
-### 11.1 首次全量同步
+### 11.1 当前主路径：启动后自动 Reconcile
 
-standby 不能从空盘只靠增量事件启动。
+当前代码的正常路径是：
 
-建议：
+1. active 侧 allocator 续租/创建 assignment，初始状态为 `pending`
+2. active 启动后自动触发一次 reconcile
+3. reconcile 开始时 assignment 切到 `reconciling`
+4. 历史文件批量下发到 standby
+5. reconcile 成功后，active 自动调用一次 `POST /api/v1/internal/replication/bootstrap/mark`
+6. standby 将 `replication_offsets.assignment_generation` 与 `last_applied_outbox_id=watermark` 持久化为当前 generation 基线
+7. assignment 切到 `replicating`
+
+### 11.2 显式基线流程
+
+如果是离线全量拷贝后再接入，也支持手工基线：
 
 1. 先停写或进入维护窗口
 2. 做一次离线全量拷贝到 standby
 3. 调用 `POST /api/v1/internal/replication/bootstrap/mark` 记录基线 outbox 序号
-4. 再开启增量复制
+4. 再开启增量复制或手工触发 reconcile
 
-### 11.2 周期性 Reconcile
+### 11.3 周期性 Reconcile
 
 即使有 outbox，也建议保留周期性对账机制：
 

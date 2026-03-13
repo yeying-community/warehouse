@@ -24,7 +24,9 @@ type ClusterReplicationAssignmentRepository interface {
 	List(ctx context.Context, filter ClusterReplicationAssignmentFilter) ([]*cluster.ReplicationAssignment, error)
 	ListEffectiveByActive(ctx context.Context, activeNodeID string) ([]*cluster.ReplicationAssignment, error)
 	GetEffectiveByStandby(ctx context.Context, standbyNodeID string) (*cluster.ReplicationAssignment, error)
+	GetByPair(ctx context.Context, activeNodeID, standbyNodeID string) (*cluster.ReplicationAssignment, error)
 	UpsertLease(ctx context.Context, assignment *cluster.ReplicationAssignment) error
+	UpdateState(ctx context.Context, assignment *cluster.ReplicationAssignment) error
 	ReleaseByActiveExcept(ctx context.Context, activeNodeID string, keepStandbyIDs []string) error
 }
 
@@ -147,6 +149,28 @@ func (r *PostgresClusterReplicationAssignmentRepository) GetEffectiveByStandby(c
 	return assignment, nil
 }
 
+// GetByPair loads one assignment row by active/standby node id pair.
+func (r *PostgresClusterReplicationAssignmentRepository) GetByPair(ctx context.Context, activeNodeID, standbyNodeID string) (*cluster.ReplicationAssignment, error) {
+	query := `
+		SELECT id, active_node_id, standby_node_id, state, generation,
+		       lease_expires_at, last_reconcile_job_id, last_error,
+		       created_at, updated_at
+		FROM cluster_replication_assignments
+		WHERE active_node_id = $1
+		  AND standby_node_id = $2
+		LIMIT 1
+	`
+	row := r.db.QueryRowContext(ctx, query, strings.TrimSpace(activeNodeID), strings.TrimSpace(standbyNodeID))
+	assignment, err := scanClusterReplicationAssignment(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster replication assignment by pair: %w", err)
+	}
+	return assignment, nil
+}
+
 // UpsertLease inserts or renews one assignment lease row.
 func (r *PostgresClusterReplicationAssignmentRepository) UpsertLease(ctx context.Context, assignment *cluster.ReplicationAssignment) error {
 	if assignment == nil {
@@ -173,15 +197,15 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpsertLease(ctx context
 		INSERT INTO cluster_replication_assignments (
 			active_node_id, standby_node_id, state, lease_expires_at
 		)
-		VALUES ($1, $2, $3, $4)
+			VALUES ($1, $2, $3, $4)
 		ON CONFLICT (active_node_id, standby_node_id)
 		DO UPDATE SET
 			state = EXCLUDED.state,
 			generation = CASE
-				WHEN cluster_replication_assignments.state = EXCLUDED.state
-				  AND cluster_replication_assignments.state IN ('pending', 'reconciling', 'replicating', 'draining')
-				THEN cluster_replication_assignments.generation
-				ELSE cluster_replication_assignments.generation + 1
+				WHEN cluster_replication_assignments.state IN ('released', 'error')
+				 AND EXCLUDED.state = 'pending'
+				THEN cluster_replication_assignments.generation + 1
+				ELSE cluster_replication_assignments.generation
 			END,
 			lease_expires_at = EXCLUDED.lease_expires_at,
 			last_error = NULL,
@@ -218,6 +242,79 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpsertLease(ctx context
 		assignment.LastError = &value
 	} else {
 		assignment.LastError = nil
+	}
+	return nil
+}
+
+// UpdateState persists assignment lifecycle fields without changing generation.
+func (r *PostgresClusterReplicationAssignmentRepository) UpdateState(ctx context.Context, assignment *cluster.ReplicationAssignment) error {
+	if assignment == nil {
+		return fmt.Errorf("cluster replication assignment is required")
+	}
+
+	assignment.Normalize()
+	if assignment.ActiveNodeID == "" {
+		return fmt.Errorf("cluster replication assignment active node id is required")
+	}
+	if assignment.StandbyNodeID == "" {
+		return fmt.Errorf("cluster replication assignment standby node id is required")
+	}
+	if assignment.Generation <= 0 {
+		return fmt.Errorf("cluster replication assignment generation is required")
+	}
+	if assignment.State == "" {
+		return fmt.Errorf("cluster replication assignment state is required")
+	}
+	var leaseExpiresAt any
+	if assignment.LeaseExpiresAt != nil && !assignment.LeaseExpiresAt.IsZero() {
+		leaseExpiresAt = assignment.LeaseExpiresAt.UTC()
+	}
+
+	query := `
+		UPDATE cluster_replication_assignments
+		SET state = $4,
+		    generation = CASE
+		    	WHEN state IN ('released', 'error')
+		    	 AND $4 = 'pending'
+		    	THEN generation + 1
+		    	ELSE generation
+		    END,
+		    lease_expires_at = $5,
+		    last_reconcile_job_id = $6,
+		    last_error = $7,
+		    updated_at = TIMEZONE('UTC', NOW())
+		WHERE active_node_id = $1
+		  AND standby_node_id = $2
+		  AND generation = $3
+		RETURNING id, generation, created_at, updated_at
+	`
+	if err := r.db.QueryRowContext(
+		ctx,
+		query,
+		assignment.ActiveNodeID,
+		assignment.StandbyNodeID,
+		assignment.Generation,
+		assignment.State,
+		leaseExpiresAt,
+		assignment.LastReconcileJobID,
+		assignment.LastError,
+	).Scan(
+		&assignment.ID,
+		&assignment.Generation,
+		&assignment.CreatedAt,
+		&assignment.UpdatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			existing, lookupErr := r.GetByPair(ctx, assignment.ActiveNodeID, assignment.StandbyNodeID)
+			if lookupErr != nil {
+				return fmt.Errorf("failed to verify cluster replication assignment state update: %w", lookupErr)
+			}
+			if existing == nil {
+				return cluster.ErrReplicationAssignmentNotFound
+			}
+			return cluster.ErrReplicationAssignmentGenerationMismatch
+		}
+		return fmt.Errorf("failed to update cluster replication assignment state: %w", err)
 	}
 	return nil
 }

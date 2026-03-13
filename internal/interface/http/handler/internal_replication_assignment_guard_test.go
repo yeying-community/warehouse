@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 
 type fakeHandlerAssignmentRepository struct {
 	standbyAssignments map[string]*cluster.ReplicationAssignment
+	pairAssignments    map[string]*cluster.ReplicationAssignment
+	updateCalls        []*cluster.ReplicationAssignment
 }
 
 func (r *fakeHandlerAssignmentRepository) List(context.Context, repository.ClusterReplicationAssignmentFilter) ([]*cluster.ReplicationAssignment, error) {
@@ -38,7 +41,40 @@ func (r *fakeHandlerAssignmentRepository) GetEffectiveByStandby(_ context.Contex
 	return &copied, nil
 }
 
+func (r *fakeHandlerAssignmentRepository) GetByPair(_ context.Context, activeNodeID, standbyNodeID string) (*cluster.ReplicationAssignment, error) {
+	assignment := r.pairAssignments[activeNodeID+"->"+standbyNodeID]
+	if assignment == nil {
+		return nil, nil
+	}
+	copied := *assignment
+	return &copied, nil
+}
+
 func (r *fakeHandlerAssignmentRepository) UpsertLease(context.Context, *cluster.ReplicationAssignment) error {
+	return nil
+}
+
+func (r *fakeHandlerAssignmentRepository) UpdateState(_ context.Context, assignment *cluster.ReplicationAssignment) error {
+	if assignment == nil {
+		return nil
+	}
+	copied := *assignment
+	if existing := r.pairAssignments[copied.ActiveNodeID+"->"+copied.StandbyNodeID]; existing != nil {
+		if cluster.AdvancesAssignmentGeneration(existing.State, copied.State) {
+			copied.Generation = existing.Generation + 1
+		}
+	}
+	r.updateCalls = append(r.updateCalls, &copied)
+	if r.pairAssignments == nil {
+		r.pairAssignments = make(map[string]*cluster.ReplicationAssignment)
+	}
+	r.pairAssignments[copied.ActiveNodeID+"->"+copied.StandbyNodeID] = &copied
+	if strings.TrimSpace(copied.StandbyNodeID) != "" {
+		if r.standbyAssignments == nil {
+			r.standbyAssignments = make(map[string]*cluster.ReplicationAssignment)
+		}
+		r.standbyAssignments[copied.StandbyNodeID] = &copied
+	}
 	return nil
 }
 

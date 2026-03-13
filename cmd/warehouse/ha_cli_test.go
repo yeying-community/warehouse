@@ -172,3 +172,148 @@ func TestBuildAssignmentStatusResponseIncludesLeaseState(t *testing.T) {
 		t.Fatalf("expected notes in response")
 	}
 }
+
+func TestResolveAssignmentMutationTargetDefaultsToCurrentActiveNode(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+
+	target, err := resolveAssignmentMutationTarget(cfg, "", "node-b")
+	if err != nil {
+		t.Fatalf("resolveAssignmentMutationTarget returned error: %v", err)
+	}
+	if target.ActiveNodeID != "node-a" || target.StandbyNodeID != "node-b" {
+		t.Fatalf("unexpected target: %#v", target)
+	}
+}
+
+func TestResolveAssignmentMutationTargetDefaultsToCurrentStandbyNode(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-b"
+	cfg.Node.Role = "standby"
+
+	target, err := resolveAssignmentMutationTarget(cfg, "node-a", "")
+	if err != nil {
+		t.Fatalf("resolveAssignmentMutationTarget returned error: %v", err)
+	}
+	if target.ActiveNodeID != "node-a" || target.StandbyNodeID != "node-b" {
+		t.Fatalf("unexpected target: %#v", target)
+	}
+}
+
+func TestResolveAssignmentMutationTargetRequiresBothSides(t *testing.T) {
+	if _, err := resolveAssignmentMutationTarget(nil, "", "node-b"); err == nil {
+		t.Fatalf("expected missing active node id error")
+	}
+	if _, err := resolveAssignmentMutationTarget(nil, "node-a", ""); err == nil {
+		t.Fatalf("expected missing standby node id error")
+	}
+}
+
+func TestPlanAssignmentStateMutationDrain(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStateReplicating,
+		Generation:    4,
+	}
+
+	updated, changed, notes, err := planAssignmentStateMutation("drain", assignment, true, false, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("planAssignmentStateMutation returned error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected state mutation to change assignment")
+	}
+	if updated.State != cluster.AssignmentStateDraining {
+		t.Fatalf("expected draining state, got %#v", updated)
+	}
+	if len(notes) == 0 {
+		t.Fatalf("expected operator note")
+	}
+}
+
+func TestPlanAssignmentStateMutationReleaseRequiresDraining(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStateReplicating,
+		Generation:    4,
+	}
+
+	if _, _, _, err := planAssignmentStateMutation("release", assignment, false, false, time.Now().UTC()); err == nil {
+		t.Fatalf("expected release to require draining state")
+	}
+}
+
+func TestPlanAssignmentStateMutationReleaseRejectsHealthyStandbyWithoutForce(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStateDraining,
+		Generation:    4,
+	}
+
+	if _, _, _, err := planAssignmentStateMutation("release", assignment, true, false, time.Now().UTC()); err == nil {
+		t.Fatalf("expected healthy standby release to be rejected without force")
+	}
+}
+
+func TestPlanAssignmentStateMutationReleaseForced(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStateDraining,
+		Generation:    4,
+	}
+	now := time.Now().UTC()
+
+	updated, changed, notes, err := planAssignmentStateMutation("release", assignment, true, true, now)
+	if err != nil {
+		t.Fatalf("planAssignmentStateMutation returned error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected forced release to change assignment")
+	}
+	if updated.State != cluster.AssignmentStateReleased {
+		t.Fatalf("expected released state, got %#v", updated)
+	}
+	if updated.LeaseExpiresAt == nil || !updated.LeaseExpiresAt.Equal(now) {
+		t.Fatalf("expected lease expiry to be set to now, got %#v", updated.LeaseExpiresAt)
+	}
+	if len(notes) == 0 {
+		t.Fatalf("expected forced release note")
+	}
+}
+
+func TestPlanAssignmentStateMutationRetry(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStateError,
+		Generation:    4,
+		LastError:     stringPointer("dispatch failed"),
+	}
+
+	updated, changed, notes, err := planAssignmentStateMutation("retry", assignment, true, false, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("planAssignmentStateMutation returned error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected retry to change assignment")
+	}
+	if updated.State != cluster.AssignmentStatePending {
+		t.Fatalf("expected pending state, got %#v", updated)
+	}
+	if updated.LastError != nil {
+		t.Fatalf("expected last error to be cleared, got %#v", updated.LastError)
+	}
+	if len(notes) == 0 {
+		t.Fatalf("expected retry note")
+	}
+}
+
+func stringPointer(value string) *string {
+	v := value
+	return &v
+}

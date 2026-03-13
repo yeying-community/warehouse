@@ -19,6 +19,7 @@ type fakeClusterNodeRepository struct {
 type fakeClusterAssignmentRepository struct {
 	byActive  map[string][]*cluster.ReplicationAssignment
 	byStandby map[string]*cluster.ReplicationAssignment
+	byPair    map[string]*cluster.ReplicationAssignment
 }
 
 func (r *fakeClusterNodeRepository) UpsertHeartbeat(context.Context, *cluster.Node) error {
@@ -69,7 +70,20 @@ func (r *fakeClusterAssignmentRepository) GetEffectiveByStandby(_ context.Contex
 	return &copied, nil
 }
 
+func (r *fakeClusterAssignmentRepository) GetByPair(_ context.Context, activeNodeID, standbyNodeID string) (*cluster.ReplicationAssignment, error) {
+	assignment := r.byPair[activeNodeID+"->"+standbyNodeID]
+	if assignment == nil {
+		return nil, nil
+	}
+	copied := *assignment
+	return &copied, nil
+}
+
 func (r *fakeClusterAssignmentRepository) UpsertLease(context.Context, *cluster.ReplicationAssignment) error {
+	return nil
+}
+
+func (r *fakeClusterAssignmentRepository) UpdateState(context.Context, *cluster.ReplicationAssignment) error {
 	return nil
 }
 
@@ -219,6 +233,55 @@ func TestReplicationPeerResolverPrefersEffectiveAssignmentForActive(t *testing.T
 	}
 	if peer.Source != "assignment+registry" {
 		t.Fatalf("unexpected peer source: %#v", peer)
+	}
+}
+
+func TestReplicationPeerResolverDoesNotFallbackWithoutEffectiveAssignment(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Internal.Replication.PeerNodeID = "node-b"
+
+	now := time.Date(2026, 3, 13, 8, 0, 0, 0, time.UTC)
+	nodes := &fakeClusterNodeRepository{
+		nodesByID: map[string]*cluster.Node{
+			"node-b": {
+				NodeID:          "node-b",
+				Role:            "standby",
+				AdvertiseURL:    "http://127.0.0.1:6066",
+				LastHeartbeatAt: now,
+			},
+		},
+		byRole: map[string][]*cluster.Node{
+			"standby": {
+				{
+					NodeID:          "node-b",
+					Role:            "standby",
+					AdvertiseURL:    "http://127.0.0.1:6066",
+					LastHeartbeatAt: now,
+				},
+			},
+		},
+	}
+	assignments := &fakeClusterAssignmentRepository{}
+
+	resolver := NewReplicationPeerResolver(cfg, nodes, assignments).(*ClusterReplicationPeerResolver)
+	resolver.now = func() time.Time { return now }
+
+	peer, err := resolver.ResolveTarget(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveTarget: %v", err)
+	}
+	if peer != nil {
+		t.Fatalf("expected no peer without effective assignment, got %#v", peer)
+	}
+
+	dispatchPeer, err := resolver.ResolveDispatchTarget(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveDispatchTarget: %v", err)
+	}
+	if dispatchPeer != nil {
+		t.Fatalf("expected no dispatch peer without effective assignment, got %#v", dispatchPeer)
 	}
 }
 

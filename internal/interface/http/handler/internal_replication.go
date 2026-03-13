@@ -331,10 +331,17 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 			return
 		}
 
-		h.logger.Warn("startup reconcile attempt failed, will retry",
-			zap.Int("attempt", attempt),
-			zap.Int("max_attempts", maxAttempts),
-			zap.Error(err))
+		if errors.Is(err, service.ErrReplicationAssignmentUnavailable) {
+			h.logger.Info("startup reconcile is waiting for an effective assignment",
+				zap.Int("attempt", attempt),
+				zap.Int("max_attempts", maxAttempts),
+				zap.Error(err))
+		} else {
+			h.logger.Warn("startup reconcile attempt failed, will retry",
+				zap.Int("attempt", attempt),
+				zap.Int("max_attempts", maxAttempts),
+				zap.Error(err))
+		}
 
 		timer := time.NewTimer(retryInterval)
 		select {
@@ -355,12 +362,19 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 		return nil, fmt.Errorf("resolve target peer: %w", err)
 	}
 	if peer == nil || strings.TrimSpace(peer.NodeID) == "" {
+		if h.assignments != nil {
+			return nil, fmt.Errorf("no effective replication assignment is available yet: %w", service.ErrReplicationAssignmentUnavailable)
+		}
 		return nil, fmt.Errorf("targetNodeId is required")
 	}
 	if peer.AssignmentGeneration == nil || *peer.AssignmentGeneration <= 0 {
 		return nil, fmt.Errorf("resolved target peer %q has no assignment generation", peer.NodeID)
 	}
 	targetNodeID = peer.NodeID
+	assignment, err := h.loadReconcileAssignment(ctx, targetNodeID, *peer.AssignmentGeneration)
+	if err != nil {
+		return nil, fmt.Errorf("load reconcile assignment: %w", err)
+	}
 
 	watermarkOutboxID := int64(0)
 	if h.outbox != nil {
@@ -384,17 +398,26 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 	if err := h.reconcileStore.CreateJob(ctx, job); err != nil {
 		return nil, fmt.Errorf("create reconcile job: %w", err)
 	}
+	if assignment != nil {
+		if err := h.updateReconcileAssignmentState(ctx, assignment, cluster.AssignmentStateReconciling, int64Pointer(job.ID), nil); err != nil {
+			lastErr := err.Error()
+			_ = h.reconcileStore.UpdateJobResult(ctx, job.ID, replication.ReconcileJobStatusFailed, 0, 0, nil, &lastErr)
+			return nil, fmt.Errorf("mark assignment reconciling: %w", err)
+		}
+	}
 
 	items, err := h.reconcileScanner.Scan(ctx)
 	if err != nil {
 		lastErr := err.Error()
 		_ = h.reconcileStore.UpdateJobResult(ctx, job.ID, replication.ReconcileJobStatusFailed, 0, 0, nil, &lastErr)
+		h.recordReconcileAssignmentFailure(ctx, assignment, job.ID, err)
 		return nil, fmt.Errorf("scan local data for reconcile: %w", err)
 	}
 
 	if err := h.reconcileStore.ReplaceItems(ctx, job.ID, items); err != nil {
 		lastErr := err.Error()
 		_ = h.reconcileStore.UpdateJobResult(ctx, job.ID, replication.ReconcileJobStatusFailed, int64(len(items)), int64(len(items)), nil, &lastErr)
+		h.recordReconcileAssignmentFailure(ctx, assignment, job.ID, err)
 		return nil, fmt.Errorf("persist reconcile items: %w", err)
 	}
 
@@ -417,9 +440,46 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 				nil,
 				&lastErr,
 			)
+			h.recordReconcileAssignmentFailure(ctx, assignment, job.ID, dispatchErr)
 			return nil, fmt.Errorf("dispatch reconcile items: %w", dispatchErr)
 		}
 		pendingItems = remaining
+	}
+	if pendingItems == 0 && dispatchPeer != nil && strings.TrimSpace(dispatchPeer.BaseURL) != "" {
+		bootstrapGeneration := peer.AssignmentGeneration
+		if dispatchPeer.AssignmentGeneration != nil && *dispatchPeer.AssignmentGeneration > 0 {
+			bootstrapGeneration = dispatchPeer.AssignmentGeneration
+		}
+		if bootstrapGeneration == nil || *bootstrapGeneration <= 0 {
+			err := fmt.Errorf("resolved dispatch peer %q has no assignment generation for bootstrap mark", dispatchPeer.NodeID)
+			lastErr := err.Error()
+			_ = h.reconcileStore.UpdateJobResult(
+				ctx,
+				job.ID,
+				replication.ReconcileJobStatusFailed,
+				scannedItems,
+				pendingItems,
+				nil,
+				&lastErr,
+			)
+			h.recordReconcileAssignmentFailure(ctx, assignment, job.ID, err)
+			return nil, fmt.Errorf("bootstrap mark after reconcile: %w", err)
+		}
+		client := &http.Client{Timeout: h.config.Internal.Replication.RequestTimeout}
+		if err := h.sendBootstrapMark(ctx, client, dispatchPeer.BaseURL, *bootstrapGeneration, watermarkOutboxID); err != nil {
+			lastErr := err.Error()
+			_ = h.reconcileStore.UpdateJobResult(
+				ctx,
+				job.ID,
+				replication.ReconcileJobStatusFailed,
+				scannedItems,
+				pendingItems,
+				nil,
+				&lastErr,
+			)
+			h.recordReconcileAssignmentFailure(ctx, assignment, job.ID, err)
+			return nil, fmt.Errorf("bootstrap mark after reconcile: %w", err)
+		}
 	}
 
 	completedAt := time.Now()
@@ -432,7 +492,13 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 		&completedAt,
 		nil,
 	); err != nil {
+		h.recordReconcileAssignmentFailure(ctx, assignment, job.ID, err)
 		return nil, fmt.Errorf("finalize reconcile job: %w", err)
+	}
+	if assignment != nil {
+		if err := h.updateReconcileAssignmentState(ctx, assignment, cluster.AssignmentStateReplicating, int64Pointer(job.ID), nil); err != nil {
+			return nil, fmt.Errorf("mark assignment replicating: %w", err)
+		}
 	}
 
 	return &internalReconcileStartResponse{
@@ -445,6 +511,54 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 		PendingItems:      pendingItems,
 		Status:            replication.ReconcileJobStatusReady,
 	}, nil
+}
+
+func (h *InternalReplicationHandler) loadReconcileAssignment(ctx context.Context, targetNodeID string, expectedGeneration int64) (*cluster.ReplicationAssignment, error) {
+	if h == nil || h.assignments == nil {
+		return nil, nil
+	}
+
+	assignment, err := h.assignments.GetByPair(ctx, strings.TrimSpace(h.config.Node.ID), strings.TrimSpace(targetNodeID))
+	if err != nil {
+		return nil, err
+	}
+	if assignment == nil {
+		return nil, cluster.ErrReplicationAssignmentNotFound
+	}
+	if expectedGeneration > 0 && assignment.Generation != expectedGeneration {
+		return nil, cluster.ErrReplicationAssignmentGenerationMismatch
+	}
+	return assignment, nil
+}
+
+func (h *InternalReplicationHandler) updateReconcileAssignmentState(ctx context.Context, assignment *cluster.ReplicationAssignment, state string, jobID *int64, lastError *string) error {
+	if h == nil || h.assignments == nil || assignment == nil {
+		return nil
+	}
+
+	updated := *assignment
+	updated.State = state
+	updated.LastReconcileJobID = jobID
+	updated.LastError = lastError
+	if err := h.assignments.UpdateState(ctx, &updated); err != nil {
+		return err
+	}
+	*assignment = updated
+	return nil
+}
+
+func (h *InternalReplicationHandler) recordReconcileAssignmentFailure(ctx context.Context, assignment *cluster.ReplicationAssignment, jobID int64, reconcileErr error) {
+	if h == nil || assignment == nil || reconcileErr == nil {
+		return
+	}
+	lastErr := reconcileErr.Error()
+	if err := h.updateReconcileAssignmentState(ctx, assignment, cluster.AssignmentStateError, int64Pointer(jobID), &lastErr); err != nil && h.logger != nil {
+		h.logger.Warn("failed to persist reconcile assignment error",
+			zap.String("source_node_id", assignment.ActiveNodeID),
+			zap.String("target_node_id", assignment.StandbyNodeID),
+			zap.Int64("generation", assignment.Generation),
+			zap.Error(err))
+	}
 }
 
 func (h *InternalReplicationHandler) replicationPair(peer *service.ResolvedReplicationPeer) (string, string) {
@@ -520,7 +634,7 @@ func (h *InternalReplicationHandler) buildNotes(status internalReplicationStatus
 	case "active":
 		notes = append(notes, "only active nodes dispatch internal replication events")
 		if status.ResolvedPeerNodeID == "" {
-			notes = append(notes, "no standby peer resolved from assignment, config, or cluster registry")
+			notes = append(notes, h.missingResolvedPeerNote("standby"))
 		} else if status.ResolvedGeneration == nil {
 			notes = append(notes, "resolved standby peer has no assignment generation; replication dispatch is paused")
 		} else if status.ResolvedPeerBaseURL == "" {
@@ -531,7 +645,7 @@ func (h *InternalReplicationHandler) buildNotes(status internalReplicationStatus
 	case "standby":
 		notes = append(notes, "standby nodes only accept internal replication apply traffic")
 		if status.ResolvedPeerNodeID == "" {
-			notes = append(notes, "active peer is not currently resolved from assignment, config, or cluster registry")
+			notes = append(notes, h.missingResolvedPeerNote("active"))
 		}
 		if status.LastAppliedOutboxID == nil && status.LastOutboxID != nil && *status.LastOutboxID > 0 {
 			notes = append(notes, "standby offset is not initialized; finish baseline copy before promotion")
@@ -542,6 +656,14 @@ func (h *InternalReplicationHandler) buildNotes(status internalReplicationStatus
 	}
 
 	return notes
+}
+
+func (h *InternalReplicationHandler) missingResolvedPeerNote(peerRole string) string {
+	peerRole = strings.TrimSpace(peerRole)
+	if h != nil && h.assignments != nil {
+		return fmt.Sprintf("no %s peer resolved from an effective assignment", peerRole)
+	}
+	return fmt.Sprintf("no %s peer resolved from assignment, config, or cluster registry", peerRole)
 }
 
 func (h *InternalReplicationHandler) resolveTargetPeer(ctx context.Context) (*service.ResolvedReplicationPeer, error) {
