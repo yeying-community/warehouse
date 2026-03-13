@@ -29,9 +29,14 @@ type fakeWorkerOutboxRepository struct {
 	events           []*replication.OutboxEvent
 	listSourceNodeID string
 	listTargetNodeID string
+	listGeneration   *int64
 	listLimit        int
 	dispatched       []int64
 	failed           []failedEvent
+}
+
+type fakeWorkerResolver struct {
+	peer *ResolvedReplicationPeer
 }
 
 type failedEvent struct {
@@ -44,11 +49,12 @@ func (r *fakeWorkerOutboxRepository) Append(context.Context, *replication.Outbox
 	return nil
 }
 
-func (r *fakeWorkerOutboxRepository) ListPending(_ context.Context, sourceNodeID, targetNodeID string, limit int) ([]*replication.OutboxEvent, error) {
+func (r *fakeWorkerOutboxRepository) ListPending(_ context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64, limit int) ([]*replication.OutboxEvent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.listSourceNodeID = sourceNodeID
 	r.listTargetNodeID = targetNodeID
+	r.listGeneration = assignmentGeneration
 	r.listLimit = limit
 	items := make([]*replication.OutboxEvent, len(r.events))
 	for i, event := range r.events {
@@ -74,6 +80,18 @@ func (r *fakeWorkerOutboxRepository) MarkFailed(_ context.Context, id int64, las
 
 func (r *fakeWorkerOutboxRepository) GetStatusSummary(context.Context, string, string) (*replication.OutboxStatus, error) {
 	return nil, nil
+}
+
+func (r fakeWorkerResolver) ResolveTarget(context.Context) (*ResolvedReplicationPeer, error) {
+	return r.peer, nil
+}
+
+func (r fakeWorkerResolver) ResolveDispatchTarget(context.Context) (*ResolvedReplicationPeer, error) {
+	return r.peer, nil
+}
+
+func (r fakeWorkerResolver) ResolveByNodeID(context.Context, string, bool) (*ResolvedReplicationPeer, error) {
+	return r.peer, nil
 }
 
 type fsApplyRequest struct {
@@ -109,26 +127,29 @@ func TestReplicationWorkerDispatchOnce(t *testing.T) {
 	standbyCfg.WebDAV.Directory = standbyRoot
 	server := newStandbyTestServer(t, standbyCfg)
 	defer server.Close()
+	generation := int64(3)
 
 	outbox := &fakeWorkerOutboxRepository{
 		events: []*replication.OutboxEvent{
 			{
-				ID:           1,
-				SourceNodeID: "node-a",
-				TargetNodeID: "node-b",
-				Op:           replication.OpEnsureDir,
-				Path:         stringPointer("/alice/docs"),
-				IsDir:        true,
+				ID:                   1,
+				SourceNodeID:         "node-a",
+				TargetNodeID:         "node-b",
+				AssignmentGeneration: &generation,
+				Op:                   replication.OpEnsureDir,
+				Path:                 stringPointer("/alice/docs"),
+				IsDir:                true,
 			},
 			{
-				ID:            2,
-				SourceNodeID:  "node-a",
-				TargetNodeID:  "node-b",
-				Op:            replication.OpUpsertFile,
-				Path:          stringPointer("/alice/docs/hello.txt"),
-				ContentSHA256: stringPointer(hashHex),
-				FileSize:      int64Pointer(int64(len(payload))),
-				IsDir:         false,
+				ID:                   2,
+				SourceNodeID:         "node-a",
+				TargetNodeID:         "node-b",
+				AssignmentGeneration: &generation,
+				Op:                   replication.OpUpsertFile,
+				Path:                 stringPointer("/alice/docs/hello.txt"),
+				ContentSHA256:        stringPointer(hashHex),
+				FileSize:             int64Pointer(int64(len(payload))),
+				IsDir:                false,
 			},
 		},
 	}
@@ -148,13 +169,22 @@ func TestReplicationWorkerDispatchOnce(t *testing.T) {
 	cfg.Internal.Replication.MaxRetryBackoff = time.Minute
 	cfg.WebDAV.Directory = activeRoot
 
-	worker := NewReplicationWorker(cfg, outbox, zap.NewNop())
+	worker := NewReplicationWorker(cfg, outbox, fakeWorkerResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			BaseURL:              server.URL,
+			AssignmentGeneration: &generation,
+		},
+	}, zap.NewNop())
 
 	if err := worker.DispatchOnce(context.Background()); err != nil {
 		t.Fatalf("DispatchOnce: %v", err)
 	}
 	if outbox.listSourceNodeID != "node-a" || outbox.listTargetNodeID != "node-b" || outbox.listLimit != 10 {
 		t.Fatalf("unexpected list args: %#v", outbox)
+	}
+	if outbox.listGeneration == nil || *outbox.listGeneration != generation {
+		t.Fatalf("unexpected list generation: %#v", outbox.listGeneration)
 	}
 	if len(outbox.dispatched) != 2 || outbox.dispatched[0] != 1 || outbox.dispatched[1] != 2 {
 		t.Fatalf("unexpected dispatched ids: %#v", outbox.dispatched)
@@ -176,11 +206,12 @@ func TestReplicationWorkerMarksFailedAndStopsBatch(t *testing.T) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	defer server.Close()
+	generation := int64(5)
 
 	outbox := &fakeWorkerOutboxRepository{
 		events: []*replication.OutboxEvent{
-			{ID: 1, SourceNodeID: "node-a", TargetNodeID: "node-b", Op: replication.OpEnsureDir, Path: stringPointer("/alice/docs"), IsDir: true, AttemptCount: 1},
-			{ID: 2, SourceNodeID: "node-a", TargetNodeID: "node-b", Op: replication.OpEnsureDir, Path: stringPointer("/alice/skip"), IsDir: true},
+			{ID: 1, SourceNodeID: "node-a", TargetNodeID: "node-b", AssignmentGeneration: &generation, Op: replication.OpEnsureDir, Path: stringPointer("/alice/docs"), IsDir: true, AttemptCount: 1},
+			{ID: 2, SourceNodeID: "node-a", TargetNodeID: "node-b", AssignmentGeneration: &generation, Op: replication.OpEnsureDir, Path: stringPointer("/alice/skip"), IsDir: true},
 		},
 	}
 
@@ -199,7 +230,13 @@ func TestReplicationWorkerMarksFailedAndStopsBatch(t *testing.T) {
 	cfg.Internal.Replication.MaxRetryBackoff = time.Minute
 	cfg.WebDAV.Directory = t.TempDir()
 
-	worker := NewReplicationWorker(cfg, outbox, zap.NewNop())
+	worker := NewReplicationWorker(cfg, outbox, fakeWorkerResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			BaseURL:              server.URL,
+			AssignmentGeneration: &generation,
+		},
+	}, zap.NewNop())
 	now := time.Date(2026, 3, 8, 13, 0, 0, 0, time.UTC)
 	worker.now = func() time.Time { return now }
 
@@ -239,7 +276,13 @@ func TestReplicationWorkerRetryDelayCapsAtMax(t *testing.T) {
 	cfg.Internal.Replication.RetryBackoffBase = time.Second
 	cfg.Internal.Replication.MaxRetryBackoff = 8 * time.Second
 
-	worker := NewReplicationWorker(cfg, &fakeWorkerOutboxRepository{}, zap.NewNop())
+	worker := NewReplicationWorker(cfg, &fakeWorkerOutboxRepository{}, fakeWorkerResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			BaseURL:              "http://example.internal",
+			AssignmentGeneration: int64Pointer(1),
+		},
+	}, zap.NewNop())
 	cases := []struct {
 		attempt int
 		want    time.Duration

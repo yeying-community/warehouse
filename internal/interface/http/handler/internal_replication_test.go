@@ -10,10 +10,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/replication"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
 	"go.uber.org/zap"
 )
+
+type fakeHandlerPeerResolver struct {
+	target   *service.ResolvedReplicationPeer
+	dispatch *service.ResolvedReplicationPeer
+}
 
 type fakeReplicationOutboxReader struct {
 	expectedSource string
@@ -57,16 +63,17 @@ func (s *fakeReconcileStore) CreateJob(_ context.Context, job *replication.Recon
 	job.CreatedAt = now
 	job.UpdatedAt = now
 	s.latestJob = &replication.ReconcileJob{
-		ID:                job.ID,
-		SourceNodeID:      job.SourceNodeID,
-		TargetNodeID:      job.TargetNodeID,
-		WatermarkOutboxID: job.WatermarkOutboxID,
-		Status:            job.Status,
-		ScannedItems:      job.ScannedItems,
-		PendingItems:      job.PendingItems,
-		StartedAt:         job.StartedAt,
-		CreatedAt:         job.CreatedAt,
-		UpdatedAt:         job.UpdatedAt,
+		ID:                   job.ID,
+		SourceNodeID:         job.SourceNodeID,
+		TargetNodeID:         job.TargetNodeID,
+		AssignmentGeneration: job.AssignmentGeneration,
+		WatermarkOutboxID:    job.WatermarkOutboxID,
+		Status:               job.Status,
+		ScannedItems:         job.ScannedItems,
+		PendingItems:         job.PendingItems,
+		StartedAt:            job.StartedAt,
+		CreatedAt:            job.CreatedAt,
+		UpdatedAt:            job.UpdatedAt,
 	}
 	return nil
 }
@@ -155,6 +162,24 @@ func (s fakeReconcileScanner) Scan(_ context.Context) ([]*replication.ReconcileI
 	return append([]*replication.ReconcileItem(nil), s.items...), nil
 }
 
+func (r fakeHandlerPeerResolver) ResolveTarget(context.Context) (*service.ResolvedReplicationPeer, error) {
+	return r.target, nil
+}
+
+func (r fakeHandlerPeerResolver) ResolveDispatchTarget(context.Context) (*service.ResolvedReplicationPeer, error) {
+	if r.dispatch != nil {
+		return r.dispatch, nil
+	}
+	return r.target, nil
+}
+
+func (r fakeHandlerPeerResolver) ResolveByNodeID(context.Context, string, bool) (*service.ResolvedReplicationPeer, error) {
+	if r.dispatch != nil {
+		return r.dispatch, nil
+	}
+	return r.target, nil
+}
+
 func TestInternalReplicationHandleStatusActive(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Node.ID = "node-a"
@@ -198,6 +223,7 @@ func TestInternalReplicationHandleStatusActive(t *testing.T) {
 				LastAppliedOutboxID: lastApplied,
 			},
 		},
+		nil,
 		nil,
 		nil,
 	)
@@ -293,6 +319,7 @@ func TestInternalReplicationHandleStatusStandbyUsesReversePair(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/replication/status", nil)
@@ -349,6 +376,7 @@ func TestInternalReplicationHandleStatusStandbyBootstrapRequired(t *testing.T) {
 		},
 		nil,
 		nil,
+		nil,
 	)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/internal/replication/status", nil)
@@ -391,11 +419,13 @@ func TestInternalReplicationHandleBootstrapMarkWithExplicitOutboxID(t *testing.T
 		offsets,
 		nil,
 		nil,
+		nil,
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/bootstrap/mark", bytes.NewBufferString(`{"outboxId":7}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Warehouse-Node-Id", "node-a")
+	req.Header.Set("X-Warehouse-Assignment-Generation", "1")
 	recorder := httptest.NewRecorder()
 
 	handler.HandleBootstrapMark(recorder, req)
@@ -443,11 +473,13 @@ func TestInternalReplicationHandleBootstrapMarkUsesCurrentLastOutboxID(t *testin
 		offsets,
 		nil,
 		nil,
+		nil,
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/bootstrap/mark", bytes.NewBufferString(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Warehouse-Node-Id", "node-a")
+	req.Header.Set("X-Warehouse-Assignment-Generation", "1")
 	recorder := httptest.NewRecorder()
 
 	handler.HandleBootstrapMark(recorder, req)
@@ -491,11 +523,13 @@ func TestInternalReplicationHandleBootstrapMarkRejectsBackwardOffset(t *testing.
 		offsets,
 		nil,
 		nil,
+		nil,
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/bootstrap/mark", bytes.NewBufferString(`{"outboxId":8}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Warehouse-Node-Id", "node-a")
+	req.Header.Set("X-Warehouse-Assignment-Generation", "1")
 	recorder := httptest.NewRecorder()
 
 	handler.HandleBootstrapMark(recorder, req)
@@ -521,6 +555,7 @@ func TestInternalReplicationHandleReconcileStart(t *testing.T) {
 	cfg.Internal.Replication.PeerNodeID = "node-b"
 
 	lastOutboxID := int64(15)
+	generation := int64(6)
 	reconcileStore := &fakeReconcileStore{}
 	handler := NewInternalReplicationHandler(
 		cfg,
@@ -538,6 +573,12 @@ func TestInternalReplicationHandleReconcileStart(t *testing.T) {
 			items: []*replication.ReconcileItem{
 				{Path: "/history", IsDir: true, State: replication.ReconcileItemStatePending},
 				{Path: "/history/a.txt", IsDir: false, State: replication.ReconcileItemStatePending},
+			},
+		},
+		fakeHandlerPeerResolver{
+			target: &service.ResolvedReplicationPeer{
+				NodeID:               "node-b",
+				AssignmentGeneration: &generation,
 			},
 		},
 	)

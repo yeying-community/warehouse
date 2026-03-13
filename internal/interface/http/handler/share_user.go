@@ -35,7 +35,7 @@ func NewShareUserHandler(
 	logger *zap.Logger,
 ) *ShareUserHandler {
 	if mutationRecorder == nil {
-		mutationRecorder = service.NewMutationRecorder(nil, nil, nil)
+		mutationRecorder = service.NewMutationRecorder(nil, nil, nil, nil)
 	}
 	return &ShareUserHandler{
 		shareUserService: shareUserService,

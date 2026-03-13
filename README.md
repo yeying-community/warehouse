@@ -44,6 +44,9 @@ build/warehouse -c config.yaml --check-ready
 # 查看当前实例的复制状态
 build/warehouse ha status -c config.yaml
 
+# 查看当前节点相关的 assignment 状态
+build/warehouse ha assignments status -c config.yaml
+
 # 查看 peer（例如 standby）的复制状态
 build/warehouse ha status -c config.yaml --peer
 
@@ -59,8 +62,10 @@ build/warehouse ha bootstrap mark -c config.yaml --peer --outbox-id 123
 
 说明：
 - CLI 会自动根据 `config.yaml` 构造 internal 签名请求，不需要手工写 `curl`、shell 脚本或 HMAC header
-- 默认访问当前实例的 internal 地址；传 `--peer` 时会改为访问 `internal.replication.peer_base_url`
+- 默认访问当前实例的 internal 地址；传 `--peer` 时会优先访问 `internal.replication.peer_base_url`，为空时再从 PostgreSQL 控制面按“effective assignment -> cluster_nodes/静态配置回退”解析 peer
 - 也可以通过 `--base-url` 显式指定目标实例
+- `bootstrap mark` 现在要求携带当前 assignment generation；优先使用 `--peer`，CLI 会自动补齐内部 header
+- `build/warehouse ha assignments status` 直接读取 PostgreSQL 控制面表，不走 HTTP；当前可以直接观察 active 侧 assignment allocator 写入的 lease / generation / state
 
 ## API 文档
 
@@ -194,8 +199,10 @@ bash scripts/local.sh standby
 - 默认端口为 `6065`（active）和 `6066`（standby）
 - `.tmp/` 已加入 `.gitignore`
 - 只覆盖本地双实例必需字段：端口、节点身份、internal replication 和数据目录
+- 同时会自动补齐 `node.advertise_url`，让 active / standby 通过共享控制面自动发现彼此
 - 可通过环境变量覆盖本地端口和 internal shared secret，例如 `ACTIVE_PORT`、`STANDBY_PORT`、`INTERNAL_SHARED_SECRET`
-- `standby` 的 `internal.replication.peer_base_url` 默认是空值，这是预期行为；只有 `active` 需要配置 peer URL 并主动分发/补齐
+- active / standby 的 `internal.replication.peer_base_url` 默认都可以为空；resolver 会优先按有效 assignment 解析 peer，缺失时再回退到 `peer_node_id` / `cluster_nodes`
+- standby 的 internal apply / reconcile / bootstrap 请求会校验当前 effective assignment，只接受当前 assigned active
 
 ## 高可用部署提示
 
@@ -203,6 +210,7 @@ bash scripts/local.sh standby
 
 - `webdav.directory` 应指向每台机器自己的本地数据盘挂载目录
 - 当前阶段一推荐路线是：active 对外、standby 仅 internal，同步本地文件数据
+- 建议为每个实例设置唯一的 `node.id`，并设置 `node.advertise_url` 作为 internal 可达地址，供共享控制面发现
 - 生产环境建议设置 `webdav.auto_create_directory: false`
 - 切换前除了检查 `/api/v1/public/health/readiness`，还要检查复制状态
 - 详细说明参考 [docs/zh/ha-active-standby-deployment.md](docs/zh/ha-active-standby-deployment.md)

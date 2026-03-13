@@ -48,21 +48,23 @@ require_command() {
 render_config() {
   local role="$1"
   local output_path="$2"
-  local node_id node_role port peer_node_id peer_base_url data_dir
+  local node_id node_role port advertise_url peer_node_id peer_base_url data_dir
 
   case "$role" in
     active)
       node_id="warehouse-active"
       node_role="active"
       port="${ACTIVE_PORT}"
+      advertise_url="http://127.0.0.1:${ACTIVE_PORT}"
       peer_node_id="warehouse-standby"
-      peer_base_url="http://127.0.0.1:${STANDBY_PORT}"
+      peer_base_url=""
       data_dir="${TMP_DIR}/active/data"
       ;;
     standby)
       node_id="warehouse-standby"
       node_role="standby"
       port="${STANDBY_PORT}"
+      advertise_url="http://127.0.0.1:${STANDBY_PORT}"
       peer_node_id="warehouse-active"
       peer_base_url=""
       data_dir="${TMP_DIR}/standby/data"
@@ -81,6 +83,7 @@ render_config() {
     -v port="${port}" \
     -v node_id="${node_id}" \
     -v node_role="${node_role}" \
+    -v advertise_url="${advertise_url}" \
     -v peer_node_id="${peer_node_id}" \
     -v peer_base_url="${peer_base_url}" \
     -v shared_secret="${INTERNAL_SHARED_SECRET}" \
@@ -139,6 +142,10 @@ render_config() {
       print "  role: \"" node_role "\""
       next
     }
+    section == "node" && $1 == "advertise_url:" {
+      print "  advertise_url: \"" advertise_url "\""
+      next
+    }
     section == "internal" && subsection == "replication" && $1 == "enabled:" {
       print "    enabled: true"
       next
@@ -181,6 +188,28 @@ render_config() {
     ' "${output_path}" > "${output_path}.tmp"
 
   mv "${output_path}.tmp" "${output_path}"
+
+  if ! grep -q '^  advertise_url:' "${output_path}"; then
+    awk \
+      -v advertise_url="${advertise_url}" \
+      '
+      /^node:$/ {
+        in_node = 1
+        print
+        next
+      }
+      in_node && /^  role:/ {
+        print
+        print "  advertise_url: \"" advertise_url "\""
+        in_node = 0
+        next
+      }
+      {
+        print
+      }
+      ' "${output_path}" > "${output_path}.tmp"
+    mv "${output_path}.tmp" "${output_path}"
+  fi
 }
 
 main() {

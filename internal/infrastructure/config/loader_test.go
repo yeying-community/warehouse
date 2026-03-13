@@ -67,21 +67,20 @@ func TestValidateInternalReplicationAcceptsStandbyRole(t *testing.T) {
 	}
 }
 
-func TestValidateInternalReplicationActiveRequiresPeerBaseURL(t *testing.T) {
+func TestValidateInternalReplicationActiveAllowsDynamicPeerDiscovery(t *testing.T) {
 	loader := NewLoader()
 	cfg := DefaultConfig()
 	cfg.Node.ID = "node-a"
 	cfg.Node.Role = "active"
 	cfg.Internal.Replication.Enabled = true
-	cfg.Internal.Replication.PeerNodeID = "node-b"
 	cfg.Internal.Replication.SharedSecret = "secret"
 	cfg.Internal.Replication.AllowedClockSkew = time.Minute
 
 	if err := loader.validateNode(cfg); err != nil {
 		t.Fatalf("validateNode failed: %v", err)
 	}
-	if err := loader.validateInternal(cfg); err == nil {
-		t.Fatalf("expected error when active node has no peer base url")
+	if err := loader.validateInternal(cfg); err != nil {
+		t.Fatalf("expected dynamic peer discovery config to be valid, got: %v", err)
 	}
 }
 

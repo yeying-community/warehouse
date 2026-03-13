@@ -23,7 +23,7 @@ func TestInternalReplicationHandleReconcileApplyBatchPreservesMtime(t *testing.T
 	cfg.WebDAV.Directory = root
 	cfg.Internal.Replication.Enabled = true
 
-	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, newMemoryReplicationOffsetStore(), nil, nil)
+	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, newMemoryReplicationOffsetStore(), nil, nil, nil)
 	modifiedAt := time.Date(2025, 3, 1, 12, 30, 45, 0, time.UTC)
 	payload := internalReconcileApplyBatchRequest{
 		JobID: 1,
@@ -43,6 +43,8 @@ func TestInternalReplicationHandleReconcileApplyBatchPreservesMtime(t *testing.T
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/reconcile/apply-batch", bytes.NewReader(body))
+	req.Header.Set("X-Warehouse-Node-Id", "node-a")
+	req.Header.Set("X-Warehouse-Assignment-Generation", "1")
 	recorder := httptest.NewRecorder()
 	handler.HandleReconcileApplyBatch(recorder, req)
 

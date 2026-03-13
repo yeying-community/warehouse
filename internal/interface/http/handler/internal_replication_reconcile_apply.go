@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/replication"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
@@ -47,6 +48,25 @@ func (h *InternalReplicationHandler) HandleReconcileApplyBatch(w http.ResponseWr
 	}
 	if err := h.requireStandbyRole(); err != nil {
 		h.writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	sourceNodeID := strings.TrimSpace(r.Header.Get(middleware.InternalNodeIDHeader))
+	if sourceNodeID == "" {
+		h.writeError(w, http.StatusBadRequest, "missing "+middleware.InternalNodeIDHeader)
+		return
+	}
+	assignment, err := h.requireAssignedSource(r.Context(), sourceNodeID)
+	if err != nil {
+		h.writeStandbyAuthorizationError(w, err)
+		return
+	}
+	requestGeneration, err := parseAssignmentGenerationHeader(r.Header.Get(middleware.InternalAssignmentGenerationHeader))
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateAssignmentGeneration(requestGeneration, assignment, nil); err != nil {
+		h.writeApplyError(w, err)
 		return
 	}
 
@@ -120,9 +140,15 @@ func (h *InternalReplicationHandler) applyReconcileItem(item internalReconcileAp
 	return applyReplicaMtime(fullPath, item.ModifiedAt)
 }
 
-func (h *InternalReplicationHandler) dispatchReconcilePendingItems(ctx context.Context, jobID int64, targetNodeID string) (int64, error) {
+func (h *InternalReplicationHandler) dispatchReconcilePendingItems(ctx context.Context, jobID int64, peer *service.ResolvedReplicationPeer, targetNodeID string) (int64, error) {
 	if h.reconcileStore == nil {
 		return 0, fmt.Errorf("reconcile store is not configured")
+	}
+	if peer == nil || strings.TrimSpace(peer.BaseURL) == "" {
+		return h.pendingCountSafe(ctx, jobID), fmt.Errorf("reconcile target peer base url is unavailable")
+	}
+	if peer.AssignmentGeneration == nil || *peer.AssignmentGeneration <= 0 {
+		return h.pendingCountSafe(ctx, jobID), fmt.Errorf("reconcile target peer %q has no assignment generation", peer.NodeID)
 	}
 
 	batchSize := h.config.Internal.Replication.BatchSize
@@ -164,7 +190,7 @@ func (h *InternalReplicationHandler) dispatchReconcilePendingItems(ctx context.C
 			itemIDs = append(itemIDs, item.ID)
 		}
 
-		if err := h.sendReconcileBatch(ctx, client, targetNodeID, jobID, payloadItems); err != nil {
+		if err := h.sendReconcileBatch(ctx, client, peer.BaseURL, targetNodeID, jobID, *peer.AssignmentGeneration, payloadItems); err != nil {
 			return h.pendingCountSafe(ctx, jobID), err
 		}
 		if err := h.reconcileStore.UpdateItemsState(ctx, itemIDs, replication.ReconcileItemStateApplied); err != nil {
@@ -173,7 +199,14 @@ func (h *InternalReplicationHandler) dispatchReconcilePendingItems(ctx context.C
 	}
 }
 
-func (h *InternalReplicationHandler) sendReconcileBatch(ctx context.Context, client *http.Client, targetNodeID string, jobID int64, items []internalReconcileApplyItemRequest) error {
+func (h *InternalReplicationHandler) sendReconcileBatch(
+	ctx context.Context,
+	client *http.Client,
+	baseURL, targetNodeID string,
+	jobID int64,
+	assignmentGeneration int64,
+	items []internalReconcileApplyItemRequest,
+) error {
 	body, err := json.Marshal(internalReconcileApplyBatchRequest{
 		JobID: jobID,
 		Items: items,
@@ -182,13 +215,14 @@ func (h *InternalReplicationHandler) sendReconcileBatch(ctx context.Context, cli
 		return fmt.Errorf("marshal reconcile batch request: %w", err)
 	}
 
-	requestURL := strings.TrimRight(h.config.Internal.Replication.PeerBaseURL, "/") + "/api/v1/internal/replication/reconcile/apply-batch"
+	requestURL := strings.TrimRight(baseURL, "/") + "/api/v1/internal/replication/reconcile/apply-batch"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create reconcile batch request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	h.signInternalRequest(req, payloadSHA256Hex(body))
+	req.Header.Set(middleware.InternalAssignmentGenerationHeader, fmt.Sprintf("%d", assignmentGeneration))
 	req.Header.Set("X-Warehouse-Reconcile-Target-Node-Id", targetNodeID)
 
 	resp, err := client.Do(req)

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeying-community/warehouse/internal/domain/cluster"
 	"github.com/yeying-community/warehouse/internal/domain/replication"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
@@ -48,6 +49,21 @@ func (e *replicationSequenceConflictError) Error() string {
 	return fmt.Sprintf("expected next outbox id %d, got a later event after %d", e.ExpectedNextOutboxID, e.LastAppliedOutboxID)
 }
 
+type replicationGenerationConflictError struct {
+	ExpectedGeneration  *int64
+	ReceivedGeneration  *int64
+	LastAppliedOutboxID int64
+}
+
+func (e *replicationGenerationConflictError) Error() string {
+	return fmt.Sprintf(
+		"assignment generation mismatch: expected %s, received %s after outbox %d",
+		formatNullableInt64(e.ExpectedGeneration),
+		formatNullableInt64(e.ReceivedGeneration),
+		e.LastAppliedOutboxID,
+	)
+}
+
 func (h *InternalReplicationHandler) HandleFSApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -69,7 +85,17 @@ func (h *InternalReplicationHandler) HandleFSApply(w http.ResponseWriter, r *htt
 	}
 
 	sourceNodeID := strings.TrimSpace(r.Header.Get(middleware.InternalNodeIDHeader))
-	state, err := h.beginApply(r.Context(), sourceNodeID, req.OutboxID)
+	assignment, err := h.requireAssignedSource(r.Context(), sourceNodeID)
+	if err != nil {
+		h.writeStandbyAuthorizationError(w, err)
+		return
+	}
+	requestGeneration, err := parseAssignmentGenerationHeader(r.Header.Get(middleware.InternalAssignmentGenerationHeader))
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	state, err := h.beginApply(r.Context(), sourceNodeID, req.OutboxID, requestGeneration, assignment)
 	if err != nil {
 		h.writeApplyError(w, err)
 		return
@@ -98,7 +124,7 @@ func (h *InternalReplicationHandler) HandleFSApply(w http.ResponseWriter, r *htt
 		h.writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := h.markApplied(r.Context(), sourceNodeID, req.OutboxID); err != nil {
+	if err := h.markApplied(r.Context(), sourceNodeID, req.OutboxID, effectiveAssignmentGeneration(requestGeneration, assignment)); err != nil {
 		h.logger.Error("failed to update replication offset after fs apply",
 			zap.String("source_node_id", sourceNodeID),
 			zap.Int64("outbox_id", req.OutboxID),
@@ -153,7 +179,17 @@ func (h *InternalReplicationHandler) HandleFileApply(w http.ResponseWriter, r *h
 	}
 
 	sourceNodeID := strings.TrimSpace(r.Header.Get(middleware.InternalNodeIDHeader))
-	state, err := h.beginApply(r.Context(), sourceNodeID, outboxID)
+	assignment, err := h.requireAssignedSource(r.Context(), sourceNodeID)
+	if err != nil {
+		h.writeStandbyAuthorizationError(w, err)
+		return
+	}
+	requestGeneration, err := parseAssignmentGenerationHeader(r.Header.Get(middleware.InternalAssignmentGenerationHeader))
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	state, err := h.beginApply(r.Context(), sourceNodeID, outboxID, requestGeneration, assignment)
 	if err != nil {
 		h.writeApplyError(w, err)
 		return
@@ -196,7 +232,7 @@ func (h *InternalReplicationHandler) HandleFileApply(w http.ResponseWriter, r *h
 			return
 		}
 	}
-	if err := h.markApplied(r.Context(), sourceNodeID, outboxID); err != nil {
+	if err := h.markApplied(r.Context(), sourceNodeID, outboxID, effectiveAssignmentGeneration(requestGeneration, assignment)); err != nil {
 		h.logger.Error("failed to update replication offset after file apply",
 			zap.String("source_node_id", sourceNodeID),
 			zap.Int64("outbox_id", outboxID),
@@ -229,7 +265,13 @@ type applyState struct {
 	alreadyApplied      bool
 }
 
-func (h *InternalReplicationHandler) beginApply(ctx context.Context, sourceNodeID string, outboxID int64) (*applyState, error) {
+func (h *InternalReplicationHandler) beginApply(
+	ctx context.Context,
+	sourceNodeID string,
+	outboxID int64,
+	requestGeneration *int64,
+	assignment *cluster.ReplicationAssignment,
+) (*applyState, error) {
 	sourceNodeID = strings.TrimSpace(sourceNodeID)
 	if sourceNodeID == "" {
 		return nil, fmt.Errorf("missing %s", middleware.InternalNodeIDHeader)
@@ -240,6 +282,9 @@ func (h *InternalReplicationHandler) beginApply(ctx context.Context, sourceNodeI
 			return nil, err
 		}
 		offset = &replication.Offset{}
+	}
+	if err := validateAssignmentGeneration(requestGeneration, assignment, offset); err != nil {
+		return nil, err
 	}
 	lastApplied := offset.LastAppliedOutboxID
 	if outboxID <= lastApplied {
@@ -255,13 +300,43 @@ func (h *InternalReplicationHandler) beginApply(ctx context.Context, sourceNodeI
 	return &applyState{lastAppliedOutboxID: lastApplied}, nil
 }
 
-func (h *InternalReplicationHandler) markApplied(ctx context.Context, sourceNodeID string, outboxID int64) error {
+func validateAssignmentGeneration(
+	requestGeneration *int64,
+	assignment *cluster.ReplicationAssignment,
+	offset *replication.Offset,
+) error {
+	var lastAppliedOutboxID int64
+	if offset != nil {
+		lastAppliedOutboxID = offset.LastAppliedOutboxID
+	}
+	if requestGeneration == nil || *requestGeneration <= 0 {
+		return fmt.Errorf("%s is required", middleware.InternalAssignmentGenerationHeader)
+	}
+	if assignment != nil && assignment.Generation != *requestGeneration {
+		return &replicationGenerationConflictError{
+			ExpectedGeneration:  int64Pointer(assignment.Generation),
+			ReceivedGeneration:  requestGeneration,
+			LastAppliedOutboxID: lastAppliedOutboxID,
+		}
+	}
+	if offset != nil && offset.AssignmentGeneration != nil && *offset.AssignmentGeneration != *requestGeneration {
+		return &replicationGenerationConflictError{
+			ExpectedGeneration:  offset.AssignmentGeneration,
+			ReceivedGeneration:  requestGeneration,
+			LastAppliedOutboxID: lastAppliedOutboxID,
+		}
+	}
+	return nil
+}
+
+func (h *InternalReplicationHandler) markApplied(ctx context.Context, sourceNodeID string, outboxID int64, assignmentGeneration *int64) error {
 	return h.offsets.Upsert(ctx, &replication.Offset{
-		SourceNodeID:        sourceNodeID,
-		TargetNodeID:        h.config.Node.ID,
-		LastAppliedOutboxID: outboxID,
-		LastAppliedAt:       time.Now(),
-		UpdatedAt:           time.Now(),
+		SourceNodeID:         sourceNodeID,
+		TargetNodeID:         h.config.Node.ID,
+		AssignmentGeneration: assignmentGeneration,
+		LastAppliedOutboxID:  outboxID,
+		LastAppliedAt:        time.Now(),
+		UpdatedAt:            time.Now(),
 	})
 }
 
@@ -448,7 +523,53 @@ func (h *InternalReplicationHandler) writeApplyError(w http.ResponseWriter, err 
 		})
 		return
 	}
+	var generationConflict *replicationGenerationConflictError
+	if errors.As(err, &generationConflict) {
+		h.writeJSON(w, http.StatusConflict, map[string]any{
+			"error":               err.Error(),
+			"code":                http.StatusConflict,
+			"success":             false,
+			"expectedGeneration":  generationConflict.ExpectedGeneration,
+			"receivedGeneration":  generationConflict.ReceivedGeneration,
+			"lastAppliedOutboxId": generationConflict.LastAppliedOutboxID,
+		})
+		return
+	}
 	h.writeError(w, http.StatusBadRequest, err.Error())
+}
+
+func parseAssignmentGenerationHeader(raw string) (*int64, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, fmt.Errorf("%s is required", middleware.InternalAssignmentGenerationHeader)
+	}
+	value, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || value <= 0 {
+		return nil, fmt.Errorf("invalid %s", middleware.InternalAssignmentGenerationHeader)
+	}
+	return &value, nil
+}
+
+func effectiveAssignmentGeneration(requestGeneration *int64, assignment *cluster.ReplicationAssignment) *int64 {
+	if requestGeneration != nil {
+		return requestGeneration
+	}
+	if assignment == nil || assignment.Generation <= 0 {
+		return nil
+	}
+	return int64Pointer(assignment.Generation)
+}
+
+func int64Pointer(value int64) *int64 {
+	v := value
+	return &v
+}
+
+func formatNullableInt64(value *int64) string {
+	if value == nil {
+		return "<nil>"
+	}
+	return strconv.FormatInt(*value, 10)
 }
 
 func copyDirectory(sourcePath, targetPath string) error {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/pflag"
@@ -83,19 +84,34 @@ func runServer(args []string) {
 	printStartupInfo(c)
 
 	backgroundCtx, stopBackground := context.WithCancel(context.Background())
-	backgroundDone := make(chan struct{})
-	if c.ReplicationWorker != nil && c.ReplicationWorker.Enabled() {
+	var backgroundWG sync.WaitGroup
+	startBackground := func(run func(context.Context)) {
+		if run == nil {
+			return
+		}
+		backgroundWG.Add(1)
 		go func() {
-			defer close(backgroundDone)
-			c.ReplicationWorker.Run(backgroundCtx)
+			defer backgroundWG.Done()
+			run(backgroundCtx)
 		}()
-	} else {
-		close(backgroundDone)
 	}
-
+	if c.NodeHeartbeat != nil && c.NodeHeartbeat.Enabled() {
+		startBackground(c.NodeHeartbeat.Run)
+	}
+	if c.AssignmentAllocator != nil && c.AssignmentAllocator.Enabled() {
+		startBackground(c.AssignmentAllocator.Run)
+	}
+	if c.ReplicationWorker != nil && c.ReplicationWorker.Enabled() {
+		startBackground(c.ReplicationWorker.Run)
+	}
 	if c.InternalReplicationHandler != nil {
-		go c.InternalReplicationHandler.RunStartupReconcile(backgroundCtx)
+		startBackground(c.InternalReplicationHandler.RunStartupReconcile)
 	}
+	backgroundDone := make(chan struct{})
+	go func() {
+		backgroundWG.Wait()
+		close(backgroundDone)
+	}()
 
 	// 启动服务器
 	serverErrors := make(chan error, 1)
@@ -317,7 +333,8 @@ func printStartupInfo(c *container.Container) {
 	// 节点与内部复制信息
 	c.Logger.Info("node",
 		zap.String("id", c.Config.Node.ID),
-		zap.String("role", c.Config.Node.Role))
+		zap.String("role", c.Config.Node.Role),
+		zap.String("advertise_url", c.Config.Node.AdvertiseURL))
 	c.Logger.Info("internal_replication",
 		zap.Bool("enabled", c.Config.Internal.Replication.Enabled),
 		zap.String("peer_node_id", c.Config.Internal.Replication.PeerNodeID),

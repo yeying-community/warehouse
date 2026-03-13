@@ -41,18 +41,23 @@ type Container struct {
 	ReplicationOutboxRepo repository.ReplicationOutboxRepository
 	ReplicationOffsetRepo repository.ReplicationOffsetRepository
 	ReconcileRepo         repository.ReplicationReconcileRepository
+	ClusterNodeRepo       repository.ClusterNodeRepository
+	ClusterAssignmentRepo repository.ClusterReplicationAssignmentRepository
 
 	// Services
-	QuotaService       quota.Service
-	AssetSpaceManager  *assetspace.Manager
-	MutationRecorder   service.MutationRecorder
-	ReplicationWorker  *service.ReplicationWorker
-	ReconcileScanner   *service.ReconcileScanner
-	WebDAVService      *service.WebDAVService
-	RecycleService     *service.RecycleService
-	ShareService       *service.ShareService
-	ShareUserService   *service.ShareUserService
-	AddressBookService *service.AddressBookService
+	QuotaService        quota.Service
+	AssetSpaceManager   *assetspace.Manager
+	MutationRecorder    service.MutationRecorder
+	NodeHeartbeat       *service.NodeHeartbeatRegistrar
+	PeerResolver        service.ReplicationPeerResolver
+	AssignmentAllocator *service.ReplicationAssignmentAllocator
+	ReplicationWorker   *service.ReplicationWorker
+	ReconcileScanner    *service.ReconcileScanner
+	WebDAVService       *service.WebDAVService
+	RecycleService      *service.RecycleService
+	ShareService        *service.ShareService
+	ShareUserService    *service.ShareUserService
+	AddressBookService  *service.AddressBookService
 
 	// Authenticators
 	Authenticators []auth.Authenticator
@@ -184,6 +189,8 @@ func (c *Container) initRepositories() error {
 	c.ReplicationOutboxRepo = repository.NewPostgresReplicationOutboxRepository(c.DB.DB)
 	c.ReplicationOffsetRepo = repository.NewPostgresReplicationOffsetRepository(c.DB.DB)
 	c.ReconcileRepo = repository.NewPostgresReplicationReconcileRepository(c.DB.DB)
+	c.ClusterNodeRepo = repository.NewPostgresClusterNodeRepository(c.DB.DB)
+	c.ClusterAssignmentRepo = repository.NewPostgresClusterReplicationAssignmentRepository(c.DB.DB)
 
 	c.Logger.Info("using PostgreSQL user repository")
 	c.Logger.Info("repositories initialized")
@@ -193,8 +200,11 @@ func (c *Container) initRepositories() error {
 // initServices 初始化服务
 func (c *Container) initServices() error {
 	c.AssetSpaceManager = assetspace.NewManager(c.Config, c.Logger)
-	c.MutationRecorder = service.NewMutationRecorder(c.Config, c.ReplicationOutboxRepo, c.Logger)
-	c.ReplicationWorker = service.NewReplicationWorker(c.Config, c.ReplicationOutboxRepo, c.Logger)
+	c.PeerResolver = service.NewReplicationPeerResolver(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo)
+	c.NodeHeartbeat = service.NewNodeHeartbeatRegistrar(c.Config, c.ClusterNodeRepo, c.Logger)
+	c.AssignmentAllocator = service.NewReplicationAssignmentAllocator(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo, c.Logger)
+	c.MutationRecorder = service.NewMutationRecorder(c.Config, c.ReplicationOutboxRepo, c.PeerResolver, c.Logger)
+	c.ReplicationWorker = service.NewReplicationWorker(c.Config, c.ReplicationOutboxRepo, c.PeerResolver, c.Logger)
 	reconcileScanner, err := service.NewReconcileScanner(c.Config.WebDAV.Directory)
 	if err != nil {
 		return fmt.Errorf("failed to create reconcile scanner: %w", err)
@@ -305,6 +315,8 @@ func (c *Container) initHandlers() error {
 			c.ReplicationOffsetRepo,
 			c.ReconcileRepo,
 			c.ReconcileScanner,
+			c.PeerResolver,
+			c.ClusterAssignmentRepo,
 		)
 	}
 

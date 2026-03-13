@@ -18,6 +18,10 @@ type fakeReplicationOutboxRepository struct {
 	events []*replication.OutboxEvent
 }
 
+type fakeMutationRecorderResolver struct {
+	peer *ResolvedReplicationPeer
+}
+
 func (r *fakeReplicationOutboxRepository) Append(_ context.Context, event *replication.OutboxEvent) error {
 	copied := *event
 	copied.ID = int64(len(r.events) + 1)
@@ -25,7 +29,7 @@ func (r *fakeReplicationOutboxRepository) Append(_ context.Context, event *repli
 	return nil
 }
 
-func (r *fakeReplicationOutboxRepository) ListPending(context.Context, string, string, int) ([]*replication.OutboxEvent, error) {
+func (r *fakeReplicationOutboxRepository) ListPending(context.Context, string, string, *int64, int) ([]*replication.OutboxEvent, error) {
 	return nil, nil
 }
 
@@ -39,6 +43,18 @@ func (r *fakeReplicationOutboxRepository) MarkFailed(context.Context, int64, str
 
 func (r *fakeReplicationOutboxRepository) GetStatusSummary(context.Context, string, string) (*replication.OutboxStatus, error) {
 	return nil, nil
+}
+
+func (r fakeMutationRecorderResolver) ResolveTarget(context.Context) (*ResolvedReplicationPeer, error) {
+	return r.peer, nil
+}
+
+func (r fakeMutationRecorderResolver) ResolveDispatchTarget(context.Context) (*ResolvedReplicationPeer, error) {
+	return r.peer, nil
+}
+
+func (r fakeMutationRecorderResolver) ResolveByNodeID(context.Context, string, bool) (*ResolvedReplicationPeer, error) {
+	return r.peer, nil
 }
 
 func TestMutationRecorderUpsertFile(t *testing.T) {
@@ -59,8 +75,14 @@ func TestMutationRecorderUpsertFile(t *testing.T) {
 	cfg.Internal.Replication.Enabled = true
 	cfg.Internal.Replication.PeerNodeID = "node-b"
 	cfg.WebDAV.Directory = root
+	generation := int64(7)
 
-	recorder := NewMutationRecorder(cfg, repo, zap.NewNop())
+	recorder := NewMutationRecorder(cfg, repo, fakeMutationRecorderResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			AssignmentGeneration: &generation,
+		},
+	}, zap.NewNop())
 	if err := recorder.UpsertFile(context.Background(), filePath); err != nil {
 		t.Fatalf("UpsertFile: %v", err)
 	}
@@ -77,6 +99,9 @@ func TestMutationRecorderUpsertFile(t *testing.T) {
 	}
 	if event.FileSize == nil || *event.FileSize != int64(len(payload)) {
 		t.Fatalf("unexpected size: %#v", event.FileSize)
+	}
+	if event.AssignmentGeneration == nil || *event.AssignmentGeneration != generation {
+		t.Fatalf("unexpected assignment generation: %#v", event.AssignmentGeneration)
 	}
 }
 
@@ -98,8 +123,14 @@ func TestMutationRecorderMoveCopyRemoveAndEnsureDir(t *testing.T) {
 	cfg.Internal.Replication.Enabled = true
 	cfg.Internal.Replication.PeerNodeID = "node-b"
 	cfg.WebDAV.Directory = root
+	generation := int64(9)
 
-	recorder := NewMutationRecorder(cfg, repo, zap.NewNop())
+	recorder := NewMutationRecorder(cfg, repo, fakeMutationRecorderResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			AssignmentGeneration: &generation,
+		},
+	}, zap.NewNop())
 	if err := recorder.EnsureDir(context.Background(), filepath.Join(root, "alice", "nested")); err != nil {
 		t.Fatalf("EnsureDir: %v", err)
 	}
@@ -144,7 +175,12 @@ func TestMutationRecorderRejectsPathOutsideRoot(t *testing.T) {
 	cfg.Internal.Replication.PeerNodeID = "node-b"
 	cfg.WebDAV.Directory = root
 
-	recorder := NewMutationRecorder(cfg, repo, zap.NewNop())
+	recorder := NewMutationRecorder(cfg, repo, fakeMutationRecorderResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			AssignmentGeneration: int64Pointer(11),
+		},
+	}, zap.NewNop())
 	if err := recorder.UpsertFile(context.Background(), outside); err == nil {
 		t.Fatalf("expected error for path outside root")
 	}

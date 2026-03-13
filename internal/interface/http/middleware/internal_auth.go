@@ -18,6 +18,7 @@ const (
 	InternalTimestampHeader     = "X-Warehouse-Timestamp"
 	InternalSignatureHeader     = "X-Warehouse-Signature"
 	InternalContentSHA256Header = "X-Warehouse-Content-SHA256"
+	InternalAssignmentGenerationHeader = "X-Warehouse-Assignment-Generation"
 	unsignedPayloadMarker       = "UNSIGNED-PAYLOAD"
 )
 

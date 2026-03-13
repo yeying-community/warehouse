@@ -53,10 +53,11 @@ func TestInternalReplicationHandleFSApplyEnsureDir(t *testing.T) {
 	cfg.Internal.Replication.PeerNodeID = "node-a"
 	cfg.WebDAV.Directory = root
 
-	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil)
+	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil, nil)
 	body := bytes.NewBufferString(`{"outboxId":1,"op":"ensure_dir","path":"/alice/docs","isDir":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/fs/apply", body)
 	req.Header.Set(middleware.InternalNodeIDHeader, "node-a")
+	req.Header.Set(middleware.InternalAssignmentGenerationHeader, "1")
 	recorder := httptest.NewRecorder()
 
 	handler.HandleFSApply(recorder, req)
@@ -93,10 +94,11 @@ func TestInternalReplicationHandleFSApplyRejectsSequenceGap(t *testing.T) {
 	cfg.Internal.Replication.PeerNodeID = "node-a"
 	cfg.WebDAV.Directory = root
 
-	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil)
+	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil, nil)
 	body := bytes.NewBufferString(`{"outboxId":3,"op":"ensure_dir","path":"/alice/docs","isDir":true}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/replication/fs/apply", body)
 	req.Header.Set(middleware.InternalNodeIDHeader, "node-a")
+	req.Header.Set(middleware.InternalAssignmentGenerationHeader, "1")
 	recorder := httptest.NewRecorder()
 
 	handler.HandleFSApply(recorder, req)
@@ -123,13 +125,14 @@ func TestInternalReplicationHandleFileApplyWritesFileAndUpdatesOffset(t *testing
 	cfg.Internal.Replication.PeerNodeID = "node-a"
 	cfg.WebDAV.Directory = root
 
-	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil)
+	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil, nil)
 	payload := []byte("replicated payload")
 	digest := sha256.Sum256(payload)
 	hashHex := hex.EncodeToString(digest[:])
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/internal/replication/file?outboxId=1&path=/alice/file.txt&fileSize=18", bytes.NewReader(payload))
 	req.Header.Set(middleware.InternalNodeIDHeader, "node-a")
 	req.Header.Set(middleware.InternalContentSHA256Header, hashHex)
+	req.Header.Set(middleware.InternalAssignmentGenerationHeader, "1")
 	recorder := httptest.NewRecorder()
 
 	handler.HandleFileApply(recorder, req)
@@ -178,12 +181,13 @@ func TestInternalReplicationHandleFileApplyAlreadyApplied(t *testing.T) {
 	cfg.Internal.Replication.PeerNodeID = "node-a"
 	cfg.WebDAV.Directory = root
 
-	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil)
+	handler := NewInternalReplicationHandler(cfg, zap.NewNop(), nil, offsets, nil, nil, nil)
 	digest := sha256.Sum256(payload)
 	hashHex := hex.EncodeToString(digest[:])
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/internal/replication/file?outboxId=4&path=/alice/file.txt&fileSize=18", bytes.NewReader(payload))
 	req.Header.Set(middleware.InternalNodeIDHeader, "node-a")
 	req.Header.Set(middleware.InternalContentSHA256Header, hashHex)
+	req.Header.Set(middleware.InternalAssignmentGenerationHeader, "1")
 	recorder := httptest.NewRecorder()
 
 	handler.HandleFileApply(recorder, req)

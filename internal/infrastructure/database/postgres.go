@@ -159,6 +159,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			is_dir BOOLEAN NOT NULL DEFAULT FALSE,
 			content_sha256 TEXT NULL,
 			file_size BIGINT NULL,
+			assignment_generation BIGINT NULL,
 			status TEXT NOT NULL DEFAULT 'pending',
 			attempt_count INT NOT NULL DEFAULT 0,
 			next_retry_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -171,6 +172,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS replication_offsets (
 			source_node_id TEXT NOT NULL,
 			target_node_id TEXT NOT NULL,
+			assignment_generation BIGINT NULL,
 			last_applied_outbox_id BIGINT NOT NULL,
 			last_applied_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
@@ -182,6 +184,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			id BIGSERIAL PRIMARY KEY,
 			source_node_id TEXT NOT NULL,
 			target_node_id TEXT NOT NULL,
+			assignment_generation BIGINT NULL,
 			watermark_outbox_id BIGINT NOT NULL DEFAULT 0,
 			status TEXT NOT NULL,
 			scanned_items BIGINT NOT NULL DEFAULT 0,
@@ -207,7 +210,40 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			UNIQUE(job_id, path)
 		)`,
 
+		// 共享控制面节点注册表：standby/active 通过数据库心跳注册，便于 peer 自动发现
+		`CREATE TABLE IF NOT EXISTS cluster_nodes (
+			node_id TEXT PRIMARY KEY,
+			role TEXT NOT NULL,
+			advertise_url TEXT NOT NULL,
+			last_heartbeat_at TIMESTAMP NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
+			updated_at TIMESTAMP NOT NULL DEFAULT TIMEZONE('UTC', NOW())
+		)`,
+
+		// 共享控制面复制分配表：记录 active 与 standby 的正式 assignment。
+		// 当前阶段仅用于 schema 准备与运维观察，还未接管复制流量。
+		`CREATE TABLE IF NOT EXISTS cluster_replication_assignments (
+			id BIGSERIAL PRIMARY KEY,
+			active_node_id TEXT NOT NULL,
+			standby_node_id TEXT NOT NULL,
+			state TEXT NOT NULL,
+			generation BIGINT NOT NULL DEFAULT 1,
+			lease_expires_at TIMESTAMP NULL,
+			last_reconcile_job_id BIGINT NULL,
+			last_error TEXT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
+			updated_at TIMESTAMP NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
+			UNIQUE(active_node_id, standby_node_id)
+		)`,
+
 		// 补充分享表字段（兼容已存在表）
+		`ALTER TABLE replication_outbox ADD COLUMN IF NOT EXISTS assignment_generation BIGINT NULL`,
+		`ALTER TABLE replication_offsets ADD COLUMN IF NOT EXISTS assignment_generation BIGINT NULL`,
+		`ALTER TABLE replication_reconcile_jobs ADD COLUMN IF NOT EXISTS assignment_generation BIGINT NULL`,
+		`ALTER TABLE cluster_nodes ALTER COLUMN created_at SET DEFAULT TIMEZONE('UTC', NOW())`,
+		`ALTER TABLE cluster_nodes ALTER COLUMN updated_at SET DEFAULT TIMEZONE('UTC', NOW())`,
+		`ALTER TABLE cluster_replication_assignments ALTER COLUMN created_at SET DEFAULT TIMEZONE('UTC', NOW())`,
+		`ALTER TABLE cluster_replication_assignments ALTER COLUMN updated_at SET DEFAULT TIMEZONE('UTC', NOW())`,
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS download_count BIGINT NOT NULL DEFAULT 0`,
 
@@ -251,6 +287,15 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON replication_reconcile_jobs(source_node_id, target_node_id, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_replication_reconcile_items_job_state
 			ON replication_reconcile_items(job_id, state, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cluster_nodes_role_heartbeat
+			ON cluster_nodes(role, last_heartbeat_at DESC, node_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cluster_replication_assignments_active
+			ON cluster_replication_assignments(active_node_id, updated_at DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_cluster_replication_assignments_standby
+			ON cluster_replication_assignments(standby_node_id, updated_at DESC, id DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_replication_assignments_standby_effective
+			ON cluster_replication_assignments(standby_node_id)
+			WHERE state IN ('pending', 'reconciling', 'replicating', 'draining')`,
 
 		// 兼容已有地址簿表
 		`ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,

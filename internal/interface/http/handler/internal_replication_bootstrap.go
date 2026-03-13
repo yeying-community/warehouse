@@ -48,6 +48,16 @@ func (h *InternalReplicationHandler) HandleBootstrapMark(w http.ResponseWriter, 
 		h.writeError(w, http.StatusBadRequest, "missing "+middleware.InternalNodeIDHeader)
 		return
 	}
+	assignment, err := h.requireAssignedSource(r.Context(), sourceNodeID)
+	if err != nil {
+		h.writeStandbyAuthorizationError(w, err)
+		return
+	}
+	requestGeneration, err := parseAssignmentGenerationHeader(r.Header.Get(middleware.InternalAssignmentGenerationHeader))
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	targetNodeID := h.config.Node.ID
 	currentOffset, err := h.offsets.Get(r.Context(), sourceNodeID, targetNodeID)
@@ -57,6 +67,10 @@ func (h *InternalReplicationHandler) HandleBootstrapMark(w http.ResponseWriter, 
 			zap.String("target_node_id", targetNodeID),
 			zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to load current replication offset")
+		return
+	}
+	if err := validateAssignmentGeneration(requestGeneration, assignment, currentOffset); err != nil {
+		h.writeApplyError(w, err)
 		return
 	}
 
@@ -85,11 +99,12 @@ func (h *InternalReplicationHandler) HandleBootstrapMark(w http.ResponseWriter, 
 
 	now := time.Now()
 	if err := h.offsets.Upsert(r.Context(), &replication.Offset{
-		SourceNodeID:        sourceNodeID,
-		TargetNodeID:        targetNodeID,
-		LastAppliedOutboxID: baselineOutboxID,
-		LastAppliedAt:       now,
-		UpdatedAt:           now,
+		SourceNodeID:         sourceNodeID,
+		TargetNodeID:         targetNodeID,
+		AssignmentGeneration: effectiveAssignmentGeneration(requestGeneration, assignment),
+		LastAppliedOutboxID:  baselineOutboxID,
+		LastAppliedAt:        now,
+		UpdatedAt:            now,
 	}); err != nil {
 		h.logger.Error("failed to persist replication bootstrap baseline",
 			zap.String("source_node_id", sourceNodeID),

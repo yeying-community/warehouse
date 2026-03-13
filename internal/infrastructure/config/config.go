@@ -47,8 +47,9 @@ type ServerConfig struct {
 
 // NodeConfig 节点配置
 type NodeConfig struct {
-	ID   string `yaml:"id"`
-	Role string `yaml:"role"`
+	ID           string `yaml:"id"`
+	Role         string `yaml:"role"`
+	AdvertiseURL string `yaml:"advertise_url"`
 }
 
 // InternalConfig 内部服务通信配置

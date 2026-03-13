@@ -1,0 +1,186 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/yeying-community/warehouse/internal/domain/cluster"
+	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
+	"go.uber.org/zap"
+)
+
+const (
+	defaultAssignmentRenewInterval = 5 * time.Second
+	defaultAssignmentLeaseDuration = 20 * time.Second
+)
+
+// ReplicationAssignmentAllocator maintains the effective standby assignment for one active node.
+type ReplicationAssignmentAllocator struct {
+	config        *config.Config
+	nodes         repository.ClusterNodeRepository
+	assignments   repository.ClusterReplicationAssignmentRepository
+	logger        *zap.Logger
+	now           func() time.Time
+	renewInterval time.Duration
+	leaseDuration time.Duration
+	maxStaleness  time.Duration
+}
+
+// NewReplicationAssignmentAllocator creates an active-side assignment allocator/renewer.
+func NewReplicationAssignmentAllocator(
+	cfg *config.Config,
+	nodes repository.ClusterNodeRepository,
+	assignments repository.ClusterReplicationAssignmentRepository,
+	logger *zap.Logger,
+) *ReplicationAssignmentAllocator {
+	if cfg == nil || nodes == nil || assignments == nil {
+		return nil
+	}
+	return &ReplicationAssignmentAllocator{
+		config:        cfg,
+		nodes:         nodes,
+		assignments:   assignments,
+		logger:        logger,
+		now:           time.Now,
+		renewInterval: defaultAssignmentRenewInterval,
+		leaseDuration: defaultAssignmentLeaseDuration,
+		maxStaleness:  defaultClusterNodeStaleness,
+	}
+}
+
+// Enabled reports whether the current node should allocate/renew assignments.
+func (a *ReplicationAssignmentAllocator) Enabled() bool {
+	if a == nil || a.config == nil {
+		return false
+	}
+	return a.config.Internal.Replication.Enabled &&
+		strings.EqualFold(strings.TrimSpace(a.config.Node.Role), "active") &&
+		strings.TrimSpace(a.config.Node.ID) != ""
+}
+
+// Run starts the periodic renew loop until ctx is canceled.
+func (a *ReplicationAssignmentAllocator) Run(ctx context.Context) {
+	if !a.Enabled() {
+		return
+	}
+
+	ticker := time.NewTicker(a.renewInterval)
+	defer ticker.Stop()
+
+	if a.logger != nil {
+		a.logger.Info("replication assignment allocator started",
+			zap.String("active_node_id", a.config.Node.ID),
+			zap.String("configured_peer_node_id", strings.TrimSpace(a.config.Internal.Replication.PeerNodeID)),
+			zap.Duration("renew_interval", a.renewInterval),
+			zap.Duration("lease_duration", a.leaseDuration))
+		defer a.logger.Info("replication assignment allocator stopped",
+			zap.String("active_node_id", a.config.Node.ID))
+	}
+
+	if err := a.SyncOnce(ctx); err != nil && !errors.Is(err, context.Canceled) && a.logger != nil {
+		a.logger.Warn("replication assignment allocator sync failed", zap.Error(err))
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.SyncOnce(ctx); err != nil && !errors.Is(err, context.Canceled) && a.logger != nil {
+				a.logger.Warn("replication assignment allocator sync failed", zap.Error(err))
+			}
+		}
+	}
+}
+
+// SyncOnce writes or releases effective assignments based on healthy standby discovery.
+func (a *ReplicationAssignmentAllocator) SyncOnce(ctx context.Context) error {
+	if !a.Enabled() {
+		return nil
+	}
+
+	target, err := a.selectTargetStandby(ctx)
+	if err != nil {
+		return err
+	}
+	activeNodeID := strings.TrimSpace(a.config.Node.ID)
+	if target == nil {
+		if err := a.assignments.ReleaseByActiveExcept(ctx, activeNodeID, nil); err != nil {
+			return fmt.Errorf("release assignments without target: %w", err)
+		}
+		return nil
+	}
+
+	leaseExpiresAt := a.now().UTC().Add(a.leaseDuration)
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:   activeNodeID,
+		StandbyNodeID:  target.NodeID,
+		State:          cluster.AssignmentStateReplicating,
+		LeaseExpiresAt: &leaseExpiresAt,
+	}
+	if err := a.assignments.UpsertLease(ctx, assignment); err != nil {
+		return fmt.Errorf("upsert assignment lease for standby %q: %w", target.NodeID, err)
+	}
+	if err := a.assignments.ReleaseByActiveExcept(ctx, activeNodeID, []string{target.NodeID}); err != nil {
+		return fmt.Errorf("release stale assignments for active %q: %w", activeNodeID, err)
+	}
+	if a.logger != nil {
+		a.logger.Debug("replication assignment renewed",
+			zap.String("active_node_id", activeNodeID),
+			zap.String("standby_node_id", target.NodeID),
+			zap.Int64("generation", assignment.Generation),
+			zap.Time("lease_expires_at", leaseExpiresAt))
+	}
+	return nil
+}
+
+func (a *ReplicationAssignmentAllocator) selectTargetStandby(ctx context.Context) (*cluster.Node, error) {
+	nodes, err := a.nodes.ListByRole(ctx, "standby")
+	if err != nil {
+		return nil, fmt.Errorf("list standby nodes: %w", err)
+	}
+
+	now := a.now().UTC()
+	healthyStandbys := make([]*cluster.Node, 0, len(nodes))
+	healthyByID := make(map[string]*cluster.Node, len(nodes))
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		node.Normalize()
+		if node.NodeID == "" || node.AdvertiseURL == "" {
+			continue
+		}
+		if !node.Healthy(now, a.maxStaleness) {
+			continue
+		}
+		healthyStandbys = append(healthyStandbys, node)
+		healthyByID[node.NodeID] = node
+	}
+	if len(healthyStandbys) == 0 {
+		return nil, nil
+	}
+
+	if configuredPeerNodeID := strings.TrimSpace(a.config.Internal.Replication.PeerNodeID); configuredPeerNodeID != "" {
+		return healthyByID[configuredPeerNodeID], nil
+	}
+
+	currentAssignments, err := a.assignments.ListEffectiveByActive(ctx, strings.TrimSpace(a.config.Node.ID))
+	if err != nil {
+		return nil, fmt.Errorf("list effective assignments: %w", err)
+	}
+	for _, assignment := range currentAssignments {
+		if assignment == nil {
+			continue
+		}
+		if standby := healthyByID[strings.TrimSpace(assignment.StandbyNodeID)]; standby != nil {
+			return standby, nil
+		}
+	}
+
+	return healthyStandbys[0], nil
+}

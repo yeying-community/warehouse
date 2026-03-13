@@ -103,6 +103,9 @@ func (l *Loader) overrideFromEnv(config *Config) {
 	if v := os.Getenv("WEBDAV_NODE_ROLE"); v != "" {
 		config.Node.Role = v
 	}
+	if v := os.Getenv("WEBDAV_NODE_ADVERTISE_URL"); v != "" {
+		config.Node.AdvertiseURL = v
+	}
 	if v := os.Getenv("WEBDAV_INTERNAL_REPLICATION_ENABLED"); v != "" {
 		config.Internal.Replication.Enabled = parseEnvBool(v)
 	}
@@ -305,6 +308,16 @@ func (l *Loader) validateNode(config *Config) error {
 	}
 
 	config.Node.ID = strings.TrimSpace(config.Node.ID)
+	config.Node.AdvertiseURL = strings.TrimSpace(config.Node.AdvertiseURL)
+	if config.Node.AdvertiseURL != "" {
+		parsed, err := url.Parse(config.Node.AdvertiseURL)
+		if err != nil {
+			return fmt.Errorf("invalid node.advertise_url: %w", err)
+		}
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return errors.New("node.advertise_url must include scheme and host")
+		}
+	}
 	return nil
 }
 
@@ -322,9 +335,6 @@ func (l *Loader) validateInternal(config *Config) error {
 	}
 	if replication.SharedSecret == "" {
 		return errors.New("internal.replication.shared_secret is required when internal replication is enabled")
-	}
-	if replication.PeerNodeID == "" {
-		return errors.New("internal.replication.peer_node_id is required when internal replication is enabled")
 	}
 	if replication.AllowedClockSkew <= 0 {
 		return errors.New("internal.replication.allowed_clock_skew must be greater than zero")
@@ -344,9 +354,6 @@ func (l *Loader) validateInternal(config *Config) error {
 	if replication.MaxRetryBackoff < replication.RetryBackoffBase {
 		return errors.New("internal.replication.max_retry_backoff must be greater than or equal to retry_backoff_base")
 	}
-	if config.Node.Role == "active" && replication.PeerBaseURL == "" {
-		return errors.New("internal.replication.peer_base_url is required when node.role=active and internal replication is enabled")
-	}
 	if replication.PeerBaseURL != "" {
 		parsed, err := url.Parse(replication.PeerBaseURL)
 		if err != nil {
@@ -355,6 +362,9 @@ func (l *Loader) validateInternal(config *Config) error {
 		if parsed.Scheme == "" || parsed.Host == "" {
 			return errors.New("internal.replication.peer_base_url must include scheme and host")
 		}
+	}
+	if replication.PeerBaseURL != "" && replication.PeerNodeID == "" {
+		return errors.New("internal.replication.peer_node_id is required when peer_base_url is configured")
 	}
 
 	return nil

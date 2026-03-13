@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,16 +37,17 @@ func (noopMutationRecorder) RemovePath(context.Context, string, bool) error     
 // OutboxMutationRecorder records mutations into replication_outbox.
 type OutboxMutationRecorder struct {
 	outbox       repository.ReplicationOutboxRepository
+	peerResolver ReplicationPeerResolver
 	logger       *zap.Logger
 	webdavRoot   string
 	sourceNodeID string
-	targetNodeID string
 }
 
 // NewMutationRecorder creates an active-node outbox-backed mutation recorder.
 func NewMutationRecorder(
 	cfg *config.Config,
 	outbox repository.ReplicationOutboxRepository,
+	peerResolver ReplicationPeerResolver,
 	logger *zap.Logger,
 ) MutationRecorder {
 	if cfg == nil || outbox == nil {
@@ -65,10 +67,10 @@ func NewMutationRecorder(
 
 	return &OutboxMutationRecorder{
 		outbox:       outbox,
+		peerResolver: peerResolver,
 		logger:       logger,
 		webdavRoot:   filepath.Clean(webdavRoot),
 		sourceNodeID: cfg.Node.ID,
-		targetNodeID: cfg.Internal.Replication.PeerNodeID,
 	}
 }
 
@@ -80,12 +82,17 @@ func (r *OutboxMutationRecorder) EnsureDir(ctx context.Context, fullPath string)
 	if normalized == "/" {
 		return nil
 	}
+	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	if err != nil {
+		return err
+	}
 	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID: r.sourceNodeID,
-		TargetNodeID: r.targetNodeID,
-		Op:           replication.OpEnsureDir,
-		Path:         stringPointer(normalized),
-		IsDir:        true,
+		SourceNodeID:         r.sourceNodeID,
+		TargetNodeID:         targetNodeID,
+		AssignmentGeneration: assignmentGeneration,
+		Op:                   replication.OpEnsureDir,
+		Path:                 stringPointer(normalized),
+		IsDir:                true,
 	})
 }
 
@@ -102,14 +109,19 @@ func (r *OutboxMutationRecorder) UpsertFile(ctx context.Context, fullPath string
 	if err != nil {
 		return err
 	}
+	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	if err != nil {
+		return err
+	}
 
 	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID:  r.sourceNodeID,
-		TargetNodeID:  r.targetNodeID,
-		Op:            replication.OpUpsertFile,
-		Path:          stringPointer(normalized),
-		ContentSHA256: stringPointer(sha256Hex),
-		FileSize:      int64Pointer(size),
+		SourceNodeID:         r.sourceNodeID,
+		TargetNodeID:         targetNodeID,
+		AssignmentGeneration: assignmentGeneration,
+		Op:                   replication.OpUpsertFile,
+		Path:                 stringPointer(normalized),
+		ContentSHA256:        stringPointer(sha256Hex),
+		FileSize:             int64Pointer(size),
 	})
 }
 
@@ -125,13 +137,18 @@ func (r *OutboxMutationRecorder) MovePath(ctx context.Context, fromFullPath, toF
 	if fromPath == "/" || toPath == "/" {
 		return fmt.Errorf("cannot record move involving root path")
 	}
+	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	if err != nil {
+		return err
+	}
 	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID: r.sourceNodeID,
-		TargetNodeID: r.targetNodeID,
-		Op:           replication.OpMovePath,
-		FromPath:     stringPointer(fromPath),
-		ToPath:       stringPointer(toPath),
-		IsDir:        isDir,
+		SourceNodeID:         r.sourceNodeID,
+		TargetNodeID:         targetNodeID,
+		AssignmentGeneration: assignmentGeneration,
+		Op:                   replication.OpMovePath,
+		FromPath:             stringPointer(fromPath),
+		ToPath:               stringPointer(toPath),
+		IsDir:                isDir,
 	})
 }
 
@@ -147,13 +164,18 @@ func (r *OutboxMutationRecorder) CopyPath(ctx context.Context, fromFullPath, toF
 	if fromPath == "/" || toPath == "/" {
 		return fmt.Errorf("cannot record copy involving root path")
 	}
+	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	if err != nil {
+		return err
+	}
 	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID: r.sourceNodeID,
-		TargetNodeID: r.targetNodeID,
-		Op:           replication.OpCopyPath,
-		FromPath:     stringPointer(fromPath),
-		ToPath:       stringPointer(toPath),
-		IsDir:        isDir,
+		SourceNodeID:         r.sourceNodeID,
+		TargetNodeID:         targetNodeID,
+		AssignmentGeneration: assignmentGeneration,
+		Op:                   replication.OpCopyPath,
+		FromPath:             stringPointer(fromPath),
+		ToPath:               stringPointer(toPath),
+		IsDir:                isDir,
 	})
 }
 
@@ -165,12 +187,17 @@ func (r *OutboxMutationRecorder) RemovePath(ctx context.Context, fullPath string
 	if normalized == "/" {
 		return fmt.Errorf("cannot record removal of root path")
 	}
+	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	if err != nil {
+		return err
+	}
 	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID: r.sourceNodeID,
-		TargetNodeID: r.targetNodeID,
-		Op:           replication.OpRemovePath,
-		Path:         stringPointer(normalized),
-		IsDir:        isDir,
+		SourceNodeID:         r.sourceNodeID,
+		TargetNodeID:         targetNodeID,
+		AssignmentGeneration: assignmentGeneration,
+		Op:                   replication.OpRemovePath,
+		Path:                 stringPointer(normalized),
+		IsDir:                isDir,
 	})
 }
 
@@ -187,6 +214,23 @@ func (r *OutboxMutationRecorder) append(ctx context.Context, event *replication.
 		)
 	}
 	return nil
+}
+
+func (r *OutboxMutationRecorder) resolveTarget(ctx context.Context) (string, *int64, error) {
+	if r.peerResolver == nil {
+		return "", nil, ErrReplicationPeerUnavailable
+	}
+	peer, err := r.peerResolver.ResolveTarget(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	if peer == nil || strings.TrimSpace(peer.NodeID) == "" {
+		return "", nil, ErrReplicationPeerUnavailable
+	}
+	if peer.AssignmentGeneration == nil || *peer.AssignmentGeneration <= 0 {
+		return "", nil, ErrReplicationAssignmentUnavailable
+	}
+	return peer.NodeID, peer.AssignmentGeneration, nil
 }
 
 func (r *OutboxMutationRecorder) normalizeFullPath(fullPath string) (string, error) {
@@ -234,6 +278,10 @@ func fileDigest(fullPath string) (int64, string, error) {
 		return 0, "", fmt.Errorf("hash file %q: %w", fullPath, err)
 	}
 	return info.Size(), hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func isReplicationPeerUnavailable(err error) bool {
+	return errors.Is(err, ErrReplicationPeerUnavailable) || errors.Is(err, ErrReplicationAssignmentUnavailable)
 }
 
 func stringPointer(value string) *string {

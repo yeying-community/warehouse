@@ -29,13 +29,14 @@ database:
 node:
   id: ""
   role: "active" # active or standby
+  advertise_url: "" # 当前节点对其他实例暴露的 internal 基地址，例如 http://127.0.0.1:6065
 
 # Internal Replication Configuration
 internal:
   replication:
     enabled: false
-    peer_node_id: ""
-    peer_base_url: ""
+    peer_node_id: ""   # 单 active + 单 standby 时建议填写，便于 active 稳定记账到固定 standby
+    peer_base_url: ""  # 可留空；若为空，active 会优先从 PostgreSQL 的 cluster_nodes 注册表发现 peer URL
     shared_secret: ""
     allowed_clock_skew: 30s
     dispatch_interval: 2s

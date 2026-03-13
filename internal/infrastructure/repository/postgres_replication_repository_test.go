@@ -27,9 +27,9 @@ func TestPostgresReplicationOutboxRepositoryAppend(t *testing.T) {
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		INSERT INTO replication_outbox (
 			source_node_id, target_node_id, op, path, from_path, to_path,
-			is_dir, content_sha256, file_size, status, next_retry_at, last_error
+			is_dir, content_sha256, file_size, assignment_generation, status, next_retry_at, last_error
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, status, attempt_count, next_retry_at, created_at, dispatched_at
 	`)).
 		WithArgs(
@@ -42,6 +42,7 @@ func TestPostgresReplicationOutboxRepositoryAppend(t *testing.T) {
 			false,
 			sha,
 			size,
+			nil,
 			replication.StatusPending,
 			nextRetryAt,
 			nil,
@@ -83,31 +84,33 @@ func TestPostgresReplicationOutboxRepositoryListPending(t *testing.T) {
 	nextRetryAt := time.Date(2026, 3, 8, 11, 0, 0, 0, time.UTC)
 	createdAt := nextRetryAt.Add(-time.Minute)
 	dispatchedAt := nextRetryAt.Add(2 * time.Minute)
+	assignmentGeneration := int64(4)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, source_node_id, target_node_id, op, path, from_path, to_path,
-		       is_dir, content_sha256, file_size, status, attempt_count,
+		       is_dir, content_sha256, file_size, assignment_generation, status, attempt_count,
 		       next_retry_at, last_error, created_at, dispatched_at
 		FROM replication_outbox
 		WHERE source_node_id = $1
 		  AND target_node_id = $2
-		  AND status IN ($3, $4)
+		  AND assignment_generation = $3
+		  AND status IN ($4, $5)
 		  AND next_retry_at <= NOW()
 		ORDER BY id ASC
-		LIMIT $5
+		LIMIT $6
 	`)).
-		WithArgs("node-a", "node-b", replication.StatusPending, replication.StatusFailed, 50).
+		WithArgs("node-a", "node-b", assignmentGeneration, replication.StatusPending, replication.StatusFailed, 50).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "source_node_id", "target_node_id", "op", "path", "from_path", "to_path",
-			"is_dir", "content_sha256", "file_size", "status", "attempt_count",
+			"is_dir", "content_sha256", "file_size", "assignment_generation", "status", "attempt_count",
 			"next_retry_at", "last_error", "created_at", "dispatched_at",
 		}).AddRow(
 			int64(9), "node-a", "node-b", replication.OpMovePath, "/dst", "/src", "/dst",
-			false, nil, nil, replication.StatusFailed, 2,
+			false, nil, nil, assignmentGeneration, replication.StatusFailed, 2,
 			nextRetryAt, "boom", createdAt, dispatchedAt,
 		))
 
-	events, err := repo.ListPending(context.Background(), "node-a", "node-b", 50)
+	events, err := repo.ListPending(context.Background(), "node-a", "node-b", &assignmentGeneration, 50)
 	if err != nil {
 		t.Fatalf("ListPending: %v", err)
 	}
@@ -269,16 +272,17 @@ func TestPostgresReplicationOffsetRepositoryUpsertAndGet(t *testing.T) {
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO replication_offsets (
-			source_node_id, target_node_id, last_applied_outbox_id, last_applied_at, updated_at
+			source_node_id, target_node_id, assignment_generation, last_applied_outbox_id, last_applied_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (source_node_id, target_node_id)
 		DO UPDATE SET
+			assignment_generation = EXCLUDED.assignment_generation,
 			last_applied_outbox_id = EXCLUDED.last_applied_outbox_id,
 			last_applied_at = EXCLUDED.last_applied_at,
 			updated_at = EXCLUDED.updated_at
 	`)).
-		WithArgs("node-a", "node-b", int64(17), lastAppliedAt, updatedAt).
+		WithArgs("node-a", "node-b", nil, int64(17), lastAppliedAt, updatedAt).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	offset := &replication.Offset{
@@ -293,13 +297,13 @@ func TestPostgresReplicationOffsetRepositoryUpsertAndGet(t *testing.T) {
 	}
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		SELECT source_node_id, target_node_id, last_applied_outbox_id, last_applied_at, updated_at
+		SELECT source_node_id, target_node_id, assignment_generation, last_applied_outbox_id, last_applied_at, updated_at
 		FROM replication_offsets
 		WHERE source_node_id = $1 AND target_node_id = $2
 	`)).
 		WithArgs("node-a", "node-b").
-		WillReturnRows(sqlmock.NewRows([]string{"source_node_id", "target_node_id", "last_applied_outbox_id", "last_applied_at", "updated_at"}).
-			AddRow("node-a", "node-b", int64(17), lastAppliedAt, updatedAt))
+		WillReturnRows(sqlmock.NewRows([]string{"source_node_id", "target_node_id", "assignment_generation", "last_applied_outbox_id", "last_applied_at", "updated_at"}).
+			AddRow("node-a", "node-b", nil, int64(17), lastAppliedAt, updatedAt))
 
 	loaded, err := repo.Get(context.Background(), "node-a", "node-b")
 	if err != nil {

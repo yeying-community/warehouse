@@ -10,8 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeying-community/warehouse/internal/application/service"
+	"github.com/yeying-community/warehouse/internal/domain/cluster"
 	"github.com/yeying-community/warehouse/internal/domain/replication"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
+	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
@@ -46,6 +50,8 @@ type InternalReplicationHandler struct {
 	offsets          replicationOffsetStore
 	reconcileStore   replicationReconcileStore
 	reconcileScanner replicationReconcileScanner
+	peerResolver     service.ReplicationPeerResolver
+	assignments      repository.ClusterReplicationAssignmentRepository
 }
 
 // NewInternalReplicationHandler creates a new internal replication handler.
@@ -56,7 +62,13 @@ func NewInternalReplicationHandler(
 	offsets replicationOffsetStore,
 	reconcileStore replicationReconcileStore,
 	reconcileScanner replicationReconcileScanner,
+	peerResolver service.ReplicationPeerResolver,
+	assignments ...repository.ClusterReplicationAssignmentRepository,
 ) *InternalReplicationHandler {
+	var assignmentRepo repository.ClusterReplicationAssignmentRepository
+	if len(assignments) > 0 {
+		assignmentRepo = assignments[0]
+	}
 	return &InternalReplicationHandler{
 		logger:           logger,
 		config:           cfg,
@@ -64,6 +76,8 @@ func NewInternalReplicationHandler(
 		offsets:          offsets,
 		reconcileStore:   reconcileStore,
 		reconcileScanner: reconcileScanner,
+		peerResolver:     peerResolver,
+		assignments:      assignmentRepo,
 	}
 }
 
@@ -74,8 +88,9 @@ type internalReplicationStatusResponse struct {
 }
 
 type internalNodeStatus struct {
-	ID   string `json:"id"`
-	Role string `json:"role"`
+	ID           string `json:"id"`
+	Role         string `json:"role"`
+	AdvertiseURL string `json:"advertiseUrl,omitempty"`
 }
 
 type internalReplicationStatus struct {
@@ -85,8 +100,15 @@ type internalReplicationStatus struct {
 	WorkerEnabled          bool       `json:"workerEnabled"`
 	PeerNodeID             string     `json:"peerNodeId,omitempty"`
 	PeerBaseURL            string     `json:"peerBaseUrl,omitempty"`
+	ResolvedPeerNodeID     string     `json:"resolvedPeerNodeId,omitempty"`
+	ResolvedPeerBaseURL    string     `json:"resolvedPeerBaseUrl,omitempty"`
+	ResolvedPeerSource     string     `json:"resolvedPeerSource,omitempty"`
+	ResolvedGeneration     *int64     `json:"resolvedGeneration,omitempty"`
+	ResolvedPeerHealthy    *bool      `json:"resolvedPeerHealthy,omitempty"`
+	PeerLastHeartbeatAt    *time.Time `json:"peerLastHeartbeatAt,omitempty"`
 	LastOutboxID           *int64     `json:"lastOutboxId,omitempty"`
 	LastAppliedOutboxID    *int64     `json:"lastAppliedOutboxId,omitempty"`
+	LastAppliedGeneration  *int64     `json:"lastAppliedGeneration,omitempty"`
 	LastDispatchedOutboxID *int64     `json:"lastDispatchedOutboxId,omitempty"`
 	PendingEvents          *int64     `json:"pendingEvents,omitempty"`
 	FailedEvents           *int64     `json:"failedEvents,omitempty"`
@@ -99,15 +121,16 @@ type internalReplicationStatus struct {
 }
 
 type internalReconcileJobStatus struct {
-	Enabled           bool       `json:"enabled"`
-	LatestJobID       int64      `json:"latestJobId"`
-	Status            string     `json:"status"`
-	WatermarkOutboxID int64      `json:"watermarkOutboxId"`
-	ScannedItems      int64      `json:"scannedItems"`
-	PendingItems      int64      `json:"pendingItems"`
-	StartedAt         time.Time  `json:"startedAt"`
-	CompletedAt       *time.Time `json:"completedAt,omitempty"`
-	LastError         *string    `json:"lastError,omitempty"`
+	Enabled              bool       `json:"enabled"`
+	LatestJobID          int64      `json:"latestJobId"`
+	Status               string     `json:"status"`
+	AssignmentGeneration *int64     `json:"assignmentGeneration,omitempty"`
+	WatermarkOutboxID    int64      `json:"watermarkOutboxId"`
+	ScannedItems         int64      `json:"scannedItems"`
+	PendingItems         int64      `json:"pendingItems"`
+	StartedAt            time.Time  `json:"startedAt"`
+	CompletedAt          *time.Time `json:"completedAt,omitempty"`
+	LastError            *string    `json:"lastError,omitempty"`
 }
 
 // HandleStatus returns the current internal replication configuration and persisted status summary.
@@ -120,8 +143,9 @@ func (h *InternalReplicationHandler) HandleStatus(w http.ResponseWriter, r *http
 	replicationCfg := h.config.Internal.Replication
 	response := internalReplicationStatusResponse{
 		Node: internalNodeStatus{
-			ID:   h.config.Node.ID,
-			Role: h.config.Node.Role,
+			ID:           h.config.Node.ID,
+			Role:         h.config.Node.Role,
+			AdvertiseURL: strings.TrimSpace(h.config.Node.AdvertiseURL),
 		},
 		Replication: internalReplicationStatus{
 			Enabled:       replicationCfg.Enabled,
@@ -138,7 +162,22 @@ func (h *InternalReplicationHandler) HandleStatus(w http.ResponseWriter, r *http
 		return
 	}
 
-	sourceNodeID, targetNodeID := h.replicationPair()
+	resolvedPeer, err := h.resolveTargetPeer(r.Context())
+	if err != nil {
+		h.logger.Error("failed to resolve replication peer", zap.Error(err))
+		h.writeError(w, http.StatusInternalServerError, "Failed to resolve replication peer")
+		return
+	}
+	if resolvedPeer != nil {
+		response.Replication.ResolvedPeerNodeID = resolvedPeer.NodeID
+		response.Replication.ResolvedPeerBaseURL = resolvedPeer.BaseURL
+		response.Replication.ResolvedPeerSource = resolvedPeer.Source
+		response.Replication.ResolvedGeneration = resolvedPeer.AssignmentGeneration
+		response.Replication.PeerLastHeartbeatAt = resolvedPeer.LastHeartbeatAt
+		response.Replication.ResolvedPeerHealthy = boolPointer(resolvedPeer.Healthy)
+	}
+
+	sourceNodeID, targetNodeID := h.replicationPair(resolvedPeer)
 	if h.outbox != nil && sourceNodeID != "" && targetNodeID != "" {
 		summary, err := h.outbox.GetStatusSummary(r.Context(), sourceNodeID, targetNodeID)
 		if err != nil {
@@ -181,6 +220,7 @@ func (h *InternalReplicationHandler) HandleStatus(w http.ResponseWriter, r *http
 			}
 		} else {
 			response.Replication.LastAppliedOutboxID = &offset.LastAppliedOutboxID
+			response.Replication.LastAppliedGeneration = offset.AssignmentGeneration
 		}
 	}
 
@@ -197,15 +237,16 @@ func (h *InternalReplicationHandler) HandleStatus(w http.ResponseWriter, r *http
 			}
 		} else {
 			response.Reconcile = &internalReconcileJobStatus{
-				Enabled:           true,
-				LatestJobID:       job.ID,
-				Status:            job.Status,
-				WatermarkOutboxID: job.WatermarkOutboxID,
-				ScannedItems:      job.ScannedItems,
-				PendingItems:      job.PendingItems,
-				StartedAt:         job.StartedAt,
-				CompletedAt:       job.CompletedAt,
-				LastError:         job.LastError,
+				Enabled:              true,
+				LatestJobID:          job.ID,
+				Status:               job.Status,
+				AssignmentGeneration: job.AssignmentGeneration,
+				WatermarkOutboxID:    job.WatermarkOutboxID,
+				ScannedItems:         job.ScannedItems,
+				PendingItems:         job.PendingItems,
+				StartedAt:            job.StartedAt,
+				CompletedAt:          job.CompletedAt,
+				LastError:            job.LastError,
 			}
 		}
 	}
@@ -267,10 +308,6 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 	if !strings.EqualFold(strings.TrimSpace(h.config.Node.Role), "active") {
 		return
 	}
-	targetNodeID := strings.TrimSpace(h.config.Internal.Replication.PeerNodeID)
-	if targetNodeID == "" || strings.TrimSpace(h.config.Internal.Replication.PeerBaseURL) == "" {
-		return
-	}
 	if h.reconcileStore == nil || h.reconcileScanner == nil {
 		return
 	}
@@ -284,7 +321,7 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 		default:
 		}
 
-		resp, err := h.startReconcile(ctx, targetNodeID)
+		resp, err := h.startReconcile(ctx, "")
 		if err == nil {
 			h.logger.Info("startup reconcile finished",
 				zap.Int64("job_id", resp.JobID),
@@ -297,7 +334,6 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 		h.logger.Warn("startup reconcile attempt failed, will retry",
 			zap.Int("attempt", attempt),
 			zap.Int("max_attempts", maxAttempts),
-			zap.String("target_node_id", targetNodeID),
 			zap.Error(err))
 
 		timer := time.NewTimer(retryInterval)
@@ -310,18 +346,21 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 	}
 
 	h.logger.Warn("startup reconcile stopped after max retry attempts",
-		zap.Int("max_attempts", maxAttempts),
-		zap.String("target_node_id", targetNodeID))
+		zap.Int("max_attempts", maxAttempts))
 }
 
 func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetNodeID string) (*internalReconcileStartResponse, error) {
-	targetNodeID = strings.TrimSpace(targetNodeID)
-	if targetNodeID == "" {
-		targetNodeID = strings.TrimSpace(h.config.Internal.Replication.PeerNodeID)
+	peer, err := h.resolveTargetPeerForNode(ctx, targetNodeID, false)
+	if err != nil {
+		return nil, fmt.Errorf("resolve target peer: %w", err)
 	}
-	if targetNodeID == "" {
+	if peer == nil || strings.TrimSpace(peer.NodeID) == "" {
 		return nil, fmt.Errorf("targetNodeId is required")
 	}
+	if peer.AssignmentGeneration == nil || *peer.AssignmentGeneration <= 0 {
+		return nil, fmt.Errorf("resolved target peer %q has no assignment generation", peer.NodeID)
+	}
+	targetNodeID = peer.NodeID
 
 	watermarkOutboxID := int64(0)
 	if h.outbox != nil {
@@ -335,11 +374,12 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 	}
 
 	job := &replication.ReconcileJob{
-		SourceNodeID:      h.config.Node.ID,
-		TargetNodeID:      targetNodeID,
-		WatermarkOutboxID: watermarkOutboxID,
-		Status:            replication.ReconcileJobStatusRunning,
-		StartedAt:         time.Now(),
+		SourceNodeID:         h.config.Node.ID,
+		TargetNodeID:         targetNodeID,
+		AssignmentGeneration: peer.AssignmentGeneration,
+		WatermarkOutboxID:    watermarkOutboxID,
+		Status:               replication.ReconcileJobStatusRunning,
+		StartedAt:            time.Now(),
 	}
 	if err := h.reconcileStore.CreateJob(ctx, job); err != nil {
 		return nil, fmt.Errorf("create reconcile job: %w", err)
@@ -360,8 +400,12 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 
 	scannedItems := int64(len(items))
 	pendingItems := scannedItems
-	if pendingItems > 0 && strings.TrimSpace(h.config.Internal.Replication.PeerBaseURL) != "" {
-		remaining, dispatchErr := h.dispatchReconcilePendingItems(ctx, job.ID, targetNodeID)
+	dispatchPeer, err := h.resolveTargetPeerForNode(ctx, targetNodeID, true)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dispatch peer: %w", err)
+	}
+	if pendingItems > 0 && dispatchPeer != nil && strings.TrimSpace(dispatchPeer.BaseURL) != "" {
+		remaining, dispatchErr := h.dispatchReconcilePendingItems(ctx, job.ID, dispatchPeer, targetNodeID)
 		if dispatchErr != nil {
 			lastErr := dispatchErr.Error()
 			_ = h.reconcileStore.UpdateJobResult(
@@ -403,8 +447,11 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 	}, nil
 }
 
-func (h *InternalReplicationHandler) replicationPair() (string, string) {
-	peerNodeID := h.config.Internal.Replication.PeerNodeID
+func (h *InternalReplicationHandler) replicationPair(peer *service.ResolvedReplicationPeer) (string, string) {
+	peerNodeID := strings.TrimSpace(h.config.Internal.Replication.PeerNodeID)
+	if peer != nil && strings.TrimSpace(peer.NodeID) != "" {
+		peerNodeID = strings.TrimSpace(peer.NodeID)
+	}
 	if strings.EqualFold(strings.TrimSpace(h.config.Node.Role), "standby") {
 		return peerNodeID, h.config.Node.ID
 	}
@@ -414,9 +461,7 @@ func (h *InternalReplicationHandler) replicationPair() (string, string) {
 func (h *InternalReplicationHandler) workerEnabled() bool {
 	replCfg := h.config.Internal.Replication
 	return replCfg.Enabled &&
-		strings.EqualFold(strings.TrimSpace(h.config.Node.Role), "active") &&
-		strings.TrimSpace(replCfg.PeerNodeID) != "" &&
-		strings.TrimSpace(replCfg.PeerBaseURL) != ""
+		strings.EqualFold(strings.TrimSpace(h.config.Node.Role), "active")
 }
 
 func (h *InternalReplicationHandler) determineState(status internalReplicationStatus) string {
@@ -474,11 +519,20 @@ func (h *InternalReplicationHandler) buildNotes(status internalReplicationStatus
 	switch role {
 	case "active":
 		notes = append(notes, "only active nodes dispatch internal replication events")
-		if !status.WorkerEnabled {
-			notes = append(notes, "replication worker is disabled until peer_node_id and peer_base_url are configured")
+		if status.ResolvedPeerNodeID == "" {
+			notes = append(notes, "no standby peer resolved from assignment, config, or cluster registry")
+		} else if status.ResolvedGeneration == nil {
+			notes = append(notes, "resolved standby peer has no assignment generation; replication dispatch is paused")
+		} else if status.ResolvedPeerBaseURL == "" {
+			notes = append(notes, "resolved standby peer has no usable base url yet")
+		} else if status.ResolvedPeerHealthy != nil && !*status.ResolvedPeerHealthy && strings.TrimSpace(status.PeerBaseURL) == "" {
+			notes = append(notes, "resolved standby peer heartbeat is stale, dispatch is paused until it recovers")
 		}
 	case "standby":
 		notes = append(notes, "standby nodes only accept internal replication apply traffic")
+		if status.ResolvedPeerNodeID == "" {
+			notes = append(notes, "active peer is not currently resolved from assignment, config, or cluster registry")
+		}
 		if status.LastAppliedOutboxID == nil && status.LastOutboxID != nil && *status.LastOutboxID > 0 {
 			notes = append(notes, "standby offset is not initialized; finish baseline copy before promotion")
 		}
@@ -488,6 +542,145 @@ func (h *InternalReplicationHandler) buildNotes(status internalReplicationStatus
 	}
 
 	return notes
+}
+
+func (h *InternalReplicationHandler) resolveTargetPeer(ctx context.Context) (*service.ResolvedReplicationPeer, error) {
+	if h.peerResolver == nil {
+		peerNodeID := strings.TrimSpace(h.config.Internal.Replication.PeerNodeID)
+		if peerNodeID == "" {
+			return nil, nil
+		}
+		return &service.ResolvedReplicationPeer{
+			NodeID:  peerNodeID,
+			BaseURL: strings.TrimSpace(h.config.Internal.Replication.PeerBaseURL),
+			Source:  "config",
+		}, nil
+	}
+	return h.peerResolver.ResolveTarget(ctx)
+}
+
+func (h *InternalReplicationHandler) resolveTargetPeerForNode(ctx context.Context, nodeID string, requireHealthy bool) (*service.ResolvedReplicationPeer, error) {
+	if h.peerResolver == nil {
+		nodeID = strings.TrimSpace(nodeID)
+		configuredNodeID := strings.TrimSpace(h.config.Internal.Replication.PeerNodeID)
+		if nodeID == "" {
+			nodeID = configuredNodeID
+		}
+		if nodeID == "" {
+			return nil, nil
+		}
+		baseURL := strings.TrimSpace(h.config.Internal.Replication.PeerBaseURL)
+		if requireHealthy && baseURL == "" {
+			return nil, nil
+		}
+		return &service.ResolvedReplicationPeer{
+			NodeID:  nodeID,
+			BaseURL: baseURL,
+			Source:  "config",
+			Healthy: baseURL != "",
+		}, nil
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		if requireHealthy {
+			return h.peerResolver.ResolveDispatchTarget(ctx)
+		}
+		return h.peerResolver.ResolveTarget(ctx)
+	}
+	if requireHealthy {
+		peer, err := h.peerResolver.ResolveDispatchTarget(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if peer != nil && strings.TrimSpace(peer.NodeID) == nodeID {
+			return peer, nil
+		}
+	} else {
+		peer, err := h.peerResolver.ResolveTarget(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if peer != nil && strings.TrimSpace(peer.NodeID) == nodeID {
+			return peer, nil
+		}
+	}
+	return h.peerResolver.ResolveByNodeID(ctx, nodeID, requireHealthy)
+}
+
+func boolPointer(value bool) *bool {
+	v := value
+	return &v
+}
+
+type standbyAssignmentAuthorizationError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *standbyAssignmentAuthorizationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func (h *InternalReplicationHandler) requireAssignedSource(ctx context.Context, sourceNodeID string) (*cluster.ReplicationAssignment, error) {
+	if h == nil || h.assignments == nil || !strings.EqualFold(strings.TrimSpace(h.config.Node.Role), "standby") {
+		return nil, nil
+	}
+
+	sourceNodeID = strings.TrimSpace(sourceNodeID)
+	if sourceNodeID == "" {
+		return nil, &standbyAssignmentAuthorizationError{
+			StatusCode: http.StatusBadRequest,
+			Message:    "missing " + middleware.InternalNodeIDHeader,
+		}
+	}
+
+	assignment, err := h.assignments.GetEffectiveByStandby(ctx, strings.TrimSpace(h.config.Node.ID))
+	if err != nil {
+		return nil, fmt.Errorf("load standby assignment: %w", err)
+	}
+	if assignment == nil {
+		return nil, &standbyAssignmentAuthorizationError{
+			StatusCode: http.StatusConflict,
+			Message:    "standby has no effective assignment",
+		}
+	}
+	if assignment.LeaseExpired(time.Now().UTC()) {
+		return nil, &standbyAssignmentAuthorizationError{
+			StatusCode: http.StatusConflict,
+			Message:    "standby assignment lease is expired",
+		}
+	}
+
+	expectedSourceNodeID := strings.TrimSpace(assignment.ActiveNodeID)
+	if expectedSourceNodeID == "" {
+		return nil, &standbyAssignmentAuthorizationError{
+			StatusCode: http.StatusConflict,
+			Message:    "standby assignment has no active node id",
+		}
+	}
+	if sourceNodeID != expectedSourceNodeID {
+		return nil, &standbyAssignmentAuthorizationError{
+			StatusCode: http.StatusForbidden,
+			Message:    fmt.Sprintf("source node %q is not the assigned active node", sourceNodeID),
+		}
+	}
+	return assignment, nil
+}
+
+func (h *InternalReplicationHandler) writeStandbyAuthorizationError(w http.ResponseWriter, err error) {
+	if err == nil {
+		return
+	}
+	var authErr *standbyAssignmentAuthorizationError
+	if errors.As(err, &authErr) {
+		h.writeError(w, authErr.StatusCode, authErr.Message)
+		return
+	}
+	h.logger.Error("failed to authorize standby internal replication request", zap.Error(err))
+	h.writeError(w, http.StatusInternalServerError, "Failed to authorize standby assignment")
 }
 
 func (h *InternalReplicationHandler) writeJSON(w http.ResponseWriter, code int, data interface{}) {

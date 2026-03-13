@@ -15,7 +15,7 @@ const defaultReplicationPendingLimit = 100
 // ReplicationOutboxRepository stores durable replication events.
 type ReplicationOutboxRepository interface {
 	Append(ctx context.Context, event *replication.OutboxEvent) error
-	ListPending(ctx context.Context, sourceNodeID, targetNodeID string, limit int) ([]*replication.OutboxEvent, error)
+	ListPending(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64, limit int) ([]*replication.OutboxEvent, error)
 	MarkDispatched(ctx context.Context, id int64, dispatchedAt time.Time) error
 	MarkFailed(ctx context.Context, id int64, lastError string, nextRetryAt time.Time) error
 	GetStatusSummary(ctx context.Context, sourceNodeID, targetNodeID string) (*replication.OutboxStatus, error)
@@ -81,9 +81,9 @@ func (r *PostgresReplicationOutboxRepository) Append(ctx context.Context, event 
 	query := `
 		INSERT INTO replication_outbox (
 			source_node_id, target_node_id, op, path, from_path, to_path,
-			is_dir, content_sha256, file_size, status, next_retry_at, last_error
+			is_dir, content_sha256, file_size, assignment_generation, status, next_retry_at, last_error
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, status, attempt_count, next_retry_at, created_at, dispatched_at
 	`
 
@@ -98,6 +98,7 @@ func (r *PostgresReplicationOutboxRepository) Append(ctx context.Context, event 
 		event.IsDir,
 		event.ContentSHA256,
 		event.FileSize,
+		event.AssignmentGeneration,
 		status,
 		event.NextRetryAt,
 		event.LastError,
@@ -120,31 +121,41 @@ func (r *PostgresReplicationOutboxRepository) Append(ctx context.Context, event 
 }
 
 // ListPending lists ready-to-dispatch events ordered by durable sequence id.
-func (r *PostgresReplicationOutboxRepository) ListPending(ctx context.Context, sourceNodeID, targetNodeID string, limit int) ([]*replication.OutboxEvent, error) {
+func (r *PostgresReplicationOutboxRepository) ListPending(
+	ctx context.Context,
+	sourceNodeID, targetNodeID string,
+	assignmentGeneration *int64,
+	limit int,
+) ([]*replication.OutboxEvent, error) {
+	if assignmentGeneration == nil || *assignmentGeneration <= 0 {
+		return nil, fmt.Errorf("assignment generation is required")
+	}
 	if limit <= 0 {
 		limit = defaultReplicationPendingLimit
 	}
 
 	query := `
 		SELECT id, source_node_id, target_node_id, op, path, from_path, to_path,
-		       is_dir, content_sha256, file_size, status, attempt_count,
+		       is_dir, content_sha256, file_size, assignment_generation, status, attempt_count,
 		       next_retry_at, last_error, created_at, dispatched_at
 		FROM replication_outbox
 		WHERE source_node_id = $1
 		  AND target_node_id = $2
-		  AND status IN ($3, $4)
+		  AND assignment_generation = $3
+		  AND status IN ($4, $5)
 		  AND next_retry_at <= NOW()
-		ORDER BY id ASC
-		LIMIT $5
 	`
-
-	rows, err := r.db.QueryContext(ctx, query,
+	args := []any{
 		sourceNodeID,
 		targetNodeID,
+		*assignmentGeneration,
 		replication.StatusPending,
 		replication.StatusFailed,
-		limit,
-	)
+	}
+	args = append(args, limit)
+	query += fmt.Sprintf("\nORDER BY id ASC\nLIMIT $%d", len(args))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list pending replication events: %w", err)
 	}
@@ -305,11 +316,12 @@ func (r *PostgresReplicationOffsetRepository) Upsert(ctx context.Context, offset
 
 	query := `
 		INSERT INTO replication_offsets (
-			source_node_id, target_node_id, last_applied_outbox_id, last_applied_at, updated_at
+			source_node_id, target_node_id, assignment_generation, last_applied_outbox_id, last_applied_at, updated_at
 		)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (source_node_id, target_node_id)
 		DO UPDATE SET
+			assignment_generation = EXCLUDED.assignment_generation,
 			last_applied_outbox_id = EXCLUDED.last_applied_outbox_id,
 			last_applied_at = EXCLUDED.last_applied_at,
 			updated_at = EXCLUDED.updated_at
@@ -318,6 +330,7 @@ func (r *PostgresReplicationOffsetRepository) Upsert(ctx context.Context, offset
 	_, err := r.db.ExecContext(ctx, query,
 		offset.SourceNodeID,
 		offset.TargetNodeID,
+		offset.AssignmentGeneration,
 		offset.LastAppliedOutboxID,
 		offset.LastAppliedAt,
 		updatedAt,
@@ -335,15 +348,17 @@ func (r *PostgresReplicationOffsetRepository) Upsert(ctx context.Context, offset
 // Get fetches the last applied sequence for one source->target pair.
 func (r *PostgresReplicationOffsetRepository) Get(ctx context.Context, sourceNodeID, targetNodeID string) (*replication.Offset, error) {
 	query := `
-		SELECT source_node_id, target_node_id, last_applied_outbox_id, last_applied_at, updated_at
+		SELECT source_node_id, target_node_id, assignment_generation, last_applied_outbox_id, last_applied_at, updated_at
 		FROM replication_offsets
 		WHERE source_node_id = $1 AND target_node_id = $2
 	`
 
 	offset := &replication.Offset{}
+	var assignmentGeneration sql.NullInt64
 	err := r.db.QueryRowContext(ctx, query, sourceNodeID, targetNodeID).Scan(
 		&offset.SourceNodeID,
 		&offset.TargetNodeID,
+		&assignmentGeneration,
 		&offset.LastAppliedOutboxID,
 		&offset.LastAppliedAt,
 		&offset.UpdatedAt,
@@ -354,6 +369,7 @@ func (r *PostgresReplicationOffsetRepository) Get(ctx context.Context, sourceNod
 	if err != nil {
 		return nil, fmt.Errorf("failed to get replication offset: %w", err)
 	}
+	offset.AssignmentGeneration = nullableInt64(assignmentGeneration)
 
 	return offset, nil
 }
@@ -367,15 +383,16 @@ func (r *PostgresReplicationReconcileRepository) CreateJob(ctx context.Context, 
 
 	query := `
 		INSERT INTO replication_reconcile_jobs (
-			source_node_id, target_node_id, watermark_outbox_id, status,
+			source_node_id, target_node_id, assignment_generation, watermark_outbox_id, status,
 			scanned_items, pending_items, started_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
 	`
 	err := r.db.QueryRowContext(ctx, query,
 		job.SourceNodeID,
 		job.TargetNodeID,
+		job.AssignmentGeneration,
 		job.WatermarkOutboxID,
 		job.Status,
 		job.ScannedItems,
@@ -456,7 +473,7 @@ func (r *PostgresReplicationReconcileRepository) UpdateJobResult(ctx context.Con
 // GetLatestJob loads the latest reconcile job for one source->target pair.
 func (r *PostgresReplicationReconcileRepository) GetLatestJob(ctx context.Context, sourceNodeID, targetNodeID string) (*replication.ReconcileJob, error) {
 	query := `
-		SELECT id, source_node_id, target_node_id, watermark_outbox_id, status,
+		SELECT id, source_node_id, target_node_id, assignment_generation, watermark_outbox_id, status,
 		       scanned_items, pending_items, started_at, completed_at, last_error,
 		       created_at, updated_at
 		FROM replication_reconcile_jobs
@@ -467,12 +484,14 @@ func (r *PostgresReplicationReconcileRepository) GetLatestJob(ctx context.Contex
 	`
 
 	job := &replication.ReconcileJob{}
+	var assignmentGeneration sql.NullInt64
 	var completedAt sql.NullTime
 	var lastError sql.NullString
 	err := r.db.QueryRowContext(ctx, query, sourceNodeID, targetNodeID).Scan(
 		&job.ID,
 		&job.SourceNodeID,
 		&job.TargetNodeID,
+		&assignmentGeneration,
 		&job.WatermarkOutboxID,
 		&job.Status,
 		&job.ScannedItems,
@@ -492,6 +511,7 @@ func (r *PostgresReplicationReconcileRepository) GetLatestJob(ctx context.Contex
 	if completedAt.Valid {
 		job.CompletedAt = &completedAt.Time
 	}
+	job.AssignmentGeneration = nullableInt64(assignmentGeneration)
 	job.LastError = nullableString(lastError)
 	return job, nil
 }
@@ -596,6 +616,7 @@ func scanOutboxEvent(scanner interface {
 	var toPath sql.NullString
 	var contentSHA256 sql.NullString
 	var fileSize sql.NullInt64
+	var assignmentGeneration sql.NullInt64
 	var lastError sql.NullString
 	var dispatchedAt sql.NullTime
 
@@ -610,6 +631,7 @@ func scanOutboxEvent(scanner interface {
 		&event.IsDir,
 		&contentSHA256,
 		&fileSize,
+		&assignmentGeneration,
 		&event.Status,
 		&event.AttemptCount,
 		&event.NextRetryAt,
@@ -625,6 +647,7 @@ func scanOutboxEvent(scanner interface {
 	event.ToPath = nullableString(toPath)
 	event.ContentSHA256 = nullableString(contentSHA256)
 	event.FileSize = nullableInt64(fileSize)
+	event.AssignmentGeneration = nullableInt64(assignmentGeneration)
 	event.LastError = nullableString(lastError)
 	if dispatchedAt.Valid {
 		event.DispatchedAt = &dispatchedAt.Time
