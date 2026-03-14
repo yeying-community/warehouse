@@ -2,14 +2,15 @@
 
 本文描述 `warehouse` 阶段一高可用的**选定路线**：
 
-- `1 active + 1 standby`
+- `1 active + N standby`
+- 最小部署可以先从 `1 standby` 起步
 - active 对外提供 `public` / `admin` 流量
 - standby 不接用户流量，只接实例间 `internal` 同步流量
 - active / standby 各自使用本地挂载目录
-- 文件数据通过应用内 `internal` 同步保持双份
+- 文件数据通过应用内 `internal` 同步保持多份
 - PostgreSQL 采用主备、托管高可用，或至少具备可靠备份恢复能力
 
-这是一种**单活双机**方案，不是正式多副本负载均衡方案。
+这是一种**单活 + 多 standby fan-out**方案；最小落地形态仍然可以是单活双机，但它不是正式多副本负载均衡方案。
 
 ## 1. 当前边界
 
@@ -35,12 +36,18 @@ flowchart LR
   LB --> A[warehouse-active]
 
   A --> PG[(PostgreSQL / DB VIP)]
-  S[warehouse-standby] --> PG
+  S1[warehouse-standby-1] --> PG
+  S2[warehouse-standby-2] --> PG
+  SN[warehouse-standby-N] --> PG
 
   A --> D1[(Local Data Disk A)]
-  S --> D2[(Local Data Disk B)]
+  S1 --> D2[(Local Data Disk B1)]
+  S2 --> D3[(Local Data Disk B2)]
+  SN --> DN[(Local Data Disk BN)]
 
-  A -. internal replication .-> S
+  A -. internal replication .-> S1
+  A -. internal replication .-> S2
+  A -. internal replication .-> SN
 ```
 
 说明：
@@ -77,13 +84,18 @@ standby 不应该：
 
 ### 3.3 历史补齐 + 后续增量
 
-当前实现支持：active 启动后自动触发一次历史 reconcile，并通过 internal 接口把历史文件批量补齐到 standby；reconcile 成功后，active 还会自动向 standby 发送一次 `bootstrap/mark`，把当前 watermark outbox id 写成该 generation 的 baseline offset。
+当前实现支持：
+
+- active 启动后会对当前所有有效 standby 逐个触发 startup reconcile
+- active 会周期性扫描当前健康 standby，对仍处于 `pending` / `reconciling` 或缺少当前 generation baseline 的 standby 自动再次触发 reconcile
+- reconcile 成功后，active 会自动向对应 standby 发送一次 `bootstrap/mark`，把当前 watermark outbox id 写成该 generation 的 baseline offset
+- 如果某条 assignment 因历史补齐失败进入 `error`，allocator 会按退避节奏自动把它恢复到 `pending`，让后续 auto reconcile 继续接管
 
 建议顺序：
 
 1. 确保 active / standby 都已启动，且 internal 鉴权配置一致
-2. 等待 active 完成自动 reconcile（可通过状态接口观察）
-3. 自动 reconcile 完成且 standby baseline 初始化成功后，继续依赖 outbox 增量复制追平后续变更
+2. 等待 active 完成 startup reconcile；如果启动窗口内未完成，继续观察后台 periodic auto reconcile 是否补齐
+3. 当 standby baseline 初始化成功后，继续依赖 outbox 增量复制追平后续变更
 4. 最后根据复制 lag、assignment 状态与 reconcile 状态判断是否具备切换资格
 
 如果你要显式控制历史基线（例如离线全量拷贝后再接入），仍可手工走 `bootstrap/mark` 流程；但这已经不是正常启动后的主路径。
@@ -94,20 +106,31 @@ standby 不应该：
 # 查看当前节点复制状态
 build/warehouse ha status -c config.yaml
 
-# 查看 peer（例如 standby）复制状态
-build/warehouse ha status -c config.yaml --peer
+# 在 active 上查看某个 standby 的复制状态
+build/warehouse ha status -c config.yaml --target-node-id warehouse-standby-1
 
-# 手工触发一次历史补齐
-build/warehouse ha reconcile start -c config.yaml
+# 直接查看某个 standby 实例自己的复制状态
+build/warehouse ha status -c config.yaml --peer --target-node-id warehouse-standby-1
 
-# 显式写入 bootstrap baseline
-build/warehouse ha bootstrap mark -c config.yaml --peer --outbox-id 123
+# 手工触发某个 standby 的历史补齐
+build/warehouse ha reconcile start -c config.yaml --target-node-id warehouse-standby-1
+
+# 查看某个 standby 的历史补齐状态
+build/warehouse ha reconcile status -c config.yaml --target-node-id warehouse-standby-1
+
+# 显式写入某个 standby 的 bootstrap baseline
+build/warehouse ha bootstrap mark -c config.yaml --peer --target-node-id warehouse-standby-1 --outbox-id 123
 
 # 观察 assignment 状态
 build/warehouse ha assignments status -c config.yaml
 ```
 
-当前 `bootstrap/mark` 已要求携带 assignment generation，常规 baseline 运维统一使用 `build/warehouse ha bootstrap mark ...`。
+说明：
+
+- 默认访问当前实例；在多 standby 场景下建议显式带上 `--target-node-id`
+- `--peer` 表示通过共享控制面解析目标 standby 地址，并直接访问该 standby 的 internal 接口
+- 在多 standby 场景下，推荐把 `--peer` 和 `--target-node-id` 一起使用；如果只传 `--peer`，当前会使用控制面解析出的第一个匹配 peer
+- 常规 baseline 运维建议统一使用 `build/warehouse ha bootstrap mark --peer --target-node-id ...`
 
 ## 4. 当前 readiness 的作用与边界
 
@@ -184,13 +207,17 @@ build/warehouse ha assignments status -c config.yaml
 - `replication_outbox` / `replication_offsets` 持久化状态
 - `cluster_nodes` / `cluster_replication_assignments` 控制面
 - standby 侧幂等 apply handler
-- active 侧顺序分发 worker
+- active 侧按 standby 独立推进的顺序分发 worker
+- 当前所有有效 standby 的 outbox fan-out
 - reconcile 与 assignment 生命周期联动
 - reconcile 成功后自动 `bootstrap mark`
-- 基础复制状态接口与 assignment CLI
+- startup reconcile + periodic auto reconcile sweep
+- `error assignment` 自动退避恢复到 `pending`
+- 可按 `target-node-id` 观察 standby 状态的状态接口与 assignment CLI
 
 当前仍需继续补齐：
 
-- 周期性 reconcile / 漂移修复
-- 更完整的切换自动化与演练沉淀
-- 多 standby 编排与更完整的控制面观察
+- 基于差异比较的更完整周期性对账 / 漂移修复
+- 更细粒度的多 standby 并发控制、带宽限流与背压
+- 更完整的切换自动化、failover / promote / rebalance 能力
+- 更完整的多 standby 观测、指标与告警

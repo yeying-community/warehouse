@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
@@ -42,16 +43,22 @@ type replicationReconcileScanner interface {
 	Scan(ctx context.Context) ([]*replication.ReconcileItem, error)
 }
 
+const (
+	defaultPeriodicReconcileInterval = 30 * time.Second
+)
+
 // InternalReplicationHandler exposes replication-related internal control endpoints.
 type InternalReplicationHandler struct {
-	logger           *zap.Logger
-	config           *config.Config
-	outbox           replicationOutboxStatusReader
-	offsets          replicationOffsetStore
-	reconcileStore   replicationReconcileStore
-	reconcileScanner replicationReconcileScanner
-	peerResolver     service.ReplicationPeerResolver
-	assignments      repository.ClusterReplicationAssignmentRepository
+	logger                *zap.Logger
+	config                *config.Config
+	outbox                replicationOutboxStatusReader
+	offsets               replicationOffsetStore
+	reconcileStore        replicationReconcileStore
+	reconcileScanner      replicationReconcileScanner
+	peerResolver          service.ReplicationPeerResolver
+	assignments           repository.ClusterReplicationAssignmentRepository
+	autoReconcileInterval time.Duration
+	reconcileExecutionMu  sync.Mutex
 }
 
 // NewInternalReplicationHandler creates a new internal replication handler.
@@ -70,14 +77,15 @@ func NewInternalReplicationHandler(
 		assignmentRepo = assignments[0]
 	}
 	return &InternalReplicationHandler{
-		logger:           logger,
-		config:           cfg,
-		outbox:           outbox,
-		offsets:          offsets,
-		reconcileStore:   reconcileStore,
-		reconcileScanner: reconcileScanner,
-		peerResolver:     peerResolver,
-		assignments:      assignmentRepo,
+		logger:                logger,
+		config:                cfg,
+		outbox:                outbox,
+		offsets:               offsets,
+		reconcileStore:        reconcileStore,
+		reconcileScanner:      reconcileScanner,
+		peerResolver:          peerResolver,
+		assignments:           assignmentRepo,
+		autoReconcileInterval: defaultPeriodicReconcileInterval,
 	}
 }
 
@@ -158,7 +166,8 @@ func (h *InternalReplicationHandler) HandleStatus(w http.ResponseWriter, r *http
 		return
 	}
 
-	resolvedPeer, err := h.resolveTargetPeer(r.Context())
+	targetNodeID := strings.TrimSpace(r.URL.Query().Get("targetNodeId"))
+	resolvedPeer, err := h.resolveTargetPeerForNode(r.Context(), targetNodeID, false)
 	if err != nil {
 		h.logger.Error("failed to resolve replication peer", zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to resolve replication peer")
@@ -305,6 +314,7 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 		return
 	}
 
+	completedTargets := make(map[string]struct{})
 	const maxAttempts = 24
 	const retryInterval = 5 * time.Second
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -314,34 +324,81 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 		default:
 		}
 
-		resp, err := h.startReconcile(ctx, "")
-		if err == nil {
-			h.logger.Info("startup reconcile finished",
-				zap.Int64("job_id", resp.JobID),
-				zap.String("target_node_id", resp.TargetNodeID),
-				zap.Int64("scanned_items", resp.ScannedItems),
-				zap.Int64("pending_items", resp.PendingItems))
-			return
+		peers, err := h.resolveTargetPeers(ctx, false)
+		if err != nil {
+			h.logger.Warn("startup reconcile failed to resolve target peers, will retry",
+				zap.Int("attempt", attempt),
+				zap.Int("max_attempts", maxAttempts),
+				zap.Error(err))
+			if !h.waitStartupReconcileRetry(ctx, retryInterval) {
+				return
+			}
+			continue
 		}
-
-		if errors.Is(err, service.ErrReplicationAssignmentUnavailable) {
+		if len(peers) == 0 {
 			h.logger.Info("startup reconcile is waiting for an effective assignment",
 				zap.Int("attempt", attempt),
 				zap.Int("max_attempts", maxAttempts),
-				zap.Error(err))
-		} else {
+				zap.Error(service.ErrReplicationAssignmentUnavailable))
+			if !h.waitStartupReconcileRetry(ctx, retryInterval) {
+				return
+			}
+			continue
+		}
+
+		attemptedTargets := 0
+		pendingRetry := false
+		for _, peer := range peers {
+			if peer == nil {
+				continue
+			}
+			resolvedTargetNodeID := strings.TrimSpace(peer.NodeID)
+			if resolvedTargetNodeID == "" {
+				continue
+			}
+			if _, ok := completedTargets[resolvedTargetNodeID]; ok {
+				continue
+			}
+			attemptedTargets++
+
+			resp, err := h.startReconcile(ctx, resolvedTargetNodeID)
+			if err == nil {
+				completedTargets[resolvedTargetNodeID] = struct{}{}
+				h.logger.Info("startup reconcile finished",
+					zap.Int64("job_id", resp.JobID),
+					zap.String("target_node_id", resp.TargetNodeID),
+					zap.Int64("scanned_items", resp.ScannedItems),
+					zap.Int64("pending_items", resp.PendingItems))
+				continue
+			}
+
+			pendingRetry = true
+			if errors.Is(err, service.ErrReplicationAssignmentUnavailable) {
+				h.logger.Info("startup reconcile is waiting for an effective assignment",
+					zap.Int("attempt", attempt),
+					zap.Int("max_attempts", maxAttempts),
+					zap.String("target_node_id", resolvedTargetNodeID),
+					zap.Error(err))
+				continue
+			}
 			h.logger.Warn("startup reconcile attempt failed, will retry",
 				zap.Int("attempt", attempt),
 				zap.Int("max_attempts", maxAttempts),
+				zap.String("target_node_id", resolvedTargetNodeID),
 				zap.Error(err))
 		}
 
-		timer := time.NewTimer(retryInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if pendingRetry {
+			if !h.waitStartupReconcileRetry(ctx, retryInterval) {
+				return
+			}
+			continue
+		}
+		if attemptedTargets == 0 {
 			return
-		case <-timer.C:
+		}
+		if len(completedTargets) > 0 {
+			return
 		}
 	}
 
@@ -349,7 +406,40 @@ func (h *InternalReplicationHandler) RunStartupReconcile(ctx context.Context) {
 		zap.Int("max_attempts", maxAttempts))
 }
 
+// RunAutoReconcile runs startup reconcile once, then periodically re-checks whether any standby still needs a baseline.
+func (h *InternalReplicationHandler) RunAutoReconcile(ctx context.Context) {
+	if !strings.EqualFold(strings.TrimSpace(h.config.Node.Role), "active") {
+		return
+	}
+	if h.reconcileStore == nil || h.reconcileScanner == nil {
+		return
+	}
+
+	h.RunStartupReconcile(ctx)
+
+	interval := h.autoReconcileInterval
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := h.runPeriodicReconcileOnce(ctx); err != nil && !errors.Is(err, context.Canceled) && h.logger != nil {
+				h.logger.Warn("periodic reconcile sweep failed", zap.Error(err))
+			}
+		}
+	}
+}
+
 func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetNodeID string) (*internalReconcileStartResponse, error) {
+	h.reconcileExecutionMu.Lock()
+	defer h.reconcileExecutionMu.Unlock()
+
 	peer, err := h.resolveTargetPeerForNode(ctx, targetNodeID, false)
 	if err != nil {
 		return nil, fmt.Errorf("resolve target peer: %w", err)
@@ -660,10 +750,102 @@ func (h *InternalReplicationHandler) missingResolvedPeerNote(peerRole string) st
 }
 
 func (h *InternalReplicationHandler) resolveTargetPeer(ctx context.Context) (*service.ResolvedReplicationPeer, error) {
+	return h.resolveTargetPeerForNode(ctx, "", false)
+}
+
+func (h *InternalReplicationHandler) runPeriodicReconcileOnce(ctx context.Context) error {
+	peers, err := h.resolveTargetPeers(ctx, true)
+	if err != nil {
+		return err
+	}
+	if len(peers) == 0 {
+		return nil
+	}
+
+	var sweepErr error
+	for _, peer := range peers {
+		shouldRun, reason, err := h.shouldRunAutomaticReconcileForPeer(ctx, peer)
+		if err != nil {
+			sweepErr = errors.Join(sweepErr, fmt.Errorf("inspect auto reconcile target %q: %w", peerNodeID(peer), err))
+			continue
+		}
+		if !shouldRun {
+			continue
+		}
+
+		resp, err := h.startReconcile(ctx, peer.NodeID)
+		if err != nil {
+			sweepErr = errors.Join(sweepErr, fmt.Errorf("auto reconcile target %q: %w", peer.NodeID, err))
+			if h.logger != nil {
+				h.logger.Warn("automatic reconcile attempt failed",
+					zap.String("target_node_id", peer.NodeID),
+					zap.String("reason", reason),
+					zap.Error(err))
+			}
+			continue
+		}
+		if h.logger != nil {
+			h.logger.Info("automatic reconcile finished",
+				zap.String("target_node_id", resp.TargetNodeID),
+				zap.String("reason", reason),
+				zap.Int64("job_id", resp.JobID),
+				zap.Int64("scanned_items", resp.ScannedItems),
+				zap.Int64("pending_items", resp.PendingItems))
+		}
+	}
+	return sweepErr
+}
+
+func (h *InternalReplicationHandler) shouldRunAutomaticReconcileForPeer(ctx context.Context, peer *service.ResolvedReplicationPeer) (bool, string, error) {
+	if peer == nil || strings.TrimSpace(peer.NodeID) == "" {
+		return false, "", nil
+	}
+	if peer.AssignmentGeneration == nil || *peer.AssignmentGeneration <= 0 {
+		return false, "", fmt.Errorf("target %q has no assignment generation", peer.NodeID)
+	}
+
+	assignment, err := h.loadReconcileAssignment(ctx, peer.NodeID, *peer.AssignmentGeneration)
+	if err != nil {
+		return false, "", err
+	}
+	if assignment == nil {
+		return false, "", nil
+	}
+
+	switch assignment.State {
+	case cluster.AssignmentStatePending:
+		return true, "assignment_pending", nil
+	case cluster.AssignmentStateReconciling:
+		return true, "assignment_reconciling", nil
+	case cluster.AssignmentStateReplicating:
+		if h.offsets == nil {
+			return false, "", nil
+		}
+		offset, err := h.offsets.Get(ctx, strings.TrimSpace(h.config.Node.ID), strings.TrimSpace(peer.NodeID))
+		if errors.Is(err, replication.ErrOffsetNotFound) {
+			return true, "missing_offset", nil
+		}
+		if err != nil {
+			return false, "", err
+		}
+		if offset == nil || offset.AssignmentGeneration == nil {
+			return true, "missing_generation_baseline", nil
+		}
+		if *offset.AssignmentGeneration != assignment.Generation {
+			return true, "offset_generation_mismatch", nil
+		}
+	}
+	return false, "", nil
+}
+
+func (h *InternalReplicationHandler) resolveTargetPeers(ctx context.Context, requireHealthy bool) ([]*service.ResolvedReplicationPeer, error) {
 	if h.peerResolver == nil {
 		return nil, nil
 	}
-	return h.peerResolver.ResolveTarget(ctx)
+	if requireHealthy {
+		return h.peerResolver.ResolveDispatchTargets(ctx)
+	}
+	return h.peerResolver.ResolveTargets(ctx)
 }
 
 func (h *InternalReplicationHandler) resolveTargetPeerForNode(ctx context.Context, nodeID string, requireHealthy bool) (*service.ResolvedReplicationPeer, error) {
@@ -682,34 +864,47 @@ func (h *InternalReplicationHandler) resolveTargetPeerForNode(ctx context.Contex
 	}
 	nodeID = strings.TrimSpace(nodeID)
 	if nodeID == "" {
-		if requireHealthy {
-			return h.peerResolver.ResolveDispatchTarget(ctx)
+		peers, err := h.resolveTargetPeers(ctx, requireHealthy)
+		if err != nil || len(peers) == 0 {
+			return nil, err
 		}
-		return h.peerResolver.ResolveTarget(ctx)
+		return peers[0], nil
 	}
-	if requireHealthy {
-		peer, err := h.peerResolver.ResolveDispatchTarget(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if peer != nil && strings.TrimSpace(peer.NodeID) == nodeID {
-			return peer, nil
-		}
-	} else {
-		peer, err := h.peerResolver.ResolveTarget(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if peer != nil && strings.TrimSpace(peer.NodeID) == nodeID {
+
+	peers, err := h.resolveTargetPeers(ctx, requireHealthy)
+	if err != nil {
+		return nil, err
+	}
+	for _, peer := range peers {
+		if peer != nil && strings.EqualFold(strings.TrimSpace(peer.NodeID), nodeID) {
 			return peer, nil
 		}
 	}
 	return h.peerResolver.ResolveByNodeID(ctx, nodeID, requireHealthy)
 }
 
+func (h *InternalReplicationHandler) waitStartupReconcileRetry(ctx context.Context, retryInterval time.Duration) bool {
+	timer := time.NewTimer(retryInterval)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func boolPointer(value bool) *bool {
 	v := value
 	return &v
+}
+
+func peerNodeID(peer *service.ResolvedReplicationPeer) string {
+	if peer == nil {
+		return ""
+	}
+	return strings.TrimSpace(peer.NodeID)
 }
 
 type standbyAssignmentAuthorizationError struct {

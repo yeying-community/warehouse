@@ -82,18 +82,20 @@ func (r *OutboxMutationRecorder) EnsureDir(ctx context.Context, fullPath string)
 	if normalized == "/" {
 		return nil
 	}
-	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
 	}
-	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID:         r.sourceNodeID,
-		TargetNodeID:         targetNodeID,
-		AssignmentGeneration: assignmentGeneration,
-		Op:                   replication.OpEnsureDir,
-		Path:                 stringPointer(normalized),
-		IsDir:                true,
-	})
+	return r.appendBatch(ctx, newOutboxEventsForTargets(targets, func(target *ResolvedReplicationPeer) *replication.OutboxEvent {
+		return &replication.OutboxEvent{
+			SourceNodeID:         r.sourceNodeID,
+			TargetNodeID:         target.NodeID,
+			AssignmentGeneration: target.AssignmentGeneration,
+			Op:                   replication.OpEnsureDir,
+			Path:                 stringPointer(normalized),
+			IsDir:                true,
+		}
+	}))
 }
 
 func (r *OutboxMutationRecorder) UpsertFile(ctx context.Context, fullPath string) error {
@@ -109,20 +111,22 @@ func (r *OutboxMutationRecorder) UpsertFile(ctx context.Context, fullPath string
 	if err != nil {
 		return err
 	}
-	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
 	}
 
-	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID:         r.sourceNodeID,
-		TargetNodeID:         targetNodeID,
-		AssignmentGeneration: assignmentGeneration,
-		Op:                   replication.OpUpsertFile,
-		Path:                 stringPointer(normalized),
-		ContentSHA256:        stringPointer(sha256Hex),
-		FileSize:             int64Pointer(size),
-	})
+	return r.appendBatch(ctx, newOutboxEventsForTargets(targets, func(target *ResolvedReplicationPeer) *replication.OutboxEvent {
+		return &replication.OutboxEvent{
+			SourceNodeID:         r.sourceNodeID,
+			TargetNodeID:         target.NodeID,
+			AssignmentGeneration: target.AssignmentGeneration,
+			Op:                   replication.OpUpsertFile,
+			Path:                 stringPointer(normalized),
+			ContentSHA256:        stringPointer(sha256Hex),
+			FileSize:             int64Pointer(size),
+		}
+	}))
 }
 
 func (r *OutboxMutationRecorder) MovePath(ctx context.Context, fromFullPath, toFullPath string, isDir bool) error {
@@ -137,19 +141,21 @@ func (r *OutboxMutationRecorder) MovePath(ctx context.Context, fromFullPath, toF
 	if fromPath == "/" || toPath == "/" {
 		return fmt.Errorf("cannot record move involving root path")
 	}
-	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
 	}
-	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID:         r.sourceNodeID,
-		TargetNodeID:         targetNodeID,
-		AssignmentGeneration: assignmentGeneration,
-		Op:                   replication.OpMovePath,
-		FromPath:             stringPointer(fromPath),
-		ToPath:               stringPointer(toPath),
-		IsDir:                isDir,
-	})
+	return r.appendBatch(ctx, newOutboxEventsForTargets(targets, func(target *ResolvedReplicationPeer) *replication.OutboxEvent {
+		return &replication.OutboxEvent{
+			SourceNodeID:         r.sourceNodeID,
+			TargetNodeID:         target.NodeID,
+			AssignmentGeneration: target.AssignmentGeneration,
+			Op:                   replication.OpMovePath,
+			FromPath:             stringPointer(fromPath),
+			ToPath:               stringPointer(toPath),
+			IsDir:                isDir,
+		}
+	}))
 }
 
 func (r *OutboxMutationRecorder) CopyPath(ctx context.Context, fromFullPath, toFullPath string, isDir bool) error {
@@ -164,19 +170,21 @@ func (r *OutboxMutationRecorder) CopyPath(ctx context.Context, fromFullPath, toF
 	if fromPath == "/" || toPath == "/" {
 		return fmt.Errorf("cannot record copy involving root path")
 	}
-	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
 	}
-	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID:         r.sourceNodeID,
-		TargetNodeID:         targetNodeID,
-		AssignmentGeneration: assignmentGeneration,
-		Op:                   replication.OpCopyPath,
-		FromPath:             stringPointer(fromPath),
-		ToPath:               stringPointer(toPath),
-		IsDir:                isDir,
-	})
+	return r.appendBatch(ctx, newOutboxEventsForTargets(targets, func(target *ResolvedReplicationPeer) *replication.OutboxEvent {
+		return &replication.OutboxEvent{
+			SourceNodeID:         r.sourceNodeID,
+			TargetNodeID:         target.NodeID,
+			AssignmentGeneration: target.AssignmentGeneration,
+			Op:                   replication.OpCopyPath,
+			FromPath:             stringPointer(fromPath),
+			ToPath:               stringPointer(toPath),
+			IsDir:                isDir,
+		}
+	}))
 }
 
 func (r *OutboxMutationRecorder) RemovePath(ctx context.Context, fullPath string, isDir bool) error {
@@ -187,25 +195,36 @@ func (r *OutboxMutationRecorder) RemovePath(ctx context.Context, fullPath string
 	if normalized == "/" {
 		return fmt.Errorf("cannot record removal of root path")
 	}
-	targetNodeID, assignmentGeneration, err := r.resolveTarget(ctx)
+	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
 	}
-	return r.append(ctx, &replication.OutboxEvent{
-		SourceNodeID:         r.sourceNodeID,
-		TargetNodeID:         targetNodeID,
-		AssignmentGeneration: assignmentGeneration,
-		Op:                   replication.OpRemovePath,
-		Path:                 stringPointer(normalized),
-		IsDir:                isDir,
-	})
+	return r.appendBatch(ctx, newOutboxEventsForTargets(targets, func(target *ResolvedReplicationPeer) *replication.OutboxEvent {
+		return &replication.OutboxEvent{
+			SourceNodeID:         r.sourceNodeID,
+			TargetNodeID:         target.NodeID,
+			AssignmentGeneration: target.AssignmentGeneration,
+			Op:                   replication.OpRemovePath,
+			Path:                 stringPointer(normalized),
+			IsDir:                isDir,
+		}
+	}))
 }
 
-func (r *OutboxMutationRecorder) append(ctx context.Context, event *replication.OutboxEvent) error {
-	if err := r.outbox.Append(ctx, event); err != nil {
+func (r *OutboxMutationRecorder) appendBatch(ctx context.Context, events []*replication.OutboxEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	if err := r.outbox.AppendBatch(ctx, events); err != nil {
 		return err
 	}
-	if r.logger != nil {
+	if r.logger == nil {
+		return nil
+	}
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
 		r.logger.Debug("replication mutation recorded",
 			zap.String("op", event.Op),
 			zap.Int64("outbox_id", event.ID),
@@ -216,21 +235,26 @@ func (r *OutboxMutationRecorder) append(ctx context.Context, event *replication.
 	return nil
 }
 
-func (r *OutboxMutationRecorder) resolveTarget(ctx context.Context) (string, *int64, error) {
+func (r *OutboxMutationRecorder) resolveTargets(ctx context.Context) ([]*ResolvedReplicationPeer, error) {
 	if r.peerResolver == nil {
-		return "", nil, ErrReplicationPeerUnavailable
+		return nil, ErrReplicationPeerUnavailable
 	}
-	peer, err := r.peerResolver.ResolveTarget(ctx)
+	peers, err := r.peerResolver.ResolveTargets(ctx)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	if peer == nil || strings.TrimSpace(peer.NodeID) == "" {
-		return "", nil, ErrReplicationPeerUnavailable
+	if len(peers) == 0 {
+		return nil, ErrReplicationPeerUnavailable
 	}
-	if peer.AssignmentGeneration == nil || *peer.AssignmentGeneration <= 0 {
-		return "", nil, ErrReplicationAssignmentUnavailable
+	for _, peer := range peers {
+		if peer == nil || strings.TrimSpace(peer.NodeID) == "" {
+			return nil, ErrReplicationPeerUnavailable
+		}
+		if peer.AssignmentGeneration == nil || *peer.AssignmentGeneration <= 0 {
+			return nil, ErrReplicationAssignmentUnavailable
+		}
 	}
-	return peer.NodeID, peer.AssignmentGeneration, nil
+	return peers, nil
 }
 
 func (r *OutboxMutationRecorder) normalizeFullPath(fullPath string) (string, error) {
@@ -292,4 +316,22 @@ func stringPointer(value string) *string {
 func int64Pointer(value int64) *int64 {
 	v := value
 	return &v
+}
+
+func newOutboxEventsForTargets(targets []*ResolvedReplicationPeer, build func(target *ResolvedReplicationPeer) *replication.OutboxEvent) []*replication.OutboxEvent {
+	if len(targets) == 0 {
+		return nil
+	}
+	events := make([]*replication.OutboxEvent, 0, len(targets))
+	for _, target := range targets {
+		if target == nil {
+			continue
+		}
+		event := build(target)
+		if event == nil {
+			continue
+		}
+		events = append(events, event)
+	}
+	return events
 }

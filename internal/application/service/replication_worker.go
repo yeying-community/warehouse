@@ -108,10 +108,32 @@ func (w *ReplicationWorker) DispatchOnce(ctx context.Context) error {
 		return nil
 	}
 
-	peer, err := w.resolveDispatchPeer(ctx)
+	peers, err := w.resolveDispatchPeers(ctx)
 	if err != nil {
 		return err
 	}
+	if len(peers) == 0 {
+		return nil
+	}
+
+	var dispatchErr error
+	for _, peer := range peers {
+		if err := w.dispatchPeerOnce(ctx, peer); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+			dispatchErr = errors.Join(dispatchErr, err)
+			if w.logger != nil {
+				w.logger.Warn("replication peer dispatch failed",
+					zap.String("target_node_id", peerNodeID(peer)),
+					zap.Error(err))
+			}
+		}
+	}
+	return dispatchErr
+}
+
+func (w *ReplicationWorker) dispatchPeerOnce(ctx context.Context, peer *ResolvedReplicationPeer) error {
 	if peer == nil {
 		return nil
 	}
@@ -123,7 +145,7 @@ func (w *ReplicationWorker) DispatchOnce(ctx context.Context) error {
 	targetNodeID := peer.NodeID
 	events, err := w.outbox.ListPending(ctx, sourceNodeID, targetNodeID, peer.AssignmentGeneration, w.config.Replication.BatchSize)
 	if err != nil {
-		return fmt.Errorf("list pending replication events: %w", err)
+		return fmt.Errorf("list pending replication events for target %q: %w", targetNodeID, err)
 	}
 	if len(events) == 0 {
 		return nil
@@ -134,22 +156,24 @@ func (w *ReplicationWorker) DispatchOnce(ctx context.Context) error {
 			nextRetryAt := w.now().Add(w.retryDelay(event.AttemptCount))
 			markErr := w.outbox.MarkFailed(ctx, event.ID, err.Error(), nextRetryAt)
 			if markErr != nil {
-				return fmt.Errorf("dispatch event %d failed: %v; mark failed: %w", event.ID, err, markErr)
+				return fmt.Errorf("dispatch event %d for target %q failed: %v; mark failed: %w", event.ID, targetNodeID, err, markErr)
 			}
 			w.logger.Warn("replication event dispatch failed",
 				zap.Int64("outbox_id", event.ID),
 				zap.String("op", event.Op),
+				zap.String("target_node_id", targetNodeID),
 				zap.Time("next_retry_at", nextRetryAt),
 				zap.Error(err),
 			)
 			break
 		}
 		if err := w.outbox.MarkDispatched(ctx, event.ID, w.now()); err != nil {
-			return fmt.Errorf("mark event %d dispatched: %w", event.ID, err)
+			return fmt.Errorf("mark event %d for target %q dispatched: %w", event.ID, targetNodeID, err)
 		}
 		w.logger.Debug("replication event dispatched",
 			zap.Int64("outbox_id", event.ID),
 			zap.String("op", event.Op),
+			zap.String("target_node_id", targetNodeID),
 		)
 	}
 
@@ -299,11 +323,11 @@ func (w *ReplicationWorker) signRequest(req *http.Request, payloadHash string) e
 	return nil
 }
 
-func (w *ReplicationWorker) resolveDispatchPeer(ctx context.Context) (*ResolvedReplicationPeer, error) {
+func (w *ReplicationWorker) resolveDispatchPeers(ctx context.Context) ([]*ResolvedReplicationPeer, error) {
 	if w.peerResolver == nil {
 		return nil, nil
 	}
-	return w.peerResolver.ResolveDispatchTarget(ctx)
+	return w.peerResolver.ResolveDispatchTargets(ctx)
 }
 
 func (w *ReplicationWorker) resolveLocalPath(storagePath string) (string, error) {

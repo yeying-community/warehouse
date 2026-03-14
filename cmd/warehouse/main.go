@@ -105,7 +105,7 @@ func runServer(args []string) {
 		startBackground(c.ReplicationWorker.Run)
 	}
 	if c.InternalReplicationHandler != nil {
-		startBackground(c.InternalReplicationHandler.RunStartupReconcile)
+		startBackground(c.InternalReplicationHandler.RunAutoReconcile)
 	}
 	backgroundDone := make(chan struct{})
 	go func() {

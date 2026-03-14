@@ -7,7 +7,7 @@
 - 文件变更由 active 通过 `internal` 接口复制到 standby
 - PostgreSQL 仍然作为元数据的统一来源
 
-> 注意：本文以**当前实现 + 后续演进建议**为主。当前仓库已经落地了节点身份、内部鉴权、`cluster_nodes` / `cluster_replication_assignments` 控制面、outbox / offsets / reconcile、standby apply handler、active worker、assignment generation fence，以及 active 启动自动触发一次 reconcile 并在成功后自动 `bootstrap mark` 的主链路。更完整的切换自动化与多 standby 编排仍需继续补齐。
+> 注意：本文以**当前实现 + 后续演进建议**为主。当前仓库已经落地了节点身份、内部鉴权、`cluster_nodes` / `cluster_replication_assignments` 控制面、outbox / offsets / reconcile、standby apply handler、active worker、assignment generation fence，以及 `1 active -> N standby` fan-out、startup reconcile、periodic auto reconcile sweep、reconcile 成功后自动 `bootstrap mark`、`error assignment` 自动退避恢复的主链路。更完整的切换自动化与多 standby 编排仍需继续补齐。
 
 ## 1. 设计目标
 
@@ -15,7 +15,7 @@
 
 1. 让 standby 上始终有一份接近 active 的本地文件副本
 2. 让应用自己掌握复制 lag、失败重试、最后应用序号
-3. 在不引入共享存储的前提下，支持单活双机接管
+3. 在不引入共享存储的前提下，支持单活 + standby 接管，最小可先从双机形态落地
 
 非目标：
 
@@ -47,6 +47,8 @@ flowchart LR
   A --> R[(replication_reconcile_jobs/items)]
   R --> S
 ```
+
+图中只画一个 standby 便于说明单条复制链路；当前实现已经支持 active 按 assignment 对多个 standby fan-out。
 
 核心原则：
 
@@ -173,6 +175,7 @@ flowchart LR
 - 持久化增量复制事件
 - 支持失败重试
 - 支持 lag 统计和切换前校验
+- 当前实现里，一次 active 本地文件变更会按每个 effective standby fan-out 成多条 outbox 记录，每条记录都绑定各自的 `target_node_id` 与 `assignment_generation`
 
 ### 6.2 `replication_offsets`
 
@@ -315,13 +318,15 @@ standby apply 建议：
 
 当前代码的正常路径是：
 
-1. active 侧 allocator 续租/创建 assignment，初始状态为 `pending`
-2. active 启动后自动触发一次 reconcile
-3. reconcile 开始时 assignment 切到 `reconciling`
-4. 历史文件批量下发到 standby
+1. active 侧 allocator 会为所有健康 standby 续租/创建 effective assignment，初始状态为 `pending`
+2. active 启动后会对当前所有有效 standby 逐个触发 startup reconcile
+3. reconcile 开始时，对应 assignment 切到 `reconciling`
+4. 历史文件批量下发到目标 standby
 5. reconcile 成功后，active 自动调用一次 `POST /api/v1/internal/replication/bootstrap/mark`
 6. standby 将 `replication_offsets.assignment_generation` 与 `last_applied_outbox_id=watermark` 持久化为当前 generation 基线
 7. assignment 切到 `replicating`
+8. 如果启动窗口内还没补齐，后台 periodic auto reconcile 会继续扫描 `pending` / `reconciling` / 缺少当前 generation baseline 的目标，并再次触发 reconcile
+9. 如果 reconcile 失败导致 assignment 进入 `error`，allocator 会按退避节奏自动恢复到 `pending`，让后续自动 reconcile 继续接管
 
 ### 11.2 显式基线流程
 
@@ -334,13 +339,19 @@ standby apply 建议：
 
 ### 11.3 周期性 Reconcile
 
-即使有 outbox，也建议保留周期性对账机制：
+当前代码已经有一个轻量的 periodic auto reconcile sweep：
+
+- 默认后台周期性扫描健康 standby
+- 只对 `pending` / `reconciling` / 缺少当前 generation baseline 的目标再次触发 reconcile
+- 目标是补 baseline、恢复中断，不是周期性全量重扫所有稳定副本
+
+即使如此，后续仍建议继续补更完整的周期性对账机制：
 
 - 抽样或全量扫描关键目录
 - 对比文件大小、mtime、hash
 - 修复漏同步或异常失败的文件
 
-否则长期运行后，漂移不可避免。
+否则长期运行后，仍然存在漂移风险。
 
 ## 12. 复制状态与可观测性
 
@@ -376,7 +387,7 @@ standby apply 建议：
 
 它的价值是：
 
-- 先把单活双机做出来
+- 先把单活 + standby 接管做出来，最小落地形态可以先从双机开始
 - 先把写路径统一抽象成“可复制的文件变更事件”
 
 后续如果演进到正式多副本：

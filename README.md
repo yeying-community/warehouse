@@ -44,27 +44,33 @@ build/warehouse -c config.yaml --check-ready
 # 查看当前实例的复制状态
 build/warehouse ha status -c config.yaml
 
+# 在 active 上查看某个 standby 的复制状态
+build/warehouse ha status -c config.yaml --target-node-id warehouse-standby-1
+
+# 直接查看某个 standby 实例自己的复制状态
+build/warehouse ha status -c config.yaml --peer --target-node-id warehouse-standby-1
+
 # 查看当前节点相关的 assignment 状态
 build/warehouse ha assignments status -c config.yaml
 
-# 查看 peer（例如 standby）的复制状态
-build/warehouse ha status -c config.yaml --peer
+# 手工触发某个 standby 的历史补齐
+build/warehouse ha reconcile start -c config.yaml --target-node-id warehouse-standby-1
 
-# 手工触发一次历史补齐
-build/warehouse ha reconcile start -c config.yaml
+# 查看某个 standby 的历史补齐状态
+build/warehouse ha reconcile status -c config.yaml --target-node-id warehouse-standby-1
 
-# 查看历史补齐状态
-build/warehouse ha reconcile status -c config.yaml
-
-# 显式写入 bootstrap baseline
-build/warehouse ha bootstrap mark -c config.yaml --peer --outbox-id 123
+# 显式写入某个 standby 的 bootstrap baseline
+build/warehouse ha bootstrap mark -c config.yaml --peer --target-node-id warehouse-standby-1 --outbox-id 123
 ```
 
 说明：
 - CLI 会自动根据 `config.yaml` 构造 internal 签名请求，不需要手工写 `curl`、shell 脚本或 HMAC header
-- 默认访问当前实例的 internal 地址；传 `--peer` 时会从 PostgreSQL 控制面解析当前 effective assignment 对应的 peer
+- 默认访问当前实例的 internal 地址
+- `--target-node-id` 用于按 standby 精确观察或操作目标；在多 standby 场景下建议显式指定
+- 传 `--peer` 时会从 PostgreSQL 控制面解析当前 effective assignment 对应的 peer，并直接访问该 peer 的 internal 地址
+- 在多 standby 场景下，推荐把 `--peer` 和 `--target-node-id` 一起使用；如果只传 `--peer`，当前会使用控制面解析出的第一个匹配 peer
 - 也可以通过 `--base-url` 显式指定目标实例
-- `bootstrap mark` 现在要求携带当前 assignment generation；优先使用 `--peer`，CLI 会自动补齐内部 header
+- `bootstrap mark` 现在要求携带当前 assignment generation；推荐使用 `--peer --target-node-id <standby-id>`，CLI 会自动补齐内部 header
 - `build/warehouse ha assignments status` 直接读取 PostgreSQL 控制面表，不走 HTTP；当前可以直接观察 active 侧 assignment allocator 写入的 lease / generation / state
 
 ## API 文档
@@ -206,7 +212,7 @@ bash scripts/local.sh standby
 
 ## 高可用部署提示
 
-如果准备落地 `1 active + 1 standby`：
+如果准备落地 `1 active + N standby`（最小可以先从 `1 standby` 起步）：
 
 - `webdav.directory` 应指向每台机器自己的本地数据盘挂载目录
 - 当前阶段一推荐路线是：active 对外、standby 仅 internal，同步本地文件数据

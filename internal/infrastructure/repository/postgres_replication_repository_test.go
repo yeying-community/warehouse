@@ -24,6 +24,7 @@ func TestPostgresReplicationOutboxRepositoryAppend(t *testing.T) {
 	nextRetryAt := time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC)
 	createdAt := nextRetryAt.Add(5 * time.Second)
 
+	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		INSERT INTO replication_outbox (
 			source_node_id, target_node_id, op, path, from_path, to_path,
@@ -49,6 +50,7 @@ func TestPostgresReplicationOutboxRepositoryAppend(t *testing.T) {
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "attempt_count", "next_retry_at", "created_at", "dispatched_at"}).
 			AddRow(int64(7), replication.StatusPending, 0, nextRetryAt, createdAt, nil))
+	mock.ExpectCommit()
 
 	event := &replication.OutboxEvent{
 		SourceNodeID:  "node-a",
@@ -71,6 +73,102 @@ func TestPostgresReplicationOutboxRepositoryAppend(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
 	}
+}
+
+func TestPostgresReplicationOutboxRepositoryAppendBatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewPostgresReplicationOutboxRepository(db)
+	nextRetryAt := time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC)
+	createdAt := nextRetryAt.Add(5 * time.Second)
+	generationA := int64(3)
+	generationB := int64(4)
+
+	mock.ExpectBegin()
+	insertQuery := regexp.QuoteMeta(`
+		INSERT INTO replication_outbox (
+			source_node_id, target_node_id, op, path, from_path, to_path,
+			is_dir, content_sha256, file_size, assignment_generation, status, next_retry_at, last_error
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING id, status, attempt_count, next_retry_at, created_at, dispatched_at
+	`)
+	mock.ExpectQuery(insertQuery).
+		WithArgs(
+			"node-a",
+			"node-b",
+			replication.OpEnsureDir,
+			"/history",
+			nil,
+			nil,
+			true,
+			nil,
+			nil,
+			generationA,
+			replication.StatusPending,
+			nextRetryAt,
+			nil,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "attempt_count", "next_retry_at", "created_at", "dispatched_at"}).
+			AddRow(int64(7), replication.StatusPending, 0, nextRetryAt, createdAt, nil))
+	mock.ExpectQuery(insertQuery).
+		WithArgs(
+			"node-a",
+			"node-c",
+			replication.OpEnsureDir,
+			"/history",
+			nil,
+			nil,
+			true,
+			nil,
+			nil,
+			generationB,
+			replication.StatusPending,
+			nextRetryAt,
+			nil,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "attempt_count", "next_retry_at", "created_at", "dispatched_at"}).
+			AddRow(int64(8), replication.StatusPending, 0, nextRetryAt, createdAt, nil))
+	mock.ExpectCommit()
+
+	events := []*replication.OutboxEvent{
+		{
+			SourceNodeID:         "node-a",
+			TargetNodeID:         "node-b",
+			AssignmentGeneration: &generationA,
+			Op:                   replication.OpEnsureDir,
+			Path:                 testStringPointer("/history"),
+			IsDir:                true,
+			NextRetryAt:          nextRetryAt,
+		},
+		{
+			SourceNodeID:         "node-a",
+			TargetNodeID:         "node-c",
+			AssignmentGeneration: &generationB,
+			Op:                   replication.OpEnsureDir,
+			Path:                 testStringPointer("/history"),
+			IsDir:                true,
+			NextRetryAt:          nextRetryAt,
+		},
+	}
+	if err := repo.AppendBatch(context.Background(), events); err != nil {
+		t.Fatalf("AppendBatch: %v", err)
+	}
+	if events[0].ID != 7 || events[1].ID != 8 {
+		t.Fatalf("unexpected appended events: %#v", events)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func testStringPointer(value string) *string {
+	v := value
+	return &v
 }
 
 func TestPostgresReplicationOutboxRepositoryListPending(t *testing.T) {

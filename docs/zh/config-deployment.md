@@ -82,10 +82,10 @@ warehouse -c config.yaml
 
 ## 阶段一高可用提示
 
-如果正在落地 `1 active + 1 standby`：
+如果正在落地 `1 active + N standby`（最小可以先从 `1 standby` 起步）：
 
 - `webdav.directory` 应指向每台机器自己的本地数据盘挂载目录
-- 两台机器应使用相同的路径约定，并通过 `internal` 同步或其他复制机制保证文件双份
+- 各实例应使用相同的路径约定，并通过 `internal` 同步或其他复制机制保证文件多份
 - `webdav.auto_create_directory` 应设为 `false`
 - 流量切换不能只看 `readiness`，还应结合复制 lag / 最后应用序号
 - 详细步骤参考：

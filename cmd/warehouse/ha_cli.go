@@ -176,20 +176,26 @@ func runHAAssignmentStateMutation(args []string, action string) error {
 
 func runHAStatus(args []string) error {
 	flags := newHAFlags("status")
+	targetNodeID := flags.String("target-node-id", "", "Target standby node id for active-side status inspection")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if help, _ := flags.GetBool("help"); help {
 		fmt.Println("Usage:")
-		fmt.Println("  warehouse ha status -c config.yaml [--peer] [--base-url URL]")
+		fmt.Println("  warehouse ha status -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 		return nil
 	}
 
-	client, baseURL, err := buildHAClientFromFlags(flags)
+	usePeer, _ := flags.GetBool("peer")
+	client, baseURL, err := buildHAClientFromFlagsWithPeerTarget(flags, peerTargetNodeID(usePeer, *targetNodeID))
 	if err != nil {
 		return err
 	}
-	body, err := client.doJSON(context.Background(), http.MethodGet, baseURL, "/api/v1/internal/replication/status", nil)
+	statusPath := "/api/v1/internal/replication/status"
+	if !usePeer && strings.TrimSpace(*targetNodeID) != "" {
+		statusPath += "?targetNodeId=" + url.QueryEscape(strings.TrimSpace(*targetNodeID))
+	}
+	body, err := client.doJSON(context.Background(), http.MethodGet, baseURL, statusPath, nil)
 	if err != nil {
 		return err
 	}
@@ -246,20 +252,26 @@ func runHAReconcileStart(args []string) error {
 
 func runHAReconcileStatus(args []string) error {
 	flags := newHAFlags("reconcile-status")
+	targetNodeID := flags.String("target-node-id", "", "Target standby node id for active-side reconcile status inspection")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if help, _ := flags.GetBool("help"); help {
 		fmt.Println("Usage:")
-		fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL]")
+		fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 		return nil
 	}
 
-	client, baseURL, err := buildHAClientFromFlags(flags)
+	usePeer, _ := flags.GetBool("peer")
+	client, baseURL, err := buildHAClientFromFlagsWithPeerTarget(flags, peerTargetNodeID(usePeer, *targetNodeID))
 	if err != nil {
 		return err
 	}
-	body, err := client.doJSON(context.Background(), http.MethodGet, baseURL, "/api/v1/internal/replication/status", nil)
+	statusPath := "/api/v1/internal/replication/status"
+	if !usePeer && strings.TrimSpace(*targetNodeID) != "" {
+		statusPath += "?targetNodeId=" + url.QueryEscape(strings.TrimSpace(*targetNodeID))
+	}
+	body, err := client.doJSON(context.Background(), http.MethodGet, baseURL, statusPath, nil)
 	if err != nil {
 		return err
 	}
@@ -301,20 +313,22 @@ func runHABootstrap(args []string) error {
 func runHABootstrapMark(args []string) error {
 	flags := newHAFlags("bootstrap-mark")
 	outboxID := flags.Int64("outbox-id", -1, "Explicit bootstrap outbox id")
+	targetNodeID := flags.String("target-node-id", "", "Target standby node id for peer resolution")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if help, _ := flags.GetBool("help"); help {
 		fmt.Println("Usage:")
-		fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--outbox-id N]")
+		fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--target-node-id ID] [--outbox-id N]")
 		return nil
 	}
-	client, baseURL, err := buildHAClientFromFlags(flags)
+	usePeer, _ := flags.GetBool("peer")
+	client, baseURL, err := buildHAClientFromFlagsWithPeerTarget(flags, peerTargetNodeID(usePeer, *targetNodeID))
 	if err != nil {
 		return err
 	}
 	if client.assignmentGeneration == nil || *client.assignmentGeneration <= 0 {
-		peer, resolveErr := resolvePeerFromControlPlane(client.cfg)
+		peer, resolveErr := resolvePeerFromControlPlane(client.cfg, strings.TrimSpace(*targetNodeID))
 		if resolveErr != nil {
 			return fmt.Errorf("bootstrap mark requires a resolved peer assignment generation: %w", resolveErr)
 		}
@@ -360,12 +374,16 @@ func newHAFlags(name string) *pflag.FlagSet {
 }
 
 func buildHAClientFromFlags(flags *pflag.FlagSet) (*haClient, string, error) {
+	return buildHAClientFromFlagsWithPeerTarget(flags, "")
+}
+
+func buildHAClientFromFlagsWithPeerTarget(flags *pflag.FlagSet, peerTargetNodeID string) (*haClient, string, error) {
 	cfg, err := loadHAConfigFromFlags(flags)
 	if err != nil {
 		return nil, "", err
 	}
 
-	baseURL, assignmentGeneration, err := resolveHATarget(cfg, flags)
+	baseURL, assignmentGeneration, err := resolveHATarget(cfg, flags, peerTargetNodeID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -396,11 +414,11 @@ func loadHAConfigFromFlags(flags *pflag.FlagSet) (*config.Config, error) {
 }
 
 func resolveHABaseURL(cfg *config.Config, flags *pflag.FlagSet) (string, error) {
-	baseURL, _, err := resolveHATarget(cfg, flags)
+	baseURL, _, err := resolveHATarget(cfg, flags, "")
 	return baseURL, err
 }
 
-func resolveHATarget(cfg *config.Config, flags *pflag.FlagSet) (string, *int64, error) {
+func resolveHATarget(cfg *config.Config, flags *pflag.FlagSet, peerTargetNodeID string) (string, *int64, error) {
 	baseURL, _ := flags.GetString("base-url")
 	if strings.TrimSpace(baseURL) != "" {
 		normalized, err := normalizeURL(baseURL)
@@ -409,7 +427,7 @@ func resolveHATarget(cfg *config.Config, flags *pflag.FlagSet) (string, *int64, 
 
 	usePeer, _ := flags.GetBool("peer")
 	if usePeer {
-		peer, err := resolveHAPeer(cfg)
+		peer, err := resolveHAPeer(cfg, peerTargetNodeID)
 		if err != nil {
 			return "", nil, err
 		}
@@ -433,14 +451,14 @@ func resolveHATarget(cfg *config.Config, flags *pflag.FlagSet) (string, *int64, 
 	return normalized, nil, err
 }
 
-func resolveHAPeer(cfg *config.Config) (*service.ResolvedReplicationPeer, error) {
+func resolveHAPeer(cfg *config.Config, targetNodeID string) (*service.ResolvedReplicationPeer, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
-	return resolvePeerFromControlPlane(cfg)
+	return resolvePeerFromControlPlane(cfg, targetNodeID)
 }
 
-func resolvePeerFromControlPlane(cfg *config.Config) (*service.ResolvedReplicationPeer, error) {
+func resolvePeerFromControlPlane(cfg *config.Config, targetNodeID string) (*service.ResolvedReplicationPeer, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
@@ -458,9 +476,26 @@ func resolvePeerFromControlPlane(cfg *config.Config) (*service.ResolvedReplicati
 	if resolver == nil {
 		return nil, nil
 	}
-	peer, err := resolver.ResolveTarget(context.Background())
+	targetNodeID = strings.TrimSpace(targetNodeID)
+	if targetNodeID == "" {
+		peer, err := resolver.ResolveTarget(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("resolve peer from control plane: %w", err)
+		}
+		return peer, nil
+	}
+	peers, err := resolver.ResolveTargets(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("resolve peer from control plane: %w", err)
+		return nil, fmt.Errorf("resolve peer list from control plane: %w", err)
+	}
+	for _, peer := range peers {
+		if peer != nil && strings.EqualFold(strings.TrimSpace(peer.NodeID), targetNodeID) {
+			return peer, nil
+		}
+	}
+	peer, err := resolver.ResolveByNodeID(context.Background(), targetNodeID, false)
+	if err != nil {
+		return nil, fmt.Errorf("resolve peer %q from control plane: %w", targetNodeID, err)
 	}
 	return peer, nil
 }
@@ -548,14 +583,21 @@ func printPrettyJSONFromAny(data any) {
 
 func printHAHelp() {
 	fmt.Println("Usage:")
-	fmt.Println("  warehouse ha status -c config.yaml [--peer] [--base-url URL]")
+	fmt.Println("  warehouse ha status -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 	fmt.Println("  warehouse ha assignments status -c config.yaml [--all] [--active-node-id ID] [--standby-node-id ID] [--state STATE] [--limit N]")
 	fmt.Println("  warehouse ha assignments drain -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	fmt.Println("  warehouse ha assignments release -c config.yaml --standby-node-id ID [--active-node-id ID] [--force]")
 	fmt.Println("  warehouse ha assignments retry -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	fmt.Println("  warehouse ha reconcile start -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
-	fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL]")
-	fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--outbox-id N]")
+	fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
+	fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--target-node-id ID] [--outbox-id N]")
+}
+
+func peerTargetNodeID(usePeer bool, targetNodeID string) string {
+	if !usePeer {
+		return ""
+	}
+	return strings.TrimSpace(targetNodeID)
 }
 
 func printHAAssignmentsHelp() {
@@ -569,12 +611,12 @@ func printHAAssignmentsHelp() {
 func printHAReconcileHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  warehouse ha reconcile start -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
-	fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL]")
+	fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 }
 
 func printHABootstrapHelp() {
 	fmt.Println("Usage:")
-	fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--outbox-id N]")
+	fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--target-node-id ID] [--outbox-id N]")
 }
 
 func newHAAssignmentFlags(name string) *pflag.FlagSet {

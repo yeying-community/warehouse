@@ -134,16 +134,16 @@ func TestReplicationPeerResolverFallsBackToLatestStandbyWithoutAssignmentRepo(t 
 		byRole: map[string][]*cluster.Node{
 			"standby": {
 				{
-					NodeID:          "node-c",
-					Role:            "standby",
-					AdvertiseURL:    "http://127.0.0.1:6067",
-					LastHeartbeatAt: now.Add(-30 * time.Second),
-				},
-				{
 					NodeID:          "node-b",
 					Role:            "standby",
 					AdvertiseURL:    "http://127.0.0.1:6066",
 					LastHeartbeatAt: now.Add(-3 * time.Second),
+				},
+				{
+					NodeID:          "node-c",
+					Role:            "standby",
+					AdvertiseURL:    "http://127.0.0.1:6067",
+					LastHeartbeatAt: now.Add(-30 * time.Second),
 				},
 			},
 		},

@@ -15,6 +15,7 @@ const defaultReplicationPendingLimit = 100
 // ReplicationOutboxRepository stores durable replication events.
 type ReplicationOutboxRepository interface {
 	Append(ctx context.Context, event *replication.OutboxEvent) error
+	AppendBatch(ctx context.Context, events []*replication.OutboxEvent) error
 	ListPending(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64, limit int) ([]*replication.OutboxEvent, error)
 	MarkDispatched(ctx context.Context, id int64, dispatchedAt time.Time) error
 	MarkFailed(ctx context.Context, id int64, lastError string, nextRetryAt time.Time) error
@@ -70,13 +71,20 @@ func NewPostgresReplicationReconcileRepository(db *sql.DB) *PostgresReplicationR
 
 // Append inserts a new durable replication event.
 func (r *PostgresReplicationOutboxRepository) Append(ctx context.Context, event *replication.OutboxEvent) error {
-	status := strings.TrimSpace(event.Status)
-	if status == "" {
-		status = replication.StatusPending
+	return r.AppendBatch(ctx, []*replication.OutboxEvent{event})
+}
+
+// AppendBatch inserts multiple durable replication events atomically.
+func (r *PostgresReplicationOutboxRepository) AppendBatch(ctx context.Context, events []*replication.OutboxEvent) error {
+	if len(events) == 0 {
+		return nil
 	}
-	if event.NextRetryAt.IsZero() {
-		event.NextRetryAt = time.Now()
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin replication outbox batch transaction: %w", err)
 	}
+	defer tx.Rollback()
 
 	query := `
 		INSERT INTO replication_outbox (
@@ -87,34 +95,52 @@ func (r *PostgresReplicationOutboxRepository) Append(ctx context.Context, event 
 		RETURNING id, status, attempt_count, next_retry_at, created_at, dispatched_at
 	`
 
-	var dispatchedAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query,
-		event.SourceNodeID,
-		event.TargetNodeID,
-		event.Op,
-		event.Path,
-		event.FromPath,
-		event.ToPath,
-		event.IsDir,
-		event.ContentSHA256,
-		event.FileSize,
-		event.AssignmentGeneration,
-		status,
-		event.NextRetryAt,
-		event.LastError,
-	).Scan(
-		&event.ID,
-		&event.Status,
-		&event.AttemptCount,
-		&event.NextRetryAt,
-		&event.CreatedAt,
-		&dispatchedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to append replication outbox event: %w", err)
+	for _, event := range events {
+		if event == nil {
+			return fmt.Errorf("replication outbox event is required")
+		}
+
+		status := strings.TrimSpace(event.Status)
+		if status == "" {
+			status = replication.StatusPending
+		}
+		if event.NextRetryAt.IsZero() {
+			event.NextRetryAt = time.Now()
+		}
+
+		var dispatchedAt sql.NullTime
+		err := tx.QueryRowContext(ctx, query,
+			event.SourceNodeID,
+			event.TargetNodeID,
+			event.Op,
+			event.Path,
+			event.FromPath,
+			event.ToPath,
+			event.IsDir,
+			event.ContentSHA256,
+			event.FileSize,
+			event.AssignmentGeneration,
+			status,
+			event.NextRetryAt,
+			event.LastError,
+		).Scan(
+			&event.ID,
+			&event.Status,
+			&event.AttemptCount,
+			&event.NextRetryAt,
+			&event.CreatedAt,
+			&dispatchedAt,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to append replication outbox event: %w", err)
+		}
+		if dispatchedAt.Valid {
+			event.DispatchedAt = &dispatchedAt.Time
+		}
 	}
-	if dispatchedAt.Valid {
-		event.DispatchedAt = &dispatchedAt.Time
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit replication outbox batch transaction: %w", err)
 	}
 
 	return nil

@@ -35,6 +35,8 @@ type ResolvedReplicationPeer struct {
 type ReplicationPeerResolver interface {
 	ResolveTarget(ctx context.Context) (*ResolvedReplicationPeer, error)
 	ResolveDispatchTarget(ctx context.Context) (*ResolvedReplicationPeer, error)
+	ResolveTargets(ctx context.Context) ([]*ResolvedReplicationPeer, error)
+	ResolveDispatchTargets(ctx context.Context) ([]*ResolvedReplicationPeer, error)
 	ResolveByNodeID(ctx context.Context, nodeID string, requireHealthy bool) (*ResolvedReplicationPeer, error)
 }
 
@@ -80,17 +82,11 @@ func NewReplicationPeerResolver(
 
 // ResolveTarget resolves a peer for durable source->target pairing. Stale registry rows are accepted.
 func (r *ClusterReplicationPeerResolver) ResolveTarget(ctx context.Context) (*ResolvedReplicationPeer, error) {
-	if r == nil {
-		return nil, nil
+	peers, err := r.ResolveTargets(ctx)
+	if err != nil || len(peers) == 0 {
+		return nil, err
 	}
-	peer, err := r.resolveByAssignment(ctx, false)
-	if err != nil || peer != nil {
-		return peer, err
-	}
-	if r.assignments != nil {
-		return nil, nil
-	}
-	return r.resolveByRole(ctx, false)
+	return peers[0], nil
 }
 
 // ResolveDispatchTarget resolves a currently reachable peer for active dispatch/reconcile traffic.
@@ -98,14 +94,41 @@ func (r *ClusterReplicationPeerResolver) ResolveDispatchTarget(ctx context.Conte
 	if r == nil {
 		return nil, nil
 	}
-	peer, err := r.resolveByAssignment(ctx, true)
-	if err != nil || peer != nil {
-		return peer, err
+	peers, err := r.ResolveDispatchTargets(ctx)
+	if err != nil || len(peers) == 0 {
+		return nil, err
+	}
+	return peers[0], nil
+}
+
+// ResolveTargets resolves all durable source->target peers for the current node.
+func (r *ClusterReplicationPeerResolver) ResolveTargets(ctx context.Context) ([]*ResolvedReplicationPeer, error) {
+	if r == nil {
+		return nil, nil
+	}
+	peers, err := r.resolveByAssignmentMany(ctx, false)
+	if err != nil || len(peers) > 0 {
+		return peers, err
 	}
 	if r.assignments != nil {
 		return nil, nil
 	}
-	return r.resolveByRole(ctx, true)
+	return r.resolveByRoleMany(ctx, false)
+}
+
+// ResolveDispatchTargets resolves all currently reachable peers for dispatch/reconcile traffic.
+func (r *ClusterReplicationPeerResolver) ResolveDispatchTargets(ctx context.Context) ([]*ResolvedReplicationPeer, error) {
+	if r == nil {
+		return nil, nil
+	}
+	peers, err := r.resolveByAssignmentMany(ctx, true)
+	if err != nil || len(peers) > 0 {
+		return peers, err
+	}
+	if r.assignments != nil {
+		return nil, nil
+	}
+	return r.resolveByRoleMany(ctx, true)
 }
 
 // ResolveByNodeID resolves one explicit peer node.
@@ -143,7 +166,7 @@ func (r *ClusterReplicationPeerResolver) ResolveByNodeID(ctx context.Context, no
 	return r.finalizeResolvedPeer(peer, requireHealthy)
 }
 
-func (r *ClusterReplicationPeerResolver) resolveByAssignment(ctx context.Context, requireHealthy bool) (*ResolvedReplicationPeer, error) {
+func (r *ClusterReplicationPeerResolver) resolveByAssignmentMany(ctx context.Context, requireHealthy bool) ([]*ResolvedReplicationPeer, error) {
 	if r == nil || r.assignments == nil {
 		return nil, nil
 	}
@@ -159,6 +182,7 @@ func (r *ClusterReplicationPeerResolver) resolveByAssignment(ctx context.Context
 		if err != nil {
 			return nil, err
 		}
+		peers := make([]*ResolvedReplicationPeer, 0, len(assignments))
 		for _, assignment := range assignments {
 			if assignment == nil {
 				continue
@@ -170,9 +194,10 @@ func (r *ClusterReplicationPeerResolver) resolveByAssignment(ctx context.Context
 			if peer != nil {
 				peer.Source = prefixPeerSource("assignment", peer.Source)
 				peer.AssignmentGeneration = int64Pointer(assignment.Generation)
-				return peer, nil
+				peers = append(peers, peer)
 			}
 		}
+		return dedupeResolvedPeers(peers), nil
 	case "standby":
 		assignment, err := r.assignments.GetEffectiveByStandby(ctx, selfNodeID)
 		if err != nil {
@@ -188,14 +213,15 @@ func (r *ClusterReplicationPeerResolver) resolveByAssignment(ctx context.Context
 		if peer != nil {
 			peer.Source = prefixPeerSource("assignment", peer.Source)
 			peer.AssignmentGeneration = int64Pointer(assignment.Generation)
+			return []*ResolvedReplicationPeer{peer}, nil
 		}
-		return peer, nil
+		return nil, nil
 	}
 
 	return nil, nil
 }
 
-func (r *ClusterReplicationPeerResolver) resolveByRole(ctx context.Context, requireHealthy bool) (*ResolvedReplicationPeer, error) {
+func (r *ClusterReplicationPeerResolver) resolveByRoleMany(ctx context.Context, requireHealthy bool) ([]*ResolvedReplicationPeer, error) {
 	if r.nodes == nil {
 		return nil, nil
 	}
@@ -208,31 +234,25 @@ func (r *ClusterReplicationPeerResolver) resolveByRole(ctx context.Context, requ
 		return nil, nil
 	}
 
-	var selected *cluster.Node
+	peers := make([]*ResolvedReplicationPeer, 0, len(nodes))
 	for _, node := range nodes {
 		if strings.TrimSpace(node.NodeID) == "" || strings.TrimSpace(node.AdvertiseURL) == "" {
 			continue
 		}
-		if node.Healthy(r.now().UTC(), r.maxStaleness) {
-			selected = node
-			break
+		healthy := node.Healthy(r.now().UTC(), r.maxStaleness)
+		if requireHealthy && !healthy {
+			continue
 		}
-		if !requireHealthy && selected == nil {
-			selected = node
-		}
+		lastHeartbeatAt := node.LastHeartbeatAt
+		peers = append(peers, &ResolvedReplicationPeer{
+			NodeID:          strings.TrimSpace(node.NodeID),
+			BaseURL:         strings.TrimSpace(node.AdvertiseURL),
+			Source:          "registry",
+			Healthy:         healthy,
+			LastHeartbeatAt: &lastHeartbeatAt,
+		})
 	}
-	if selected == nil {
-		return nil, nil
-	}
-
-	lastHeartbeatAt := selected.LastHeartbeatAt
-	return &ResolvedReplicationPeer{
-		NodeID:          selected.NodeID,
-		BaseURL:         strings.TrimSpace(selected.AdvertiseURL),
-		Source:          "registry",
-		Healthy:         selected.Healthy(r.now().UTC(), r.maxStaleness),
-		LastHeartbeatAt: &lastHeartbeatAt,
-	}, nil
+	return dedupeResolvedPeers(peers), nil
 }
 
 func (r *ClusterReplicationPeerResolver) finalizeResolvedPeer(peer *ResolvedReplicationPeer, requireHealthy bool) (*ResolvedReplicationPeer, error) {
@@ -269,4 +289,27 @@ func prefixPeerSource(prefix, source string) string {
 	default:
 		return prefix + "+" + source
 	}
+}
+
+func dedupeResolvedPeers(peers []*ResolvedReplicationPeer) []*ResolvedReplicationPeer {
+	if len(peers) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(peers))
+	result := make([]*ResolvedReplicationPeer, 0, len(peers))
+	for _, peer := range peers {
+		if peer == nil {
+			continue
+		}
+		nodeID := strings.TrimSpace(peer.NodeID)
+		if nodeID == "" {
+			continue
+		}
+		if _, ok := seen[nodeID]; ok {
+			continue
+		}
+		seen[nodeID] = struct{}{}
+		result = append(result, peer)
+	}
+	return result
 }

@@ -19,13 +19,23 @@ type fakeReplicationOutboxRepository struct {
 }
 
 type fakeMutationRecorderResolver struct {
-	peer *ResolvedReplicationPeer
+	peer  *ResolvedReplicationPeer
+	peers []*ResolvedReplicationPeer
 }
 
 func (r *fakeReplicationOutboxRepository) Append(_ context.Context, event *replication.OutboxEvent) error {
-	copied := *event
-	copied.ID = int64(len(r.events) + 1)
-	r.events = append(r.events, &copied)
+	return r.AppendBatch(context.Background(), []*replication.OutboxEvent{event})
+}
+
+func (r *fakeReplicationOutboxRepository) AppendBatch(_ context.Context, events []*replication.OutboxEvent) error {
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		copied := *event
+		copied.ID = int64(len(r.events) + 1)
+		r.events = append(r.events, &copied)
+	}
 	return nil
 }
 
@@ -46,11 +56,33 @@ func (r *fakeReplicationOutboxRepository) GetStatusSummary(context.Context, stri
 }
 
 func (r fakeMutationRecorderResolver) ResolveTarget(context.Context) (*ResolvedReplicationPeer, error) {
-	return r.peer, nil
+	peers, _ := r.ResolveTargets(context.Background())
+	if len(peers) == 0 {
+		return nil, nil
+	}
+	return peers[0], nil
 }
 
 func (r fakeMutationRecorderResolver) ResolveDispatchTarget(context.Context) (*ResolvedReplicationPeer, error) {
-	return r.peer, nil
+	peers, _ := r.ResolveDispatchTargets(context.Background())
+	if len(peers) == 0 {
+		return nil, nil
+	}
+	return peers[0], nil
+}
+
+func (r fakeMutationRecorderResolver) ResolveTargets(context.Context) ([]*ResolvedReplicationPeer, error) {
+	if len(r.peers) > 0 {
+		return append([]*ResolvedReplicationPeer(nil), r.peers...), nil
+	}
+	if r.peer == nil {
+		return nil, nil
+	}
+	return []*ResolvedReplicationPeer{r.peer}, nil
+}
+
+func (r fakeMutationRecorderResolver) ResolveDispatchTargets(context.Context) ([]*ResolvedReplicationPeer, error) {
+	return r.ResolveTargets(context.Background())
 }
 
 func (r fakeMutationRecorderResolver) ResolveByNodeID(context.Context, string, bool) (*ResolvedReplicationPeer, error) {
@@ -101,6 +133,55 @@ func TestMutationRecorderUpsertFile(t *testing.T) {
 	}
 	if event.AssignmentGeneration == nil || *event.AssignmentGeneration != generation {
 		t.Fatalf("unexpected assignment generation: %#v", event.AssignmentGeneration)
+	}
+}
+
+func TestMutationRecorderUpsertFileFansOutToMultipleTargets(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "alice", "docs", "hello.txt")
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	payload := []byte("hello warehouse")
+	if err := os.WriteFile(filePath, payload, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	repo := &fakeReplicationOutboxRepository{}
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Replication.Enabled = true
+	cfg.WebDAV.Directory = root
+	generationA := int64(7)
+	generationB := int64(8)
+
+	recorder := NewMutationRecorder(cfg, repo, fakeMutationRecorderResolver{
+		peers: []*ResolvedReplicationPeer{
+			{
+				NodeID:               "node-b",
+				AssignmentGeneration: &generationA,
+			},
+			{
+				NodeID:               "node-c",
+				AssignmentGeneration: &generationB,
+			},
+		},
+	}, zap.NewNop())
+	if err := recorder.UpsertFile(context.Background(), filePath); err != nil {
+		t.Fatalf("UpsertFile: %v", err)
+	}
+	if len(repo.events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(repo.events))
+	}
+	if repo.events[0].TargetNodeID != "node-b" || repo.events[1].TargetNodeID != "node-c" {
+		t.Fatalf("unexpected target fan-out: %#v", repo.events)
+	}
+	if repo.events[0].AssignmentGeneration == nil || *repo.events[0].AssignmentGeneration != generationA {
+		t.Fatalf("unexpected generation for node-b: %#v", repo.events[0].AssignmentGeneration)
+	}
+	if repo.events[1].AssignmentGeneration == nil || *repo.events[1].AssignmentGeneration != generationB {
+		t.Fatalf("unexpected generation for node-c: %#v", repo.events[1].AssignmentGeneration)
 	}
 }
 

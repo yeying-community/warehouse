@@ -25,18 +25,20 @@ import (
 )
 
 type fakeWorkerOutboxRepository struct {
-	mu               sync.Mutex
-	events           []*replication.OutboxEvent
-	listSourceNodeID string
-	listTargetNodeID string
-	listGeneration   *int64
-	listLimit        int
-	dispatched       []int64
-	failed           []failedEvent
+	mu                sync.Mutex
+	events            []*replication.OutboxEvent
+	listSourceNodeID  string
+	listTargetNodeID  string
+	listGeneration    *int64
+	listLimit         int
+	listTargetNodeIDs []string
+	dispatched        []int64
+	failed            []failedEvent
 }
 
 type fakeWorkerResolver struct {
-	peer *ResolvedReplicationPeer
+	peer  *ResolvedReplicationPeer
+	peers []*ResolvedReplicationPeer
 }
 
 type failedEvent struct {
@@ -49,6 +51,10 @@ func (r *fakeWorkerOutboxRepository) Append(context.Context, *replication.Outbox
 	return nil
 }
 
+func (r *fakeWorkerOutboxRepository) AppendBatch(context.Context, []*replication.OutboxEvent) error {
+	return nil
+}
+
 func (r *fakeWorkerOutboxRepository) ListPending(_ context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64, limit int) ([]*replication.OutboxEvent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -56,10 +62,28 @@ func (r *fakeWorkerOutboxRepository) ListPending(_ context.Context, sourceNodeID
 	r.listTargetNodeID = targetNodeID
 	r.listGeneration = assignmentGeneration
 	r.listLimit = limit
-	items := make([]*replication.OutboxEvent, len(r.events))
-	for i, event := range r.events {
+	r.listTargetNodeIDs = append(r.listTargetNodeIDs, targetNodeID)
+	items := make([]*replication.OutboxEvent, 0, len(r.events))
+	for _, event := range r.events {
+		if event == nil {
+			continue
+		}
+		if sourceNodeID != "" && event.SourceNodeID != sourceNodeID {
+			continue
+		}
+		if targetNodeID != "" && event.TargetNodeID != targetNodeID {
+			continue
+		}
+		if assignmentGeneration != nil {
+			if event.AssignmentGeneration == nil || *event.AssignmentGeneration != *assignmentGeneration {
+				continue
+			}
+		}
 		copied := *event
-		items[i] = &copied
+		items = append(items, &copied)
+		if limit > 0 && len(items) >= limit {
+			break
+		}
 	}
 	return items, nil
 }
@@ -83,11 +107,33 @@ func (r *fakeWorkerOutboxRepository) GetStatusSummary(context.Context, string, s
 }
 
 func (r fakeWorkerResolver) ResolveTarget(context.Context) (*ResolvedReplicationPeer, error) {
-	return r.peer, nil
+	peers, _ := r.ResolveTargets(context.Background())
+	if len(peers) == 0 {
+		return nil, nil
+	}
+	return peers[0], nil
 }
 
 func (r fakeWorkerResolver) ResolveDispatchTarget(context.Context) (*ResolvedReplicationPeer, error) {
-	return r.peer, nil
+	peers, _ := r.ResolveDispatchTargets(context.Background())
+	if len(peers) == 0 {
+		return nil, nil
+	}
+	return peers[0], nil
+}
+
+func (r fakeWorkerResolver) ResolveTargets(context.Context) ([]*ResolvedReplicationPeer, error) {
+	if len(r.peers) > 0 {
+		return append([]*ResolvedReplicationPeer(nil), r.peers...), nil
+	}
+	if r.peer == nil {
+		return nil, nil
+	}
+	return []*ResolvedReplicationPeer{r.peer}, nil
+}
+
+func (r fakeWorkerResolver) ResolveDispatchTargets(context.Context) ([]*ResolvedReplicationPeer, error) {
+	return r.ResolveTargets(context.Background())
 }
 
 func (r fakeWorkerResolver) ResolveByNodeID(context.Context, string, bool) (*ResolvedReplicationPeer, error) {
@@ -253,6 +299,84 @@ func TestReplicationWorkerMarksFailedAndStopsBatch(t *testing.T) {
 	}
 	if outbox.failed[0].lastError == "" {
 		t.Fatalf("expected failure reason to be captured")
+	}
+}
+
+func TestReplicationWorkerDispatchOnceContinuesAcrossTargets(t *testing.T) {
+	successServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer successServer.Close()
+
+	failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer failedServer.Close()
+
+	generationA := int64(3)
+	generationB := int64(4)
+	outbox := &fakeWorkerOutboxRepository{
+		events: []*replication.OutboxEvent{
+			{
+				ID:                   1,
+				SourceNodeID:         "node-a",
+				TargetNodeID:         "node-b",
+				AssignmentGeneration: &generationA,
+				Op:                   replication.OpEnsureDir,
+				Path:                 stringPointer("/alice/docs"),
+				IsDir:                true,
+			},
+			{
+				ID:                   2,
+				SourceNodeID:         "node-a",
+				TargetNodeID:         "node-c",
+				AssignmentGeneration: &generationB,
+				Op:                   replication.OpEnsureDir,
+				Path:                 stringPointer("/alice/fail"),
+				IsDir:                true,
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Replication.Enabled = true
+	cfg.Replication.SharedSecret = "shared-secret"
+	cfg.Replication.AllowedClockSkew = time.Minute
+	cfg.Replication.DispatchInterval = time.Second
+	cfg.Replication.RequestTimeout = 5 * time.Second
+	cfg.Replication.BatchSize = 10
+	cfg.Replication.RetryBackoffBase = time.Second
+	cfg.Replication.MaxRetryBackoff = time.Minute
+	cfg.WebDAV.Directory = t.TempDir()
+
+	worker := NewReplicationWorker(cfg, outbox, fakeWorkerResolver{
+		peers: []*ResolvedReplicationPeer{
+			{
+				NodeID:               "node-b",
+				BaseURL:              successServer.URL,
+				AssignmentGeneration: &generationA,
+			},
+			{
+				NodeID:               "node-c",
+				BaseURL:              failedServer.URL,
+				AssignmentGeneration: &generationB,
+			},
+		},
+	}, zap.NewNop())
+
+	if err := worker.DispatchOnce(context.Background()); err != nil {
+		t.Fatalf("expected dispatch loop to isolate peer failure, got %v", err)
+	}
+	if len(outbox.dispatched) != 1 || outbox.dispatched[0] != 1 {
+		t.Fatalf("expected target node-b to be dispatched successfully, got %#v", outbox.dispatched)
+	}
+	if len(outbox.failed) != 1 || outbox.failed[0].id != 2 {
+		t.Fatalf("expected target node-c to be marked failed, got %#v", outbox.failed)
+	}
+	if len(outbox.listTargetNodeIDs) != 2 {
+		t.Fatalf("expected both targets to be scanned, got %#v", outbox.listTargetNodeIDs)
 	}
 }
 

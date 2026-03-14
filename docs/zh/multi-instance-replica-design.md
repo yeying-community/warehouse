@@ -10,7 +10,7 @@
 当前项目的核心元数据已经集中在 PostgreSQL，但**文件内容、回收站、WebDAV 锁、挑战码/邮箱验证码**仍有明显的单机依赖，因此：
 
 - **当前最稳妥支持的形态**：单实例
-- **短期推荐的高可用形态**：`1 active + 1 standby`，文件目录分别落在两台机器的本地挂载目录；由应用新增 `internal` 接口完成 active 到 standby 的增量同步；数据库采用 PostgreSQL 主备或等效高可用
+- **短期推荐的高可用形态**：`1 active + N standby`，最小可以先从 `1 standby` 起步；文件目录分别落在各机器的本地挂载目录；由应用新增 `internal` 接口完成 active 到 standby 的增量同步；数据库采用 PostgreSQL 主备或等效高可用
 - **正式多副本目标**：
   - 共享 PostgreSQL
   - 共享 POSIX 文件存储
@@ -66,7 +66,7 @@
 - 同一个客户端的 `LOCK/UNLOCK/PUT/MOVE` 如果被路由到不同副本，锁状态不共享
 - 多副本下 WebDAV 锁语义会失真
 
-但对于阶段一单活双机，这个问题不是第一优先级，因为 standby 不接用户 WebDAV 流量。
+但对于阶段一单活 + standby 方案，这个问题不是第一优先级，因为 standby 不接用户 WebDAV 流量；最小落地形态仍然可以先从双机开始。
 
 #### 2.2.3 挑战码和邮箱验证码是内存态
 
@@ -101,12 +101,12 @@
 
 ## 3. 可选方案
 
-## 3.1 方案 A：单活双机 + `internal` 增量同步（短期推荐）
+## 3.1 方案 A：单活 + N standby + `internal` 增量同步（短期推荐）
 
 ### 架构
 
 - 1 个 active 应用实例
-- 1 个 standby 应用实例
+- 1~N 个 standby 应用实例
 - active 暴露 `public` / `admin` 接口
 - standby 不接用户流量，只接 `internal` 同步接口
 - active / standby 各自使用本地 `webdav.directory`
@@ -135,12 +135,12 @@
 - 希望由 `warehouse` 自己掌握 standby 数据同步状态
 - 愿意接受阶段一是“单活 + 异步复制 + 明确 RPO”的模型
 
-## 3.2 方案 B：单活双机 + 外部复制链路（备选）
+## 3.2 方案 B：单活 + standby + 外部复制链路（备选）
 
 ### 架构
 
 - 1 个 active 应用实例
-- 1 个 standby 应用实例
+- 1~N 个 standby 应用实例
 - active / standby 各自挂本地目录
 - 文件复制由存储层、块设备镜像、`rsync/lsyncd` 等外部链路完成
 - PostgreSQL 仍需主备或等效高可用
@@ -253,7 +253,7 @@
 
 也就是：
 
-1. 先把部署形态升级到“单活双机 + 本地文件双份 + `internal` 增量同步 + PostgreSQL 高可用”
+1. 先把部署形态升级到“单活 + 多 standby + 本地文件双份 + `internal` 增量同步 + PostgreSQL 高可用”
 2. 再把进程内状态外置，升级到真正多副本
 
 这样做的原因：
