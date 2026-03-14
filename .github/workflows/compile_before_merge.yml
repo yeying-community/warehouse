@@ -37,8 +37,7 @@ jobs:
       - name: Build backend
         run: |
           mkdir -p build
-          go build -o build/warehouse cmd/server/main.go
-          go build -o build/user cmd/user/main.go
+          go build -o build/warehouse ./cmd/warehouse
 
       - name: Install frontend dependencies
         working-directory: web
