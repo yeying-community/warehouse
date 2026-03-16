@@ -13,6 +13,7 @@
 - `webdav-flow.md`：WebDAV 请求处理流程与配额/权限/回收站
 - `data-model.md`：数据库表结构与关系
 - `share-recycle.md`：分享与回收站设计
+- `share-evolution-plan.md`：目录共享 / 分组共享 / 全员共享的统一演进方案
 - `multi-instance-replica-design.md`：多实例 / 多副本部署方案与演进建议
 - `ha-active-standby-deployment.md`：阶段一高可用部署（单活 + 多 standby）落地指南
 - `internal-replication-design.md`：阶段一 `internal` 复制版 standby / 多 standby 设计

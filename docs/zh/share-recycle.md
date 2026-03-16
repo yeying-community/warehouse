@@ -52,6 +52,10 @@ sequenceDiagram
 ### 创建与权限
 
 - 目标用户通过钱包地址匹配。
+- 支持三种共享受众模式：
+  - 地址共享（`targetMode=addresses`，可传多个地址）
+  - 分组共享（`targetMode=groups`，使用 `groupIds` 传多个分组并展开为用户快照）
+  - 全员共享（`targetMode=all_users`）
 - `permissions` 可包含 `read/create/update/delete`（或 `CRUD` 字符串）。
 - 支持文件或目录分享。
 - 创建成功后自动把目标地址写入地址簿（若不存在）。
@@ -74,6 +78,12 @@ sequenceDiagram
 
 - 下载、上传、创建目录、重命名、删除均会先校验对应权限位。
 
+### 兼容与演进
+
+- 接口路径保持 `share/user/*` 不变，但创建接口请求体已升级为 `targetMode + targetAddresses/groupIds`；不再兼容旧的 `targetAddress` 单字段调用。
+- 后端存储已切换到统一站内共享模型（`internal_share_items + internal_share_audiences`）。
+- 旧 `share_user_items` 会在启动迁移时自动回填到新模型，保证历史数据可读可用。
+
 ## 回收站
 
 ### 写入回收站（由 WebDAV DELETE 触发）
@@ -92,3 +102,8 @@ sequenceDiagram
 - 新规则：`{hash}_{原文件名}`
 - 兼容旧规则：`{username}_{directory}_{name}_{timestamp}`
 
+## 与 Standby 的关系
+
+- 共享元数据（公开分享、站内共享、受众）都存储在 PostgreSQL，active/standby 共享同一数据库时可直接一致读取。
+- 共享目录内的上传、重命名、删除仍走文件系统变更路径，并通过复制 outbox / internal replication 同步到 standby。
+- 因此本次站内共享模型演进不会绕开现有 standby 复制链路。

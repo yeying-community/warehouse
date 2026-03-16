@@ -13,8 +13,11 @@ erDiagram
     USERS ||--o{ ADDRESS_CONTACTS : contacts
     ADDRESS_GROUPS ||--o{ ADDRESS_CONTACTS : contains
 
-    USERS ||--o{ SHARE_USER_ITEMS : owner
-    USERS ||--o{ SHARE_USER_ITEMS : target
+    USERS ||--o{ SHARE_USER_ITEMS : owner_legacy
+    USERS ||--o{ SHARE_USER_ITEMS : target_legacy
+    USERS ||--o{ INTERNAL_SHARE_ITEMS : owner
+    INTERNAL_SHARE_ITEMS ||--o{ INTERNAL_SHARE_AUDIENCES : has
+    USERS ||--o{ INTERNAL_SHARE_AUDIENCES : target_user
 
     USERS {
         string id PK
@@ -79,6 +82,30 @@ erDiagram
         datetime created_at
     }
 
+    INTERNAL_SHARE_ITEMS {
+        string id PK
+        string owner_user_id FK
+        string owner_username
+        string name
+        string path
+        bool is_dir
+        string permissions
+        datetime expires_at
+        string status
+        datetime created_at
+        datetime updated_at
+    }
+
+    INTERNAL_SHARE_AUDIENCES {
+        string id PK
+        string share_id FK
+        string audience_type
+        string target_user_id FK
+        string target_wallet_address
+        string source_group_id FK
+        datetime created_at
+    }
+
     ADDRESS_GROUPS {
         string id PK
         string user_id FK
@@ -103,8 +130,15 @@ erDiagram
 - **user_rules**: path-level rules that override default permissions.
 - **recycle_items**: deleted file records for restore/permanent delete.
 - **share_items**: public share records keyed by token.
-- **share_user_items**: targeted share records (to specific users).
+- **share_user_items**: legacy targeted-share table kept for backward compatibility.
+- **internal_share_items / internal_share_audiences**: internal-share canonical tables for single-user, group-expanded, and all-users audiences.
 - **address_groups / address_contacts**: address book and contacts.
+
+## Migration & Compatibility
+
+- Startup migration idempotently backfills legacy `share_user_items` rows into `internal_share_items / internal_share_audiences`.
+- New writes are persisted to `internal_share_*`; legacy table remains mainly for compatibility and rollback fallback.
+- API path remains unchanged (`/api/v1/public/share/user/*`), but create payload has been upgraded to `targetMode + targetAddresses/groupIds`; legacy single-field `targetAddress` payload is no longer supported.
 
 ## Indexes & Constraints (summary)
 
@@ -112,6 +146,10 @@ erDiagram
 - `users.wallet_address` unique (when non-null)
 - `users.email` unique (when non-null)
 - `share_items.token` unique
+- `internal_share_items.id` unique
+- `internal_share_audiences.id` unique
+- `internal_share_audiences(share_id, audience_type, target_user_id)` unique when `audience_type='user'`
+- `internal_share_audiences(share_id, audience_type)` unique when `audience_type='all_users'`
 - `recycle_items.hash` unique
 - `address_groups(user_id, name)` unique
 - `address_contacts(user_id, wallet_address)` unique

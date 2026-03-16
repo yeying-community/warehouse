@@ -95,9 +95,9 @@ const shareUserDialogVisible = ref(false)
 const shareUserSubmitting = ref(false)
 const shareUserTarget = ref<FileItem | null>(null)
 const shareUserForm = ref({
-  targetMode: 'single' as 'single' | 'group',
-  targetAddress: '',
-  groupId: '',
+  targetMode: 'addresses' as 'addresses' | 'groups' | 'all_users',
+  targetAddresses: [] as string[],
+  groupIds: [] as string[],
   permissions: ['read'] as string[],
   ...createDefaultShareExpiryForm()
 })
@@ -406,12 +406,12 @@ const previewDirty = computed(
   () => previewMode.value === 'text' && !previewReadOnly.value && previewContent.value !== previewOrigin.value
 )
 const groupedContacts = computed(() => {
-  const groupId = shareUserForm.value.groupId
-  if (shareUserForm.value.targetMode !== 'group') return []
-  if (!groupId) {
-    return addressContacts.value.filter(item => !item.groupId)
-  }
-  return addressContacts.value.filter(item => item.groupId === groupId)
+  if (shareUserForm.value.targetMode !== 'groups') return []
+  const groupSet = new Set(
+    shareUserForm.value.groupIds.map(item => String(item || '').trim())
+  )
+  if (!groupSet.size) return []
+  return addressContacts.value.filter(item => groupSet.has(String(item.groupId || '').trim()))
 })
 const quotaAvailable = computed(() => {
   if (quota.value.unlimited) return null
@@ -2538,9 +2538,9 @@ function getShareLink(item: ShareItem): string {
 function openShareUserDialog(item: FileItem) {
   shareUserTarget.value = item
   shareUserForm.value = {
-    targetMode: 'single',
-    targetAddress: '',
-    groupId: '',
+    targetMode: 'addresses',
+    targetAddresses: [],
+    groupIds: [],
     permissions: ['read'],
     ...createDefaultShareExpiryForm()
   }
@@ -2563,41 +2563,55 @@ async function submitShareUser() {
 
   shareUserSubmitting.value = true
   try {
-    if (shareUserForm.value.targetMode === 'group') {
-      const targets = groupedContacts.value.map(item => item.walletAddress).filter(Boolean)
-      const uniqueTargets = Array.from(new Set(targets.map(addr => addr.trim()).filter(Boolean)))
-      if (!uniqueTargets.length) {
-        showError('该分组没有可用地址')
+    if (shareUserForm.value.targetMode === 'groups') {
+      const groupIds = Array.from(
+        new Set(shareUserForm.value.groupIds.map(item => String(item || '').trim()))
+      )
+      if (!groupIds.length) {
+        showError('请至少选择一个分组')
         return
       }
-      const tasks = uniqueTargets.map(address => directShareApi.create({
-        path: rawPath,
-        targetAddress: address,
-        permissions: shareUserForm.value.permissions,
-        ...expiryPayload
-      }))
-      const results = await Promise.allSettled(tasks)
-      const successCount = results.filter(result => result.status === 'fulfilled').length
-      const failCount = results.length - successCount
-      if (successCount > 0) {
-        showSuccess(`已共享给 ${successCount} 位用户${failCount ? `，失败 ${failCount} 位` : ''}`)
-      } else {
-        showError('共享失败')
-        return
-      }
-    } else {
-      const targetAddress = shareUserForm.value.targetAddress.trim()
-      if (!targetAddress) {
-        showError('请输入目标钱包地址')
+      if (!groupedContacts.value.length) {
+        showError('所选分组没有可用地址')
         return
       }
       await directShareApi.create({
         path: rawPath,
-        targetAddress,
+        targetMode: 'groups',
+        groupIds,
         permissions: shareUserForm.value.permissions,
         ...expiryPayload
       })
-      showSuccess('已分享给指定用户')
+      showSuccess(`已共享给所选分组内 ${groupedContacts.value.length} 位用户`)
+    } else if (shareUserForm.value.targetMode === 'all_users') {
+      await directShareApi.create({
+        path: rawPath,
+        targetMode: 'all_users',
+        permissions: shareUserForm.value.permissions,
+        ...expiryPayload
+      })
+      showSuccess('已共享给所有用户')
+    } else {
+      const targetAddresses = Array.from(
+        new Set(
+          shareUserForm.value.targetAddresses
+            .map(item => item.trim())
+            .filter(Boolean)
+            .map(item => item.toLowerCase())
+        )
+      )
+      if (!targetAddresses.length) {
+        showError('请至少输入一个目标钱包地址')
+        return
+      }
+      await directShareApi.create({
+        path: rawPath,
+        targetMode: 'addresses',
+        targetAddresses,
+        permissions: shareUserForm.value.permissions,
+        ...expiryPayload
+      })
+      showSuccess(`已共享给 ${targetAddresses.length} 个地址`)
     }
     shareUserDialogVisible.value = false
     if (showShare.value && shareTab.value === 'direct') {
@@ -2914,11 +2928,13 @@ watch(createFolderDialogVisible, visible => {
 })
 
 watch(addressGroups, groups => {
-  const groupId = shareUserForm.value.groupId
-  if (!groupId) return
-  const exists = groups.some(group => group.id === groupId)
-  if (!exists) {
-    shareUserForm.value.groupId = ''
+  const validIDs = new Set(groups.map(group => group.id))
+  const normalized = Array.from(
+    new Set(shareUserForm.value.groupIds.map(item => String(item || '').trim()))
+  ).filter(id => id === '' || validIDs.has(id))
+  if (normalized.length !== shareUserForm.value.groupIds.length ||
+      normalized.some((id, index) => id !== shareUserForm.value.groupIds[index])) {
+    shareUserForm.value.groupIds = normalized
   }
 })
 

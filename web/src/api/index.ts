@@ -210,6 +210,10 @@ export interface DirectShareItem {
   isDir: boolean
   permissions: string[]
   targetWallet?: string
+  targetType?: 'addresses' | 'groups' | 'all_users'
+  targetCount?: number
+  audienceCount?: number
+  allUsers?: boolean
   ownerWallet?: string
   ownerName?: string
   expiresAt?: string
@@ -280,7 +284,9 @@ export const shareApi = {
 export const directShareApi = {
   create(payload: {
     path: string
-    targetAddress: string
+    targetAddresses?: string[]
+    targetMode: 'addresses' | 'groups' | 'all_users'
+    groupIds?: string[]
     permissions: string[]
     expiresIn?: number
     expiresValue?: number
@@ -309,6 +315,18 @@ export const directShareApi = {
       method: 'POST',
       body: { id }
     })
+  },
+
+  listAudiences(shareId: string) {
+    const query = new URLSearchParams({ shareId })
+    return request<{
+      items: Array<{
+        type: string
+        targetUserId?: string
+        targetWallet?: string
+        sourceGroupId?: string
+      }>
+    }>(`/api/v1/public/share/user/audiences?${query.toString()}`)
   },
 
   listEntries(shareId: string, path: string) {

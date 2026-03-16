@@ -798,10 +798,32 @@ Body：
 ```json
 {
   "path": "/docs",
-  "targetAddress": "0x...",
+  "targetMode": "addresses",
+  "targetAddresses": ["0xabc...", "0xdef..."],
   "permissions": ["read", "create", "update", "delete"],
   "expiresValue": 2,
   "expiresUnit": "week"
+}
+```
+
+分组共享请求示例：
+
+```json
+{
+  "path": "/docs",
+  "targetMode": "groups",
+  "groupIds": ["g-1", "g-2"],
+  "permissions": ["read", "update"]
+}
+```
+
+全员共享请求示例：
+
+```json
+{
+  "path": "/docs",
+  "targetMode": "all_users",
+  "permissions": ["read"]
 }
 ```
 
@@ -810,11 +832,25 @@ Body：
 - `expiresValue=0` 表示永不过期。
 - `expiresUnit` 支持 `minute`、`hour`、`day`、`week`、`month`、`year`。
 - 兼容旧字段 `expiresIn`，单位仍为秒。
+- `targetMode` 支持：
+  - `addresses`：地址共享（使用 `targetAddresses`，可传 1~N 个地址）
+  - `groups`：按地址簿多分组共享（使用 `groupIds`，可传多个分组 ID，后端会展开为用户快照）
+  - `all_users`：共享给所有已登录用户
+- 路径仍为 `/api/v1/public/share/user/create`，但请求体语义已切换到上述新结构；不再兼容旧的 `targetAddress` 单字段调用。
+
+创建响应新增字段：
+
+- `targetType`：`addresses` / `groups` / `all_users`
+- `targetCount`：用户受众数量（去重后）
+- `audienceCount`：总受众数量（包含 `all_users`）
+- `allUsers`：是否包含全员受众
+- `targetWallet`：展示字段；地址共享/分组/全员时会返回占位值（例如 `@addresses:N` / `@groups:N` / `@all_users`）
 
 ### 11.2 列表/撤销
 
 - `GET /api/v1/public/share/user/list`（我分享的）
 - `GET /api/v1/public/share/user/received`（分享给我的）
+- `GET /api/v1/public/share/user/audiences?shareId=...`（查看某条共享的受众明细，仅 owner）
 - `POST /api/v1/public/share/user/revoke`（Body：`{"id":"..."}`）
 
 列表响应示例（我分享的）：
@@ -828,7 +864,11 @@ Body：
       "path": "/docs",
       "isDir": true,
       "permissions": ["read", "update"],
-      "targetWallet": "0x...",
+      "targetWallet": "@groups:3",
+      "targetType": "groups",
+      "targetCount": 3,
+      "audienceCount": 3,
+      "allUsers": false,
       "expiresAt": "2024-01-02 12:00:00",
       "createdAt": "2024-01-01 12:00:00"
     }
@@ -847,11 +887,28 @@ Body：
       "path": "/docs",
       "isDir": true,
       "permissions": ["read"],
+      "targetWallet": "@all_users",
+      "targetType": "all_users",
+      "targetCount": 0,
+      "audienceCount": 1,
+      "allUsers": true,
       "ownerWallet": "0x...",
       "ownerName": "alice",
       "expiresAt": "2024-01-02 12:00:00",
       "createdAt": "2024-01-01 12:00:00"
     }
+  ]
+}
+```
+
+受众明细响应示例：
+
+```json
+{
+  "items": [
+    { "type": "user", "targetUserId": "u-1", "targetWallet": "0xabc..." },
+    { "type": "user", "targetUserId": "u-2", "targetWallet": "0xdef...", "sourceGroupId": "g-1" },
+    { "type": "all_users" }
   ]
 }
 ```

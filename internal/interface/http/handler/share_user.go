@@ -60,12 +60,14 @@ func (h *ShareUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		Path          string   `json:"path"`
-		TargetAddress string   `json:"targetAddress"`
-		Permissions   []string `json:"permissions"`
-		ExpiresIn     int64    `json:"expiresIn"`
-		ExpiresValue  int64    `json:"expiresValue"`
-		ExpiresUnit   string   `json:"expiresUnit"`
+		Path            string   `json:"path"`
+		TargetAddresses []string `json:"targetAddresses"`
+		TargetMode      string   `json:"targetMode"`
+		GroupIDs        []string `json:"groupIds"`
+		Permissions     []string `json:"permissions"`
+		ExpiresIn       int64    `json:"expiresIn"`
+		ExpiresValue    int64    `json:"expiresValue"`
+		ExpiresUnit     string   `json:"expiresUnit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.Warn("invalid request body", zap.Error(err))
@@ -76,10 +78,6 @@ func (h *ShareUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "path is required", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.TargetAddress) == "" {
-		http.Error(w, "targetAddress is required", http.StatusBadRequest)
-		return
-	}
 
 	perms, err := parsePermissionList(req.Permissions)
 	if err != nil {
@@ -87,11 +85,38 @@ func (h *ShareUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	item, err := h.shareUserService.Create(r.Context(), u, req.TargetAddress, req.Path, perms.String(), service.ShareExpiryInput{
+	expiry := service.ShareExpiryInput{
 		ExpiresIn:    req.ExpiresIn,
 		ExpiresValue: req.ExpiresValue,
 		ExpiresUnit:  req.ExpiresUnit,
-	})
+	}
+
+	mode := strings.TrimSpace(strings.ToLower(req.TargetMode))
+	if mode == "" {
+		http.Error(w, "targetMode is required", http.StatusBadRequest)
+		return
+	}
+
+	var item *shareuser.ShareUserItem
+	switch mode {
+	case "all_users":
+		item, err = h.shareUserService.CreateForAllUsers(r.Context(), u, req.Path, perms.String(), expiry)
+	case "groups":
+		if len(req.GroupIDs) == 0 {
+			http.Error(w, "groupIds is required", http.StatusBadRequest)
+			return
+		}
+		item, err = h.shareUserService.CreateByGroups(r.Context(), u, req.GroupIDs, req.Path, perms.String(), expiry)
+	case "addresses":
+		if countNonEmpty(req.TargetAddresses) == 0 {
+			http.Error(w, "targetAddresses is required", http.StatusBadRequest)
+			return
+		}
+		item, err = h.shareUserService.CreateByWallets(r.Context(), u, req.TargetAddresses, req.Path, perms.String(), expiry)
+	default:
+		http.Error(w, "invalid targetMode, supported: addresses|groups|all_users", http.StatusBadRequest)
+		return
+	}
 	if err != nil {
 		if errors.Is(err, auth.ErrAppScopeDenied) || errors.Is(err, auth.ErrAppScopeRequired) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -106,13 +131,17 @@ func (h *ShareUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	resp := map[string]any{
-		"id":           item.ID,
-		"name":         item.Name,
-		"path":         item.Path,
-		"isDir":        item.IsDir,
-		"permissions":  permissionsToStrings(perms),
-		"targetWallet": item.TargetWalletAddress,
-		"createdAt":    item.CreatedAt.Format(timeLayout),
+		"id":            item.ID,
+		"name":          item.Name,
+		"path":          item.Path,
+		"isDir":         item.IsDir,
+		"permissions":   permissionsToStrings(perms),
+		"targetWallet":  formatTargetWallet(item),
+		"targetType":    item.AudienceType,
+		"targetCount":   item.TargetCount,
+		"audienceCount": item.AudienceCount,
+		"allUsers":      item.AllUsers || item.AudienceType == shareuser.AudienceTypeAllUsers,
+		"createdAt":     item.CreatedAt.Format(timeLayout),
 	}
 	if item.ExpiresAt != nil {
 		resp["expiresAt"] = item.ExpiresAt.Format(timeLayout)
@@ -153,16 +182,20 @@ func (h *ShareUserHandler) HandleListMine(w http.ResponseWriter, r *http.Request
 	}
 
 	type itemResp struct {
-		ID           string   `json:"id"`
-		Name         string   `json:"name"`
-		Path         string   `json:"path"`
-		IsDir        bool     `json:"isDir"`
-		Permissions  []string `json:"permissions"`
-		TargetWallet string   `json:"targetWallet"`
-		OwnerWallet  string   `json:"ownerWallet,omitempty"`
-		OwnerName    string   `json:"ownerName,omitempty"`
-		ExpiresAt    string   `json:"expiresAt,omitempty"`
-		CreatedAt    string   `json:"createdAt"`
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		Path          string   `json:"path"`
+		IsDir         bool     `json:"isDir"`
+		Permissions   []string `json:"permissions"`
+		TargetWallet  string   `json:"targetWallet"`
+		TargetType    string   `json:"targetType,omitempty"`
+		TargetCount   int      `json:"targetCount,omitempty"`
+		AudienceCount int      `json:"audienceCount,omitempty"`
+		AllUsers      bool     `json:"allUsers,omitempty"`
+		OwnerWallet   string   `json:"ownerWallet,omitempty"`
+		OwnerName     string   `json:"ownerName,omitempty"`
+		ExpiresAt     string   `json:"expiresAt,omitempty"`
+		CreatedAt     string   `json:"createdAt"`
 	}
 
 	resp := struct {
@@ -174,15 +207,19 @@ func (h *ShareUserHandler) HandleListMine(w http.ResponseWriter, r *http.Request
 	for _, item := range items {
 		perms := permissionsFromStored(item.Permissions)
 		row := itemResp{
-			ID:           item.ID,
-			Name:         item.Name,
-			Path:         item.Path,
-			IsDir:        item.IsDir,
-			Permissions:  permissionsToStrings(perms),
-			TargetWallet: item.TargetWalletAddress,
-			OwnerWallet:  u.WalletAddress,
-			OwnerName:    u.Username,
-			CreatedAt:    item.CreatedAt.Format(timeLayout),
+			ID:            item.ID,
+			Name:          item.Name,
+			Path:          item.Path,
+			IsDir:         item.IsDir,
+			Permissions:   permissionsToStrings(perms),
+			TargetWallet:  formatTargetWallet(item),
+			TargetType:    item.AudienceType,
+			TargetCount:   item.TargetCount,
+			AudienceCount: item.AudienceCount,
+			AllUsers:      item.AllUsers,
+			OwnerWallet:   u.WalletAddress,
+			OwnerName:     u.Username,
+			CreatedAt:     item.CreatedAt.Format(timeLayout),
 		}
 		if item.ExpiresAt != nil {
 			row.ExpiresAt = item.ExpiresAt.Format(timeLayout)
@@ -225,16 +262,20 @@ func (h *ShareUserHandler) HandleListReceived(w http.ResponseWriter, r *http.Req
 	}
 
 	type itemResp struct {
-		ID           string   `json:"id"`
-		Name         string   `json:"name"`
-		Path         string   `json:"path"`
-		IsDir        bool     `json:"isDir"`
-		Permissions  []string `json:"permissions"`
-		TargetWallet string   `json:"targetWallet,omitempty"`
-		OwnerWallet  string   `json:"ownerWallet,omitempty"`
-		OwnerName    string   `json:"ownerName,omitempty"`
-		ExpiresAt    string   `json:"expiresAt,omitempty"`
-		CreatedAt    string   `json:"createdAt"`
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		Path          string   `json:"path"`
+		IsDir         bool     `json:"isDir"`
+		Permissions   []string `json:"permissions"`
+		TargetWallet  string   `json:"targetWallet,omitempty"`
+		TargetType    string   `json:"targetType,omitempty"`
+		TargetCount   int      `json:"targetCount,omitempty"`
+		AudienceCount int      `json:"audienceCount,omitempty"`
+		AllUsers      bool     `json:"allUsers,omitempty"`
+		OwnerWallet   string   `json:"ownerWallet,omitempty"`
+		OwnerName     string   `json:"ownerName,omitempty"`
+		ExpiresAt     string   `json:"expiresAt,omitempty"`
+		CreatedAt     string   `json:"createdAt"`
 	}
 
 	resp := struct {
@@ -246,14 +287,18 @@ func (h *ShareUserHandler) HandleListReceived(w http.ResponseWriter, r *http.Req
 	for _, item := range items {
 		perms := permissionsFromStored(item.Permissions)
 		row := itemResp{
-			ID:           item.ID,
-			Name:         item.Name,
-			Path:         item.Path,
-			IsDir:        item.IsDir,
-			Permissions:  permissionsToStrings(perms),
-			TargetWallet: u.WalletAddress,
-			OwnerName:    item.OwnerUsername,
-			CreatedAt:    item.CreatedAt.Format(timeLayout),
+			ID:            item.ID,
+			Name:          item.Name,
+			Path:          item.Path,
+			IsDir:         item.IsDir,
+			Permissions:   permissionsToStrings(perms),
+			TargetWallet:  formatTargetWalletForViewer(item, u.WalletAddress),
+			TargetType:    item.AudienceType,
+			TargetCount:   item.TargetCount,
+			AudienceCount: item.AudienceCount,
+			AllUsers:      item.AllUsers,
+			OwnerName:     item.OwnerUsername,
+			CreatedAt:     item.CreatedAt.Format(timeLayout),
 		}
 		if item.ExpiresAt != nil {
 			row.ExpiresAt = item.ExpiresAt.Format(timeLayout)
@@ -314,6 +359,67 @@ func (h *ShareUserHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write([]byte(`{"message":"revoked successfully"}`)); err != nil {
 		h.logger.Error("failed to write response", zap.Error(err))
+	}
+}
+
+// HandleListAudiences 查看共享受众（仅 owner 可查看）
+func (h *ShareUserHandler) HandleListAudiences(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		h.logger.Error("user not found in context")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	shareID := strings.TrimSpace(r.URL.Query().Get("shareId"))
+	if shareID == "" {
+		http.Error(w, "shareId is required", http.StatusBadRequest)
+		return
+	}
+
+	audiences, err := h.shareUserService.ListAudiences(r.Context(), u, shareID)
+	if err != nil {
+		if errors.Is(err, auth.ErrAppScopeDenied) || errors.Is(err, auth.ErrAppScopeRequired) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		h.logger.Error("failed to list share audiences",
+			zap.String("owner", u.Username),
+			zap.String("share_id", shareID),
+			zap.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	type audienceResp struct {
+		Type         string `json:"type"`
+		TargetUserID string `json:"targetUserId,omitempty"`
+		TargetWallet string `json:"targetWallet,omitempty"`
+		SourceGroup  string `json:"sourceGroupId,omitempty"`
+	}
+	resp := struct {
+		Items []audienceResp `json:"items"`
+	}{
+		Items: make([]audienceResp, 0, len(audiences)),
+	}
+	for _, aud := range audiences {
+		resp.Items = append(resp.Items, audienceResp{
+			Type:         aud.AudienceType,
+			TargetUserID: aud.TargetUserID,
+			TargetWallet: aud.TargetWallet,
+			SourceGroup:  aud.SourceGroupID,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error("failed to encode response", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -885,4 +991,49 @@ func buildShareEntryPath(prefix, name string, isDir bool) string {
 		p += "/"
 	}
 	return p
+}
+
+func formatTargetWallet(item *shareuser.ShareUserItem) string {
+	if item == nil {
+		return ""
+	}
+	if item.AllUsers || item.AudienceType == shareuser.AudienceTypeAllUsers {
+		return "@all_users"
+	}
+	if item.AudienceType == "group" || item.AudienceType == "groups" {
+		return fmt.Sprintf("@groups:%d", item.TargetCount)
+	}
+	if item.TargetCount > 1 || item.AudienceType == "addresses" {
+		return fmt.Sprintf("@addresses:%d", item.TargetCount)
+	}
+	return strings.TrimSpace(item.TargetWalletAddress)
+}
+
+func formatTargetWalletForViewer(item *shareuser.ShareUserItem, viewerWallet string) string {
+	if item == nil {
+		return ""
+	}
+	if item.AllUsers || item.AudienceType == shareuser.AudienceTypeAllUsers {
+		return "@all_users"
+	}
+	if item.AudienceType == "group" || item.AudienceType == "groups" {
+		return fmt.Sprintf("@groups:%d", item.TargetCount)
+	}
+	if item.TargetCount > 1 || item.AudienceType == "addresses" {
+		return fmt.Sprintf("@addresses:%d", item.TargetCount)
+	}
+	if wallet := strings.TrimSpace(item.TargetWalletAddress); wallet != "" {
+		return wallet
+	}
+	return strings.TrimSpace(viewerWallet)
+}
+
+func countNonEmpty(items []string) int {
+	count := 0
+	for _, item := range items {
+		if strings.TrimSpace(item) != "" {
+			count++
+		}
+	}
+	return count
 }

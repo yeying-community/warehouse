@@ -48,9 +48,9 @@ const props = defineProps<{
   shareUserSubmitting: boolean
   shareUserTarget: FileItem | null
   shareUserForm: {
-    targetMode: 'single' | 'group'
-    targetAddress: string
-    groupId: string
+    targetMode: 'addresses' | 'groups' | 'all_users'
+    targetAddresses: string[]
+    groupIds: string[]
     permissions: string[]
     expiresValue: string
     expiresUnit: ShareExpiryUnit
@@ -204,6 +204,18 @@ function startDrawerResize(event: MouseEvent) {
 function handleEnterDirectory(item: FileItem) {
   props.enterDirectory(item)
   emit('update:detailDrawerVisible', false)
+}
+
+function formatTargetScope(item: DirectShareItem | null): string {
+  if (!item) return '-'
+  if (item.allUsers || item.targetType === 'all_users') return '所有用户'
+  if (item.targetType === 'groups') {
+    const count = item.targetCount || item.audienceCount || 0
+    return count > 0 ? `分组（${count} 人）` : '分组'
+  }
+  const count = item.targetCount || item.audienceCount || 0
+  if (count > 1) return `地址共享（${count} 个）`
+  return '地址共享'
 }
 
 onMounted(() => {
@@ -368,6 +380,10 @@ onBeforeUnmount(() => {
           <span class="detail-value mono">{{ detailDirectShare.targetWallet || '-' }}</span>
         </div>
         <div class="detail-row">
+          <span class="detail-label">目标范围</span>
+          <span class="detail-value">{{ formatTargetScope(detailDirectShare) }}</span>
+        </div>
+        <div class="detail-row">
           <span class="detail-label">权限</span>
           <span class="detail-value">
             <span v-if="!detailDirectShare.permissions || !detailDirectShare.permissions.length">-</span>
@@ -440,6 +456,10 @@ onBeforeUnmount(() => {
         <div class="detail-row">
           <span class="detail-label">目标地址</span>
           <span class="detail-value mono">{{ detailReceivedShare.targetWallet || '-' }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">目标范围</span>
+          <span class="detail-value">{{ formatTargetScope(detailReceivedShare) }}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label">权限</span>
@@ -573,14 +593,19 @@ onBeforeUnmount(() => {
       </el-form-item>
       <el-form-item label="共享方式">
         <el-radio-group v-model="shareUserForm.targetMode" size="small">
-          <el-radio-button value="single">单个地址</el-radio-button>
-          <el-radio-button value="group">分组</el-radio-button>
+          <el-radio-button value="addresses">地址共享</el-radio-button>
+          <el-radio-button value="groups">分组</el-radio-button>
+          <el-radio-button value="all_users">所有用户</el-radio-button>
         </el-radio-group>
       </el-form-item>
-      <el-form-item v-if="shareUserForm.targetMode === 'single'" label="目标钱包">
+      <el-form-item v-if="shareUserForm.targetMode === 'addresses'" label="目标地址">
         <el-select
-          v-model="shareUserForm.targetAddress"
-          placeholder="选择或输入钱包地址"
+          v-model="shareUserForm.targetAddresses"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          max-collapse-tags="2"
+          placeholder="选择或输入一个或多个钱包地址"
           filterable
           allow-create
           default-first-option
@@ -600,19 +625,30 @@ onBeforeUnmount(() => {
           </el-option>
         </el-select>
       </el-form-item>
-      <el-form-item v-else label="目标分组">
-        <el-select v-model="shareUserForm.groupId" placeholder="选择分组" style="width: 100%">
+      <el-form-item v-else-if="shareUserForm.targetMode === 'groups'" label="目标分组">
+        <el-select
+          v-model="shareUserForm.groupIds"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          max-collapse-tags="2"
+          placeholder="选择一个或多个分组"
+          style="width: 100%"
+        >
           <el-option label="未分组" value="" />
           <el-option v-for="group in addressGroups" :key="group.id" :label="group.name" :value="group.id" />
         </el-select>
         <div class="share-group-meta">分组地址：{{ groupedContacts.length }} 个</div>
       </el-form-item>
-      <el-form-item v-if="shareUserForm.targetMode === 'group' && groupedContacts.length">
+      <el-form-item v-if="shareUserForm.targetMode === 'groups' && groupedContacts.length">
         <div class="share-group-list">
           <span v-for="item in groupedContacts" :key="item.id" class="mono">
             {{ shortenAddress(item.walletAddress) }}
           </span>
         </div>
+      </el-form-item>
+      <el-form-item v-if="shareUserForm.targetMode === 'all_users'" label="共享范围">
+        <div class="share-inline-meta">当前账号体系下的所有已登录用户</div>
       </el-form-item>
       <el-form-item label="权限">
         <el-checkbox-group v-model="shareUserForm.permissions" class="share-user-permissions">
@@ -767,6 +803,15 @@ onBeforeUnmount(() => {
 
 .share-group-meta {
   margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.share-inline-meta {
+  margin-top: 0;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
   font-size: 12px;
   color: #909399;
 }

@@ -140,6 +140,7 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/share/user/list", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleListMine)))
 	mux.Handle("/api/v1/public/share/user/received", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleListReceived)))
 	mux.Handle("/api/v1/public/share/user/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleRevoke)))
+	mux.Handle("/api/v1/public/share/user/audiences", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleListAudiences)))
 	mux.Handle("/api/v1/public/share/user/entries", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleEntries)))
 	mux.Handle("/api/v1/public/share/user/download", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleDownload)))
 	mux.Handle("/api/v1/public/share/user/upload", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleUpload)))
