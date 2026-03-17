@@ -27,6 +27,7 @@ type Router struct {
 	recycleHandler             *handler.RecycleHandler
 	shareHandler               *handler.ShareHandler
 	shareUserHandler           *handler.ShareUserHandler
+	webdavAccessKeyHandler     *handler.WebDAVAccessKeyHandler
 	addressBookHandler         *handler.AddressBookHandler
 	logger                     *zap.Logger
 }
@@ -47,6 +48,7 @@ func NewRouter(
 	recycleHandler *handler.RecycleHandler,
 	shareHandler *handler.ShareHandler,
 	shareUserHandler *handler.ShareUserHandler,
+	webdavAccessKeyHandler *handler.WebDAVAccessKeyHandler,
 	addressBookHandler *handler.AddressBookHandler,
 	logger *zap.Logger,
 ) *Router {
@@ -65,6 +67,7 @@ func NewRouter(
 		recycleHandler:             recycleHandler,
 		shareHandler:               shareHandler,
 		shareUserHandler:           shareUserHandler,
+		webdavAccessKeyHandler:     webdavAccessKeyHandler,
 		addressBookHandler:         addressBookHandler,
 		logger:                     logger,
 	}
@@ -128,6 +131,12 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/webdav/address/contacts/create", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleContactCreate)))
 	mux.Handle("/api/v1/public/webdav/address/contacts/update", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleContactUpdate)))
 	mux.Handle("/api/v1/public/webdav/address/contacts/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleContactDelete)))
+	if r.webdavAccessKeyHandler != nil {
+		mux.Handle("/api/v1/public/webdav/access-keys/list", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleList)))
+		mux.Handle("/api/v1/public/webdav/access-keys/create", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleCreate)))
+		mux.Handle("/api/v1/public/webdav/access-keys/bind", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleBind)))
+		mux.Handle("/api/v1/public/webdav/access-keys/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleRevoke)))
+	}
 
 	// 分享路由
 	mux.Handle("/api/v1/public/share/create", r.createAuthenticatedHandler(http.HandlerFunc(r.shareHandler.HandleCreate)))
@@ -161,14 +170,14 @@ func (r *Router) Setup() http.Handler {
 // createAuthenticatedHandler 创建需要认证的处理器
 func (r *Router) createAuthenticatedHandler(handler http.Handler) http.Handler {
 	// 应用认证中间件
-	authMiddleware := middleware.NewAuthMiddleware(r.authenticators, true, r.logger)
+	authMiddleware := middleware.NewAuthMiddleware(r.authenticators, true, r.config.WebDAV.Prefix, r.logger)
 	return authMiddleware.Handle(handler)
 }
 
 // createAdminHandler 创建管理员处理器
 func (r *Router) createAdminHandler(handler http.Handler) http.Handler {
 	adminMiddleware := middleware.NewAdminMiddleware(r.config.Security.AdminAddresses, r.logger)
-	authMiddleware := middleware.NewAuthMiddleware(r.authenticators, true, r.logger)
+	authMiddleware := middleware.NewAuthMiddleware(r.authenticators, true, r.config.WebDAV.Prefix, r.logger)
 	return authMiddleware.Handle(adminMiddleware.Handle(handler))
 }
 

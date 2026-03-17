@@ -810,7 +810,23 @@ func (s *WebDAVService) checkPermission(ctx context.Context, u *user.User, r *ht
 	fullPath := filepath.Join(userDir, strings.TrimPrefix(normalizedPath, "/"))
 
 	// 检查权限
-	return s.permissionCheck.Check(ctx, u, fullPath, operation)
+	if err := s.permissionCheck.Check(ctx, u, fullPath, operation); err != nil {
+		return err
+	}
+
+	// MOVE/COPY 还需要检查目标路径权限，避免绕过目录级权限边界。
+	if r.Method == "MOVE" || r.Method == "COPY" {
+		destination := strings.TrimSpace(r.Header.Get("Destination"))
+		if destination != "" {
+			destPath := s.normalizeWebdavRequestPath(destination)
+			destFullPath := filepath.Join(userDir, strings.TrimPrefix(destPath, "/"))
+			if err := s.permissionCheck.Check(ctx, u, destFullPath, operation); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *WebDAVService) checkAppScope(ctx context.Context, r *http.Request) error {

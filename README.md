@@ -256,3 +256,32 @@ bash scripts/mount_davfs.sh umount /mnt/webdav
 - 缺少 `davfs2`（`mount.davfs`）时，脚本会在 Linux 上尝试自动安装
 - 账号密码写入 `/etc/davfs2/secrets`（`600` 权限）
 - `install-fstab` 默认写入 `nofail,_netdev`，避免开机网络未就绪导致启动失败
+
+### 使用“目录授权密钥”挂载（推荐）
+
+如果你希望只挂载某个目录、避免暴露账号全量权限，推荐使用“访问密钥 + 目录授权”：
+
+1. 在“个人中心 -> 访问密钥”里新建密钥，保存 `Key ID` 和 `Key Secret`。
+2. 在资产列表中选中目标目录，点击“授权密钥”，把该密钥授权到该目录。
+3. 挂载时，`url` 直接使用“已授权目录”的 WebDAV 地址；`username` 用 `Key ID`，`password` 用 `Key Secret`。
+
+```shell
+# 示例：仅挂载 /personal/projects/demo 目录
+bash scripts/mount_davfs.sh mount \
+  https://example.com/dav/personal/projects/demo \
+  /mnt/demo \
+  ak_41dd9a3b7f5b1c2d \
+  sk_5a79c9e8d0f1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d
+
+# 配置开机自动挂载
+bash scripts/mount_davfs.sh install-fstab \
+  https://example.com/dav/personal/projects/demo \
+  /mnt/demo \
+  ak_41dd9a3b7f5b1c2d \
+  sk_5a79c9e8d0f1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d
+```
+
+补充说明：
+- 访问密钥建议挂载“已授权目录路径”，不要直接挂载 `/dav` 根路径。
+- 一个密钥可以授权多个目录；如需分别挂载，给每个目录使用独立的 `url` 和本地挂载点即可。
+- 如果密钥被撤销，或目录授权被取消，挂载点后续访问会返回认证/权限错误，需要恢复授权后重新挂载。

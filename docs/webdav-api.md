@@ -1012,3 +1012,155 @@ Body 示例（folder/rename/item）：
 - `regex: false` 使用前缀匹配（`strings.HasPrefix`）。
 - `regex: true` 使用 Go 正则表达式（`regexp`），路径会以 `/` 开头（例如 `/docs/file.txt`）。
 - 正则建议显式写 `^` 和目录边界 `(/|$)`，避免误匹配。
+
+## 15. WebDAV 目录访问密钥（Access Key）
+
+为降低“账号密码泄漏即全量数据暴露”的风险，支持给用户生成 **目录级、最小权限** 的 WebDAV 访问密钥。
+
+核心约束：
+
+- 密钥只允许用于 WebDAV 路径（`webdav.prefix`），不能调用其他 API。
+- 新建密钥时不指定目录；目录绑定通过独立接口完成。
+- 一个密钥可以绑定多个目录（`1 key -> N paths`）。
+- 每个密钥绑定独立权限位（`C/R/U/D`），可小于用户自身权限。
+- 密钥可设置过期时间，也可随时撤销。
+
+### 15.1 创建密钥
+
+- 路由：`POST /api/v1/public/webdav/access-keys/create`
+- 认证：用户登录态（Bearer 或普通 Basic）
+
+请求体：
+
+```json
+{
+  "name": "ci-sync-key",
+  "permissions": ["read", "create", "update"],
+  "expiresValue": 7,
+  "expiresUnit": "day"
+}
+```
+
+字段说明：
+
+- `name`：密钥名称（必填）
+  - 在同一用户范围内必须唯一
+- `permissions`：权限集合（可选，默认只读）
+  - 支持：`read/create/update/delete` 或简写 `r/c/u/d`
+- `expiresValue` + `expiresUnit`：过期设置（可选）
+  - `expiresValue=0` 表示不过期
+  - `expiresUnit` 支持：`minute`、`hour`、`day`、`week`、`month`、`year`
+
+响应示例：
+
+```json
+{
+  "id": "3f5e3a7f-6fd4-4a7a-b748-9e3b12345678",
+  "name": "ci-sync-key",
+  "keyId": "ak_41dd9a3b7f5b1c2d",
+  "keySecret": "sk_5a79c9e8d0f1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d",
+  "bindingPaths": [],
+  "permissions": ["read", "create", "update"],
+  "status": "active",
+  "createdAt": "2026-03-17T11:20:00+08:00",
+  "expiresAt": "2026-03-24T11:20:00+08:00"
+}
+```
+
+说明：
+- `keySecret` 只在创建时返回一次，请立即安全保存。
+- 新建后默认 `bindingPaths=[]`，需要后续绑定目录才能使用。
+
+### 15.2 绑定目录
+
+- 路由：`POST /api/v1/public/webdav/access-keys/bind`
+- 认证：用户登录态
+
+请求体：
+
+```json
+{
+  "id": "3f5e3a7f-6fd4-4a7a-b748-9e3b12345678",
+  "path": "/apps/app-001/releases"
+}
+```
+
+成功响应：
+
+```json
+{
+  "message": "bound successfully"
+}
+```
+
+说明：
+- `path` 会按服务端规则规范化（如补齐 `/` 前缀）。
+- 同一密钥重复绑定同一路径是幂等的（不会报错）。
+
+### 15.3 列表密钥
+
+- 路由：`GET /api/v1/public/webdav/access-keys/list`
+- 认证：用户登录态
+
+响应示例：
+
+```json
+{
+  "items": [
+    {
+      "id": "3f5e3a7f-6fd4-4a7a-b748-9e3b12345678",
+      "name": "ci-sync-key",
+      "keyId": "ak_41dd9a3b7f5b1c2d",
+      "bindingPaths": ["/apps/app-001/releases", "/apps/app-001/logs"],
+      "permissions": ["read", "create", "update"],
+      "status": "active",
+      "createdAt": "2026-03-17T11:20:00+08:00",
+      "lastUsedAt": "2026-03-17T11:30:15+08:00"
+    }
+  ]
+}
+```
+
+### 15.4 撤销密钥
+
+- 路由：`POST /api/v1/public/webdav/access-keys/revoke`
+- 认证：用户登录态
+
+请求体：
+
+```json
+{
+  "id": "3f5e3a7f-6fd4-4a7a-b748-9e3b12345678"
+}
+```
+
+成功响应：
+
+```json
+{
+  "message": "revoked successfully"
+}
+```
+
+### 15.5 使用方式（WebDAV Basic）
+
+绑定至少一个目录后，使用 `keyId/keySecret` 作为 Basic 用户名密码：
+
+```bash
+curl -u "ak_41dd9a3b7f5b1c2d:sk_5a79c9e8d0f1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d" \
+  -X PROPFIND \
+  -H "Depth: 1" \
+  http://127.0.0.1:6065/dav/apps/app-001/releases/
+```
+
+如果密钥没有绑定任何目录，认证会失败（401）。
+
+如果尝试用访问密钥调用非 WebDAV API（例如 `/api/v1/public/share/list`），会返回 `403 Forbidden`。
+
+### 15.6 运维安全建议
+
+- 每个自动化任务使用独立密钥，不复用主账号密码。
+- `bindingPaths` 尽量收窄到具体目录，不给全盘权限。
+- 权限按最小化原则配置（优先 `read`，仅必要时开 `create/update/delete`）。
+- 定期轮换：新建新密钥并替换后，立刻撤销旧密钥。
+- 结合 `lastUsedAt` 做异常访问审计。

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Delete, Download, Edit, MoreFilled, Share, User, View } from '@element-plus/icons-vue'
+import { Delete, Download, Edit, Key, MoreFilled, Share, User, View } from '@element-plus/icons-vue'
 import type { FileItem } from '../types'
 
 const props = defineProps<{
@@ -14,6 +14,7 @@ const props = defineProps<{
   downloadFile: (item: FileItem) => void
   shareFile: (item: FileItem) => void
   openShareUserDialog: (item: FileItem) => void
+  openAccessKeyDialog: (item: FileItem) => void
   renameItem: (item: FileItem) => void
   deleteFile: (item: FileItem) => void
 }>()
@@ -38,6 +39,9 @@ function handleCommand(row: FileItem, command: string) {
       break
     case 'shareUser':
       props.openShareUserDialog(row)
+      break
+    case 'accessKey':
+      props.openAccessKeyDialog(row)
       break
     case 'rename':
       props.renameItem(row)
@@ -87,6 +91,9 @@ function handleDropdownCommand(row: FileItem, command: string | number) {
         <div class="actions" @click.stop>
           <el-tooltip v-if="row.isDir" content="详情" placement="top">
             <el-button type="primary" link :icon="View" @click="openDetailDrawer('file', row)" />
+          </el-tooltip>
+          <el-tooltip v-if="row.isDir" content="授权密钥" placement="top">
+            <el-button type="primary" link :icon="Key" @click="openAccessKeyDialog(row)" />
           </el-tooltip>
           <el-tooltip v-if="canPreview(row)" content="预览" placement="top">
             <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
@@ -139,6 +146,7 @@ function handleDropdownCommand(row: FileItem, command: string | number) {
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item command="detail">详情</el-dropdown-item>
+                <el-dropdown-item v-if="row.isDir" command="accessKey">授权密钥</el-dropdown-item>
                 <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="share">分享</el-dropdown-item>

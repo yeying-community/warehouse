@@ -245,6 +245,31 @@ export interface AddressContact {
   createdAt?: string
 }
 
+export type AccessKeyPermission = 'read' | 'create' | 'update' | 'delete'
+
+export interface WebDAVAccessKeyItem {
+  id: string
+  name: string
+  keyId: string
+  permissions: AccessKeyPermission[]
+  bindingPaths: string[]
+  status: 'active' | 'revoked' | string
+  createdAt: string
+  expiresAt?: string
+  lastUsedAt?: string
+}
+
+export interface CreateWebDAVAccessKeyPayload {
+  name: string
+  permissions?: AccessKeyPermission[]
+  expiresValue?: number
+  expiresUnit?: ShareExpiryUnit
+}
+
+export interface CreateWebDAVAccessKeyResult extends WebDAVAccessKeyItem {
+  keySecret: string
+}
+
 // 分享 API
 export const shareApi = {
   create(path: string, expiry?: {
@@ -357,6 +382,32 @@ export const directShareApi = {
     return request('/api/v1/public/share/user/item', {
       method: 'DELETE',
       body: { shareId, path }
+    })
+  }
+}
+
+export const webdavAccessKeyApi = {
+  list() {
+    return request<{
+      items: WebDAVAccessKeyItem[]
+    }>('/api/v1/public/webdav/access-keys/list')
+  },
+  create(payload: CreateWebDAVAccessKeyPayload) {
+    return request<CreateWebDAVAccessKeyResult>('/api/v1/public/webdav/access-keys/create', {
+      method: 'POST',
+      body: payload as unknown as Record<string, unknown>
+    })
+  },
+  revoke(id: string) {
+    return request<{ message: string }>('/api/v1/public/webdav/access-keys/revoke', {
+      method: 'POST',
+      body: { id }
+    })
+  },
+  bind(id: string, path: string) {
+    return request<{ message: string }>('/api/v1/public/webdav/access-keys/bind', {
+      method: 'POST',
+      body: { id, path }
     })
   }
 }

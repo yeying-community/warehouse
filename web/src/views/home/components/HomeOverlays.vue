@@ -28,6 +28,7 @@ const props = defineProps<{
   revokeDirectShare: (item: DirectShareItem) => void
   isDirectShareOwner: (item: DirectShareItem) => boolean
   enterDirectory: (item: FileItem) => void
+  openAccessKeyDialog: (item: FileItem) => void
   enterSharedRoot: (item: DirectShareItem) => void
   enterSharedDirectory: (item: FileItem) => void
   downloadSharedRoot: (item: DirectShareItem) => void
@@ -206,6 +207,11 @@ function handleEnterDirectory(item: FileItem) {
   emit('update:detailDrawerVisible', false)
 }
 
+function handleOpenAccessKeyDialog(item: FileItem) {
+  props.openAccessKeyDialog(item)
+  emit('update:detailDrawerVisible', false)
+}
+
 function formatTargetScope(item: DirectShareItem | null): string {
   if (!item) return '-'
   if (item.allUsers || item.targetType === 'all_users') return '所有用户'
@@ -273,6 +279,9 @@ onBeforeUnmount(() => {
       <div class="detail-actions" v-if="detailFile.isDir">
         <el-button type="primary" size="small" @click="handleEnterDirectory(detailFile)">
           进入目录
+        </el-button>
+        <el-button size="small" @click="handleOpenAccessKeyDialog(detailFile)">
+          授权密钥
         </el-button>
       </div>
       <div class="detail-actions" v-else-if="getPreviewMode(detailFile) === 'text'">
@@ -684,7 +693,7 @@ onBeforeUnmount(() => {
     title="新建文件夹"
     width="420px"
   >
-    <el-form label-width="90px">
+    <el-form class="create-folder-form" label-position="top">
       <el-form-item label="文件夹名称">
         <el-input
           v-model="createFolderForm.name"

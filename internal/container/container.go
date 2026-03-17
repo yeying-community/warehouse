@@ -38,6 +38,7 @@ type Container struct {
 	ShareRepository       repository.ShareRepository
 	UserShareRepository   repository.UserShareRepository
 	AddressBookRepository repository.AddressBookRepository
+	WebDAVAccessKeyRepo   repository.WebDAVAccessKeyRepository
 	ReplicationOutboxRepo repository.ReplicationOutboxRepository
 	ReplicationOffsetRepo repository.ReplicationOffsetRepository
 	ReconcileRepo         repository.ReplicationReconcileRepository
@@ -45,22 +46,24 @@ type Container struct {
 	ClusterAssignmentRepo repository.ClusterReplicationAssignmentRepository
 
 	// Services
-	QuotaService        quota.Service
-	AssetSpaceManager   *assetspace.Manager
-	MutationRecorder    service.MutationRecorder
-	NodeHeartbeat       *service.NodeHeartbeatRegistrar
-	PeerResolver        service.ReplicationPeerResolver
-	AssignmentAllocator *service.ReplicationAssignmentAllocator
-	ReplicationWorker   *service.ReplicationWorker
-	ReconcileScanner    *service.ReconcileScanner
-	WebDAVService       *service.WebDAVService
-	RecycleService      *service.RecycleService
-	ShareService        *service.ShareService
-	ShareUserService    *service.ShareUserService
-	AddressBookService  *service.AddressBookService
+	QuotaService           quota.Service
+	AssetSpaceManager      *assetspace.Manager
+	MutationRecorder       service.MutationRecorder
+	NodeHeartbeat          *service.NodeHeartbeatRegistrar
+	PeerResolver           service.ReplicationPeerResolver
+	AssignmentAllocator    *service.ReplicationAssignmentAllocator
+	ReplicationWorker      *service.ReplicationWorker
+	ReconcileScanner       *service.ReconcileScanner
+	WebDAVService          *service.WebDAVService
+	RecycleService         *service.RecycleService
+	ShareService           *service.ShareService
+	ShareUserService       *service.ShareUserService
+	AddressBookService     *service.AddressBookService
+	WebDAVAccessKeyService *service.WebDAVAccessKeyService
 
 	// Authenticators
 	Authenticators []auth.Authenticator
+	AccessKeyAuth  *infraAuth.AccessKeyAuthenticator
 	BasicAuth      *infraAuth.BasicAuthenticator
 	Web3Auth       *infraAuth.Web3Authenticator
 
@@ -77,6 +80,7 @@ type Container struct {
 	RecycleHandler             *handler.RecycleHandler
 	ShareHandler               *handler.ShareHandler
 	ShareUserHandler           *handler.ShareUserHandler
+	WebDAVAccessKeyHandler     *handler.WebDAVAccessKeyHandler
 	AddressBookHandler         *handler.AddressBookHandler
 
 	// HTTP
@@ -185,6 +189,8 @@ func (c *Container) initRepositories() error {
 	c.UserShareRepository = repository.NewPostgresUserShareRepository(c.DB.DB)
 	// 地址簿仓储
 	c.AddressBookRepository = repository.NewPostgresAddressBookRepository(c.DB.DB)
+	// WebDAV 访问密钥仓储
+	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
 	// 复制仓储
 	c.ReplicationOutboxRepo = repository.NewPostgresReplicationOutboxRepository(c.DB.DB)
 	c.ReplicationOffsetRepo = repository.NewPostgresReplicationOffsetRepository(c.DB.DB)
@@ -246,6 +252,8 @@ func (c *Container) initServices() error {
 	)
 	// 地址簿服务
 	c.AddressBookService = service.NewAddressBookService(c.AddressBookRepository)
+	// WebDAV 访问密钥服务
+	c.WebDAVAccessKeyService = service.NewWebDAVAccessKeyService(c.WebDAVAccessKeyRepo)
 	// 定向分享服务
 	c.ShareUserService = service.NewShareUserService(
 		c.UserShareRepository,
@@ -262,6 +270,14 @@ func (c *Container) initServices() error {
 
 // initAuthenticators 初始化认证器
 func (c *Container) initAuthenticators() error {
+	// WebDAV 访问密钥认证器（必须在 Basic 认证器之前）
+	c.AccessKeyAuth = infraAuth.NewAccessKeyAuthenticator(
+		c.UserRepository,
+		c.WebDAVAccessKeyRepo,
+		c.Logger,
+	)
+	c.Authenticators = append(c.Authenticators, c.AccessKeyAuth)
+
 	// Basic 认证器
 	c.BasicAuth = infraAuth.NewBasicAuthenticator(
 		c.UserRepository,
@@ -385,6 +401,11 @@ func (c *Container) initHandlers() error {
 		c.AddressBookService,
 		c.Logger,
 	)
+	// WebDAV 访问密钥处理器
+	c.WebDAVAccessKeyHandler = handler.NewWebDAVAccessKeyHandler(
+		c.WebDAVAccessKeyService,
+		c.Logger,
+	)
 
 	c.Logger.Info("handlers initialized")
 
@@ -409,6 +430,7 @@ func (c *Container) initHTTP() error {
 		c.RecycleHandler,
 		c.ShareHandler,
 		c.ShareUserHandler,
+		c.WebDAVAccessKeyHandler,
 		c.AddressBookHandler,
 		c.Logger,
 	)

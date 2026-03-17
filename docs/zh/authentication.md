@@ -4,8 +4,9 @@
 
 ## 认证器概览
 
-系统在容器中初始化两类认证器：
+系统在容器中初始化三类认证器：
 
+- **AccessKeyAuthenticator**：WebDAV 目录级访问密钥认证（`ak_*` / `sk_*`）
 - **BasicAuthenticator**：用户名/密码认证（可配置无密码模式）
 - **Web3Authenticator**：Bearer Token 认证，支持 JWT 和 UCAN
 
@@ -26,6 +27,26 @@
 - 用户存储在 PostgreSQL 的 `users` 表中，密码使用 bcrypt 哈希。
 - `security.no_password=true` 时，Basic 认证跳过密码校验（仅依赖用户名）。
 - 用户权限由 `users.permissions` 与 `user_rules` 控制。
+
+### WebDAV 访问密钥认证（目录级最小权限）
+
+- 访问密钥保存在 `webdav_access_keys` 表，包含：
+  - 密钥标识（`key_id`，格式 `ak_*`）
+  - 密钥密文（`secret_hash`，bcrypt）
+  - 权限位（`permissions`）
+  - 状态、过期时间、最近使用时间
+- 密钥目录绑定保存在 `webdav_access_key_bindings` 表：
+  - `access_key_id + root_path` 唯一
+  - 一个密钥可绑定多个目录
+- 认证顺序上，访问密钥认证器优先于普通 Basic 认证器。
+- 认证成功后，会基于“密钥 owner + bindingPaths + permissions”构造作用域用户：
+  - `Directory` 设置为 owner 基础目录（`user.directory` 或 `username`）
+  - `Permissions` 置空
+  - `Rules` 根据每个绑定目录生成正则规则，仅放行绑定目录及其子路径
+- 如果密钥没有任何绑定目录，认证失败（等价无效凭证）。
+- 安全边界：
+  - 访问密钥只允许访问 WebDAV 路径（`webdav.prefix`）
+  - 使用访问密钥调用其他 API 会被拒绝（`403`）
 
 ## 访问资源的权限设计
 

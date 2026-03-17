@@ -136,3 +136,23 @@ ul li {
   }
 
 }
+
+// 统一弹窗头部分割线与间距，避免各弹窗视觉不一致
+.el-dialog {
+  --warehouse-dialog-padding-x: 20px;
+
+  .el-dialog__header {
+    margin-right: 0;
+    margin-bottom: 8px;
+    padding: 14px var(--warehouse-dialog-padding-x) 10px;
+    border-bottom: 1px solid #eef1f4;
+  }
+
+  .el-dialog__body {
+    padding: 12px var(--warehouse-dialog-padding-x) 20px;
+  }
+
+  .el-dialog__footer {
+    padding: 8px var(--warehouse-dialog-padding-x) 14px;
+  }
+}

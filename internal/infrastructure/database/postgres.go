@@ -85,6 +85,32 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
+		// WebDAV 目录级访问密钥（最小权限凭证）
+		`CREATE TABLE IF NOT EXISTS webdav_access_keys (
+			id VARCHAR(50) PRIMARY KEY,
+			owner_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			key_id VARCHAR(100) UNIQUE NOT NULL,
+			secret_hash TEXT NOT NULL,
+			root_path TEXT NOT NULL DEFAULT '/',
+			permissions VARCHAR(10) NOT NULL DEFAULT 'R',
+			status VARCHAR(20) NOT NULL DEFAULT 'active',
+			expires_at TIMESTAMP NULL,
+			last_used_at TIMESTAMP NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+
+		// WebDAV 访问密钥目录绑定（一个密钥可绑定多个目录）
+		`CREATE TABLE IF NOT EXISTS webdav_access_key_bindings (
+			id BIGSERIAL PRIMARY KEY,
+			access_key_id VARCHAR(50) NOT NULL REFERENCES webdav_access_keys(id) ON DELETE CASCADE,
+			owner_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			root_path TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			UNIQUE(access_key_id, root_path)
+		)`,
+
 		// 创建回收站表
 		`CREATE TABLE IF NOT EXISTS recycle_items (
 			id VARCHAR(50) PRIMARY KEY,
@@ -328,6 +354,18 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		// 创建用户名索引
 		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
 
+		// 访问密钥索引
+		`CREATE INDEX IF NOT EXISTS idx_webdav_access_keys_owner_created
+			ON webdav_access_keys(owner_user_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_webdav_access_keys_owner_status
+			ON webdav_access_keys(owner_user_id, status, created_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_webdav_access_keys_owner_name
+			ON webdav_access_keys(owner_user_id, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_webdav_access_key_bindings_key
+			ON webdav_access_key_bindings(access_key_id, root_path)`,
+		`CREATE INDEX IF NOT EXISTS idx_webdav_access_key_bindings_owner
+			ON webdav_access_key_bindings(owner_user_id, root_path)`,
+
 		// 创建用户规则的用户ID索引
 		`CREATE INDEX IF NOT EXISTS idx_user_rules_user_id ON user_rules(user_id)`,
 
@@ -351,6 +389,13 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`DROP TRIGGER IF EXISTS update_internal_share_items_updated_at ON internal_share_items`,
 		`CREATE TRIGGER update_internal_share_items_updated_at
 		BEFORE UPDATE ON internal_share_items
+		FOR EACH ROW
+		EXECUTE FUNCTION update_updated_at_column()`,
+
+		// 创建访问密钥表的更新时间触发器
+		`DROP TRIGGER IF EXISTS update_webdav_access_keys_updated_at ON webdav_access_keys`,
+		`CREATE TRIGGER update_webdav_access_keys_updated_at
+		BEFORE UPDATE ON webdav_access_keys
 		FOR EACH ROW
 		EXECUTE FUNCTION update_updated_at_column()`,
 

@@ -22,14 +22,16 @@ const (
 type AuthMiddleware struct {
 	authenticators []auth.Authenticator
 	required       bool
+	webdavPrefix   string
 	logger         *zap.Logger
 }
 
 // NewAuthMiddleware 创建认证中间件
-func NewAuthMiddleware(authenticators []auth.Authenticator, required bool, logger *zap.Logger) *AuthMiddleware {
+func NewAuthMiddleware(authenticators []auth.Authenticator, required bool, webdavPrefix string, logger *zap.Logger) *AuthMiddleware {
 	return &AuthMiddleware{
 		authenticators: authenticators,
 		required:       required,
+		webdavPrefix:   webdavPrefix,
 		logger:         logger,
 	}
 }
@@ -73,6 +75,14 @@ func (m *AuthMiddleware) Handle(next http.Handler) http.Handler {
 		// 将用户信息放入上下文
 		ctx = context.WithValue(ctx, UserContextKey, u)
 		r = r.WithContext(ctx)
+
+		// access key 仅允许用于 WebDAV 路径，避免扩大 API 暴露面
+		if _, isAccessKey := GetAccessKeyContext(ctx); isAccessKey {
+			if !isAccessKeyRequestAllowed(r, m.webdavPrefix) {
+				http.Error(w, "Access key is only allowed for WebDAV path", http.StatusForbidden)
+				return
+			}
+		}
 
 		m.logger.Debug("user authenticated", zap.String("username", u.Username))
 
@@ -163,6 +173,56 @@ func isWebDAVRequest(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+func isWebDAVPath(rawPath, webdavPrefix string) bool {
+	prefix := normalizeWebDAVPrefix(webdavPrefix)
+
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	if prefix == "/" {
+		return true
+	}
+	return path == prefix || strings.HasPrefix(path, prefix+"/")
+}
+
+func isAccessKeyRequestAllowed(r *http.Request, webdavPrefix string) bool {
+	if !isWebDAVPath(r.URL.Path, webdavPrefix) {
+		return false
+	}
+	if normalizeWebDAVPrefix(webdavPrefix) != "/" {
+		return true
+	}
+	path := strings.TrimSpace(r.URL.Path)
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	// WebDAV 挂载到根路径时，显式拦截 API 命名空间。
+	return !strings.HasPrefix(path, "/api/")
+}
+
+func normalizeWebDAVPrefix(webdavPrefix string) string {
+	prefix := strings.TrimSpace(webdavPrefix)
+	if prefix == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	prefix = strings.TrimSuffix(prefix, "/")
+	if prefix == "" {
+		return "/"
+	}
+	return prefix
 }
 
 // GetUserFromContext 从上下文获取用户

@@ -270,10 +270,11 @@
     width: calc(100% - 16px) !important;
     max-width: 100% !important;
     margin: 8px auto !important;
+    --warehouse-dialog-padding-x: 12px;
   }
 
   .home-container .el-dialog__body {
-    padding: 12px !important;
+    padding: 12px var(--warehouse-dialog-padding-x) !important;
   }
 
   .home-container .el-drawer {

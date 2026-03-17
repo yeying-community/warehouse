@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent,
 import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit } from '@/api'
+import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult } from '@/api'
 import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
@@ -101,6 +101,16 @@ const shareUserForm = ref({
   permissions: ['read'] as string[],
   ...createDefaultShareExpiryForm()
 })
+const accessKeyLoading = ref(false)
+const accessKeySubmitting = ref(false)
+const accessKeyBinding = ref(false)
+const accessKeyDialogVisible = ref(false)
+const accessKeyScopePath = ref('/')
+const accessKeyScopeLocked = ref(false)
+const accessKeyBindTargetID = ref('')
+const accessKeys = ref<WebDAVAccessKeyItem[]>([])
+const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
+const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const addressBookStore = useAddressBookStore()
 const { addressBookLoading, addressGroups, addressContacts } = storeToRefs(addressBookStore)
 const editingUsername = ref(false)
@@ -153,6 +163,10 @@ type ShareExpiryForm = {
   expiresValue: string
   expiresUnit: ShareExpiryUnit
 }
+type AccessKeyForm = ShareExpiryForm & {
+  name: string
+  permissions: AccessKeyPermission[]
+}
 type DirectShareRelation = 'owned' | 'received'
 type DirectShareListItem = DirectShareItem & { relation?: DirectShareRelation }
 const SHARE_EXPIRY_UNITS: Array<{ label: string; value: ShareExpiryUnit }> = [
@@ -162,6 +176,12 @@ const SHARE_EXPIRY_UNITS: Array<{ label: string; value: ShareExpiryUnit }> = [
   { label: '周', value: 'week' },
   { label: '月', value: 'month' },
   { label: '年', value: 'year' }
+]
+const ACCESS_KEY_PERMISSIONS: Array<{ label: string; value: AccessKeyPermission }> = [
+  { label: '读取', value: 'read' },
+  { label: '上传', value: 'create' },
+  { label: '重命名', value: 'update' },
+  { label: '删除', value: 'delete' }
 ]
 const ASSET_SPACE_NAME_BY_KEY: Record<string, string> = {
   personal: '个人资产',
@@ -419,6 +439,14 @@ const quotaAvailable = computed(() => {
     ? quota.value.available
     : quota.value.quota - quota.value.used
   return Math.max(available, 0)
+})
+const accessKeysForScope = computed(() => {
+  const scope = normalizeAccessKeyRootPath(accessKeyScopePath.value)
+  return accessKeys.value.filter(item => isAccessKeyBoundToScope(item, scope))
+})
+const activeUnboundKeysForScope = computed(() => {
+  const scope = normalizeAccessKeyRootPath(accessKeyScopePath.value)
+  return accessKeys.value.filter(item => item.status === 'active' && !isAccessKeyBoundToScope(item, scope))
 })
 
 function normalizeWalletAddress(address?: string | null): string {
@@ -780,6 +808,34 @@ function createDefaultShareExpiryForm(): ShareExpiryForm {
   }
 }
 
+function normalizeAccessKeyRootPath(rawPath: string): string {
+  const normalized = String(rawPath || '').trim().replace(/\\/g, '/').replace(/\/+/g, '/')
+  if (!normalized) return '/'
+  const withLeading = normalized.startsWith('/') ? normalized : `/${normalized}`
+  const withoutTrailing = withLeading.length > 1 ? withLeading.replace(/\/+$/, '') : withLeading
+  return withoutTrailing || '/'
+}
+
+function createDefaultAccessKeyForm(rootPath = '/'): AccessKeyForm {
+  void rootPath
+  return {
+    name: '',
+    permissions: ['read'],
+    ...createDefaultShareExpiryForm()
+  }
+}
+
+function normalizeAccessKeyBindings(paths: string[] | undefined): string[] {
+  if (!Array.isArray(paths)) return []
+  return Array.from(new Set(paths.map(item => normalizeAccessKeyRootPath(item)).filter(Boolean)))
+}
+
+function isAccessKeyBoundToScope(item: WebDAVAccessKeyItem, scopePath: string): boolean {
+  const scope = normalizeAccessKeyRootPath(scopePath)
+  const bindings = normalizeAccessKeyBindings(item.bindingPaths)
+  return bindings.includes(scope)
+}
+
 function parseShareExpiryValue(raw: string): number | null {
   const trimmed = raw.trim()
   if (!/^\d+$/.test(trimmed)) return null
@@ -796,6 +852,30 @@ function resolveShareExpiryPayload(form: ShareExpiryForm): { expiresValue: numbe
   return {
     expiresValue,
     expiresUnit: form.expiresUnit
+  }
+}
+
+async function fetchAccessKeys(withLoading = false) {
+  if (withLoading) {
+    accessKeyLoading.value = true
+  }
+  try {
+    const data = await webdavAccessKeyApi.list()
+    accessKeys.value = Array.isArray(data.items)
+      ? data.items.map(item => ({
+        ...item,
+        bindingPaths: normalizeAccessKeyBindings(item.bindingPaths)
+      }))
+      : []
+  } catch (error) {
+    console.error('获取访问密钥失败:', error)
+    if (withLoading) {
+      showError('获取访问密钥失败')
+    }
+  } finally {
+    if (withLoading) {
+      accessKeyLoading.value = false
+    }
   }
 }
 
@@ -1026,10 +1106,109 @@ async function fetchAssetSpaces() {
 async function fetchUserCenter() {
   quotaManageLoading.value = true
   try {
-    await Promise.all([fetchUserInfo(), fetchQuota()])
+    await Promise.all([fetchUserInfo(), fetchQuota(), fetchAccessKeys()])
   } finally {
     quotaManageLoading.value = false
   }
+}
+
+function openAccessKeyDialog(scopePath = '/', lockScope = false) {
+  const normalizedScope = normalizeAccessKeyRootPath(scopePath)
+  accessKeyScopePath.value = normalizedScope
+  accessKeyScopeLocked.value = lockScope
+  accessKeyBindTargetID.value = ''
+  accessKeyCreateResult.value = null
+  accessKeyForm.value = createDefaultAccessKeyForm(normalizedScope)
+  accessKeyDialogVisible.value = true
+  void fetchAccessKeys(true)
+}
+
+function openAccessKeyDialogFromDirectory(item: FileItem) {
+  if (!item.isDir) return
+  openAccessKeyDialog(item.path, true)
+}
+
+function openAccessKeyDialogFromUserCenter() {
+  openAccessKeyDialog('/', false)
+}
+
+async function submitAccessKey() {
+  const name = accessKeyForm.value.name.trim()
+  if (!name) {
+    showError('请输入密钥名称')
+    return
+  }
+  if (accessKeys.value.some(item => item.name === name)) {
+    showError('密钥名称已存在，请更换名称')
+    return
+  }
+  if (!accessKeyForm.value.permissions.length) {
+    showError('请至少选择一个权限')
+    return
+  }
+  const expiryPayload = resolveShareExpiryPayload(accessKeyForm.value)
+  if (!expiryPayload) return
+
+  accessKeySubmitting.value = true
+  try {
+    const data = await webdavAccessKeyApi.create({
+      name,
+      permissions: accessKeyForm.value.permissions,
+      ...expiryPayload
+    })
+    accessKeyCreateResult.value = data
+    await fetchAccessKeys()
+    if (accessKeyScopeLocked.value) {
+      accessKeyBindTargetID.value = data.id
+    }
+    showSuccess('访问密钥已创建，请立即保存密钥')
+  } catch (error: any) {
+    console.error('创建访问密钥失败:', error)
+    showError(error?.message || '创建访问密钥失败')
+  } finally {
+    accessKeySubmitting.value = false
+  }
+}
+
+async function bindAccessKeyToScope(id?: string) {
+  const targetID = String(id || accessKeyBindTargetID.value || '').trim()
+  if (!targetID) {
+    showError('请选择要绑定的密钥')
+    return
+  }
+  const scope = normalizeAccessKeyRootPath(accessKeyScopePath.value)
+  accessKeyBinding.value = true
+  try {
+    await webdavAccessKeyApi.bind(targetID, scope)
+    await fetchAccessKeys()
+    showSuccess('目录绑定成功')
+  } catch (error: any) {
+    console.error('绑定目录失败:', error)
+    showError(error?.message || '绑定目录失败')
+  } finally {
+    accessKeyBinding.value = false
+  }
+}
+
+async function revokeAccessKey(item: WebDAVAccessKeyItem) {
+  if (item.status !== 'active') return
+  if (!(await confirmAction(`确定撤销密钥 ${item.name} 吗？`, '撤销密钥'))) return
+  try {
+    await webdavAccessKeyApi.revoke(item.id)
+    await fetchAccessKeys()
+    showSuccess('密钥已撤销')
+  } catch (error: any) {
+    console.error('撤销访问密钥失败:', error)
+    showError(error?.message || '撤销访问密钥失败')
+  }
+}
+
+async function copyAccessKeyValue(value: string, label: string) {
+  await copyText(value, `${label}已复制`)
+}
+
+function closeAccessKeyDialog() {
+  accessKeyDialogVisible.value = false
 }
 
 
@@ -2927,6 +3106,15 @@ watch(createFolderDialogVisible, visible => {
   createFolderForm.value = { name: '' }
 })
 
+watch(accessKeyDialogVisible, visible => {
+  if (visible) return
+  accessKeyScopeLocked.value = false
+  accessKeyBindTargetID.value = ''
+  accessKeyBinding.value = false
+  accessKeyCreateResult.value = null
+  accessKeyForm.value = createDefaultAccessKeyForm('/')
+})
+
 watch(addressGroups, groups => {
   const validIDs = new Set(groups.map(group => group.id))
   const normalized = Array.from(
@@ -3727,6 +3915,75 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
+              <div class="user-card user-card-full" v-loading="accessKeyLoading">
+                <div class="card-head">
+                  <div class="card-title">访问密钥</div>
+                  <div class="user-actions">
+                    <el-button size="small" @click="fetchAccessKeys(true)">刷新</el-button>
+                    <el-button size="small" type="primary" @click="openAccessKeyDialogFromUserCenter">新建密钥</el-button>
+                  </div>
+                </div>
+                <div class="key-summary">
+                  <span>总数：{{ accessKeys.length }}</span>
+                  <span>生效中：{{ accessKeys.filter(item => item.status === 'active').length }}</span>
+                </div>
+                <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无访问密钥" />
+                <div v-else class="key-list">
+                  <div v-for="item in accessKeys" :key="item.id" class="key-item">
+                    <div class="key-main">
+                      <div class="key-title-row">
+                        <span class="key-title">{{ item.name }}</span>
+                        <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">
+                          {{ item.status === 'active' ? '生效中' : '已撤销' }}
+                        </el-tag>
+                      </div>
+                      <div class="key-meta-row mono">ID: {{ item.keyId }}</div>
+                      <div class="key-meta-row">
+                        已绑定目录：{{ (item.bindingPaths || []).length }}
+                      </div>
+                      <div v-if="(item.bindingPaths || []).length" class="key-meta-row">
+                        <el-tag
+                          v-for="path in (item.bindingPaths || []).slice(0, 4)"
+                          :key="`${item.id}-${path}`"
+                          size="small"
+                          type="info"
+                        >
+                          {{ path }}
+                        </el-tag>
+                        <span v-if="(item.bindingPaths || []).length > 4" class="key-more-text">
+                          +{{ (item.bindingPaths || []).length - 4 }}
+                        </span>
+                      </div>
+                      <div class="key-meta-row">
+                        权限：
+                        <el-tag
+                          v-for="permission in item.permissions"
+                          :key="`${item.id}-${permission}`"
+                          size="small"
+                          type="info"
+                        >
+                          {{ formatSharePermission(permission) }}
+                        </el-tag>
+                      </div>
+                      <div class="key-meta-row">
+                        最近使用：{{ item.lastUsedAt ? formatTime(item.lastUsedAt) : '-' }}
+                      </div>
+                    </div>
+                    <div class="key-actions">
+                      <el-button size="small" text @click="copyAccessKeyValue(item.keyId, 'Key ID')">复制 ID</el-button>
+                      <el-button
+                        size="small"
+                        text
+                        type="danger"
+                        :disabled="item.status !== 'active'"
+                        @click="revokeAccessKey(item)"
+                      >
+                        撤销
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <div v-else-if="showAddressBook" class="content-body content-scroll" v-loading="addressBookLoading && !manualRefresh">
@@ -3803,6 +4060,7 @@ onBeforeUnmount(() => {
               :download-file="downloadFile"
               :share-file="shareFile"
               :open-share-user-dialog="openShareUserDialog"
+              :open-access-key-dialog="openAccessKeyDialogFromDirectory"
               :rename-item="renameItem"
               :delete-file="deleteFile"
             />
@@ -3835,6 +4093,7 @@ onBeforeUnmount(() => {
         :revoke-direct-share="revokeDirectShare"
         :is-direct-share-owner="isDirectShareOwner"
         :enter-directory="enterDirectory"
+        :open-access-key-dialog="openAccessKeyDialogFromDirectory"
         :enter-shared-root="enterSharedRoot"
         :enter-shared-directory="enterSharedDirectory"
         :download-shared-root="downloadSharedRoot"
@@ -3868,6 +4127,138 @@ onBeforeUnmount(() => {
         :user-profile="userProfile"
         :submit-password="submitPassword"
       />
+      <el-dialog
+        v-model="accessKeyDialogVisible"
+        :title="accessKeyScopeLocked ? '授权密钥' : '新建密钥'"
+        class="access-key-create-dialog"
+        width="680px"
+      >
+        <div class="access-key-dialog">
+          <template v-if="accessKeyScopeLocked">
+            <div class="access-key-authorize-layout">
+              <div class="access-key-scope-card">
+                <div class="access-key-scope-header">
+                  <span class="access-key-scope-label">当前目录</span>
+                  <span class="access-key-scope-count">已授权 {{ accessKeysForScope.length }}</span>
+                </div>
+                <span class="access-key-scope-value mono">{{ accessKeyScopePath }}</span>
+              </div>
+
+              <div class="access-key-section">
+                <div class="access-key-section-head">
+                  <span class="access-key-section-title">已授权</span>
+                </div>
+                <div v-if="accessKeysForScope.length" class="access-key-bound-list">
+                  <div
+                    v-for="item in accessKeysForScope"
+                    :key="`scope-${item.id}`"
+                    class="access-key-bound-item"
+                  >
+                    <div class="access-key-bound-main">
+                      <div class="access-key-bound-head">
+                        <span class="access-key-bound-name">{{ item.name }}</span>
+                        <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">
+                          {{ item.status === 'active' ? '生效中' : '已撤销' }}
+                        </el-tag>
+                      </div>
+                      <span class="access-key-bound-id mono">ID: {{ item.keyId }}</span>
+                    </div>
+                    <div class="access-key-bound-actions">
+                      <el-button
+                        size="small"
+                        text
+                        type="danger"
+                        :disabled="item.status !== 'active'"
+                        @click="revokeAccessKey(item)"
+                      >
+                        撤销
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="access-key-empty">当前目录还没有授权密钥</div>
+              </div>
+
+              <div class="access-key-section access-key-bind-box">
+                <div class="access-key-section-head">
+                  <span class="access-key-section-title">新增授权</span>
+                </div>
+                <div v-if="activeUnboundKeysForScope.length" class="access-key-bind-row">
+                  <el-select
+                    v-model="accessKeyBindTargetID"
+                    placeholder="选择一个已创建的密钥"
+                    style="width: 100%"
+                  >
+                    <el-option
+                      v-for="item in activeUnboundKeysForScope"
+                      :key="item.id"
+                      :label="`${item.name} (${item.keyId})`"
+                      :value="item.id"
+                    />
+                  </el-select>
+                  <el-button type="primary" :loading="accessKeyBinding" @click="bindAccessKeyToScope()">
+                    授权
+                  </el-button>
+                </div>
+                <div v-else class="access-key-empty">
+                  <span>没有可授权的生效密钥</span>
+                  <el-button text type="primary" @click="openAccessKeyDialogFromUserCenter">去新建密钥</el-button>
+                </div>
+              </div>
+            </div>
+          </template>
+          <template v-else>
+            <el-form label-position="top" class="access-key-form">
+              <el-form-item label="密钥名称">
+                <el-input v-model="accessKeyForm.name" placeholder="例如：同步工具只读密钥" />
+              </el-form-item>
+              <el-form-item label="权限">
+                <el-checkbox-group v-model="accessKeyForm.permissions">
+                  <el-checkbox
+                    v-for="item in ACCESS_KEY_PERMISSIONS"
+                    :key="item.value"
+                    :label="item.value"
+                  >
+                    {{ item.label }}
+                  </el-checkbox>
+                </el-checkbox-group>
+              </el-form-item>
+              <el-form-item label="有效期">
+                <div class="access-key-expiry">
+                  <el-input v-model="accessKeyForm.expiresValue" placeholder="0" />
+                  <el-select v-model="accessKeyForm.expiresUnit" class="access-key-expiry-unit">
+                    <el-option
+                      v-for="item in SHARE_EXPIRY_UNITS"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </el-select>
+                </div>
+                <div class="share-group-meta">输入 0 表示永不过期</div>
+              </el-form-item>
+            </el-form>
+
+            <div v-if="accessKeyCreateResult" class="access-key-created">
+              <div class="access-key-created-title">创建成功，请立即保存以下凭据（仅显示一次）</div>
+              <div class="access-key-created-row">
+                <span class="access-key-created-label">Key ID</span>
+                <span class="access-key-created-value mono">{{ accessKeyCreateResult.keyId }}</span>
+                <el-button size="small" text @click="copyAccessKeyValue(accessKeyCreateResult.keyId, 'Key ID')">复制</el-button>
+              </div>
+              <div class="access-key-created-row">
+                <span class="access-key-created-label">Key Secret</span>
+                <span class="access-key-created-value mono">{{ accessKeyCreateResult.keySecret }}</span>
+                <el-button size="small" text @click="copyAccessKeyValue(accessKeyCreateResult.keySecret, 'Key Secret')">复制</el-button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <template #footer>
+          <el-button @click="closeAccessKeyDialog">关闭</el-button>
+          <el-button v-if="!accessKeyScopeLocked" type="primary" :loading="accessKeySubmitting" @click="submitAccessKey">创建密钥</el-button>
+        </template>
+      </el-dialog>
       <FilePreviewDialog
         v-model="previewVisible"
         v-model:content="previewContent"
@@ -4755,6 +5146,275 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.user-card-full {
+  grid-column: 1 / -1;
+}
+
+.key-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.key-item {
+  border: 1px solid #eef1f4;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.key-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.key-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.key-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.key-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #606266;
+}
+
+.key-more-text {
+  font-size: 12px;
+  color: #909399;
+}
+
+.key-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.access-key-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.access-key-authorize-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.access-key-scope-card {
+  border: 1px solid #eef1f4;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fafbfd;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.access-key-scope-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.access-key-scope-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #909399;
+}
+
+.access-key-scope-count {
+  font-size: 12px;
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.12);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.access-key-scope-value {
+  font-size: 12px;
+  color: #1f2d3d;
+  word-break: break-all;
+}
+
+.access-key-section {
+  border: 1px solid #eef1f4;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.access-key-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.access-key-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.access-key-empty {
+  font-size: 12px;
+  color: #909399;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.access-key-bound-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.access-key-bound-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: #f7f9fc;
+}
+
+.access-key-bound-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.access-key-bound-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.access-key-bound-name {
+  font-size: 13px;
+  color: #1f2d3d;
+}
+
+.access-key-bound-id {
+  font-size: 12px;
+  color: #606266;
+}
+
+.access-key-bound-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.access-key-bind-box {
+  background: #fff;
+}
+
+.access-key-bind-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.access-key-form :deep(.el-form-item) {
+  margin-bottom: 12px;
+}
+
+.access-key-expiry {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.access-key-expiry :deep(.el-input) {
+  flex: 1;
+  min-width: 0;
+}
+
+.access-key-expiry :deep(.el-select) {
+  width: 120px;
+  flex: 0 0 120px;
+}
+
+.access-key-created {
+  border: 1px solid #d8e9ff;
+  background: #f5faff;
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.access-key-created-title {
+  font-size: 12px;
+  color: #1f2d3d;
+  font-weight: 600;
+}
+
+.access-key-created-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.access-key-created-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.access-key-created-value {
+  font-size: 12px;
+  color: #1f2d3d;
+  word-break: break-all;
+}
+
+.access-key-created-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .quota-value {
   display: flex;
   align-items: baseline;
@@ -4856,6 +5516,43 @@ onBeforeUnmount(() => {
 
   .app-quick-item {
     flex: 0 0 auto;
+  }
+
+  .key-item {
+    flex-direction: column;
+  }
+
+  .key-actions {
+    align-items: center;
+  }
+
+  .access-key-created-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .access-key-bind-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .access-key-bound-item {
+    flex-direction: column;
+  }
+
+  .access-key-bound-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .access-key-empty {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .access-key-expiry :deep(.el-select) {
+    width: 110px;
+    flex-basis: 110px;
   }
 }
 

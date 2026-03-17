@@ -80,6 +80,29 @@ warehouse -c config.yaml
 - CLI 就绪检查：`warehouse -c config.yaml --check-ready`
 - WebDAV 访问：使用 Basic 或 Bearer Token
 
+## 升级注意（WebDAV 目录访问密钥）
+
+当版本包含“WebDAV 目录访问密钥”功能时，首次启动会自动执行数据库迁移，新增以下表及相关索引、触发器：
+
+- `webdav_access_keys`
+- `webdav_access_key_bindings`
+- `idx_webdav_access_keys_owner_name`（同一用户密钥名唯一）
+
+请确认：
+
+- 运行服务的数据库账号具备 `CREATE TABLE / CREATE INDEX / CREATE TRIGGER` 权限。
+- 升级后无需新增配置项，现有用户名密码登录方式保持不变。
+- 即使暂不使用访问密钥，也不影响 active/standby 同步链路。
+
+建议升级后执行一次自检：
+
+```sql
+SELECT COUNT(*) FROM webdav_access_keys;
+SELECT COUNT(*) FROM webdav_access_key_bindings;
+```
+
+返回成功且无迁移报错，即表示升级完成。
+
 ## 阶段一高可用提示
 
 如果正在落地 `1 active + N standby`（最小可以先从 `1 standby` 起步）：
