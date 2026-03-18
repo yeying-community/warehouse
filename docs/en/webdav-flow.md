@@ -54,7 +54,8 @@ sequenceDiagram
 ## Method → Permission Mapping
 
 - `GET/HEAD/OPTIONS/PROPFIND` → Read (`R`)
-- `PUT/PATCH/PROPPATCH` → Write (`U`)
+- `PUT` → Create (`C`) when target does not exist, Write (`U`) when target already exists
+- `PATCH/PROPPATCH` → Write (`U`)
 - `POST/MKCOL` → Create (`C`)
 - `COPY/MOVE` → Write (`U`)
 - `DELETE` → Delete (`D`)

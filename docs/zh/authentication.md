@@ -65,7 +65,8 @@
 - 校验路径为“逻辑路径”：`(user.Directory || user.Username) + 请求路径`，再做规范化。
 - HTTP 方法 → 权限：
   - `GET/HEAD/OPTIONS/PROPFIND` → Read (`R`)
-  - `PUT/PATCH/PROPPATCH` → Write (`U`)
+  - `PUT` → 目标不存在时 Create (`C`)，目标已存在时 Write (`U`)
+  - `PATCH/PROPPATCH` → Write (`U`)
   - `POST/MKCOL` → Create (`C`)
   - `COPY/MOVE` → Write (`U`)
   - `DELETE` → Delete (`D`)
