@@ -54,7 +54,8 @@ sequenceDiagram
 ## WebDAV 方法与权限映射
 
 - `GET/HEAD/OPTIONS/PROPFIND` → Read (`R`)
-- `PUT/PATCH/PROPPATCH` → Write (`U`)
+- `PUT` → 目标不存在时 Create (`C`)，目标已存在时 Write (`U`)
+- `PATCH/PROPPATCH` → Write (`U`)
 - `POST/MKCOL` → Create (`C`)
 - `COPY/MOVE` → Write (`U`)
 - `DELETE` → Delete (`D`)

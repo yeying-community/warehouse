@@ -796,8 +796,10 @@ func (s *WebDAVService) handleMutationRecordError(message string, err error, fie
 
 // checkPermission 检查权限
 func (s *WebDAVService) checkPermission(ctx context.Context, u *user.User, r *http.Request) error {
-	// 映射 HTTP 方法到操作
-	operation := permission.MapHTTPMethodToOperation(r.Method)
+	// 映射 HTTP 方法到操作。PUT 需要区分“新建文件”与“覆盖已有文件”：
+	// - 目标不存在：按 Create(C) 校验，允许仅有上传权限的访问密钥写入新文件
+	// - 目标已存在：按 Write(U) 校验，避免仅有上传权限覆盖已有文件
+	operation := s.resolvePermissionOperation(u, r)
 
 	// 拼接用户目录和请求路径，得到相对于 webdav 根目录的完整路径
 	// 例如：用户目录是 "BraveWolf44"，请求路径是 "/test/icon16.png"
@@ -827,6 +829,24 @@ func (s *WebDAVService) checkPermission(ctx context.Context, u *user.User, r *ht
 	}
 
 	return nil
+}
+
+func (s *WebDAVService) resolvePermissionOperation(u *user.User, r *http.Request) permission.Operation {
+	method := strings.ToUpper(strings.TrimSpace(r.Method))
+	if method != http.MethodPut {
+		return permission.MapHTTPMethodToOperation(method)
+	}
+
+	userDir := s.getUserDirectory(u)
+	fullPath := s.resolveUserFullPath(userDir, r.URL.Path)
+	if _, err := os.Stat(fullPath); err == nil {
+		return permission.OperationWrite
+	} else if os.IsNotExist(err) {
+		return permission.OperationCreate
+	}
+
+	// 读取目标状态失败时，回退到旧行为，避免因为一次 stat 异常放宽权限。
+	return permission.OperationWrite
 }
 
 func (s *WebDAVService) checkAppScope(ctx context.Context, r *http.Request) error {
