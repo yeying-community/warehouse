@@ -6,6 +6,15 @@ const props = defineProps<{
   rows: FileItem[]
   loading: boolean
   onRowClick: (...args: any[]) => void
+  canDragItem: (item: FileItem) => boolean
+  isDraggingItem: (item: FileItem) => boolean
+  isMoveTarget: (item: FileItem) => boolean
+  handleItemDragStart: (event: DragEvent, item: FileItem) => void
+  handleItemDragEnd: () => void
+  handleDirectoryDragEnter: (event: DragEvent, item: FileItem) => void
+  handleDirectoryDragOver: (event: DragEvent, item: FileItem) => void
+  handleDirectoryDragLeave: (event: DragEvent, item: FileItem) => void
+  handleDirectoryDrop: (event: DragEvent, item: FileItem) => void
   formatSize: (size: number) => string
   formatTime: (time: string | number) => string
   getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | 'image' | null
@@ -57,6 +66,10 @@ function handleCommand(row: FileItem, command: string) {
 function handleDropdownCommand(row: FileItem, command: string | number) {
   handleCommand(row, String(command))
 }
+
+function getRowClassName({ row }: { row: FileItem }) {
+  return props.isMoveTarget(row) ? 'move-target-row' : ''
+}
 </script>
 
 <template>
@@ -66,13 +79,29 @@ function handleDropdownCommand(row: FileItem, command: string | number) {
     v-loading="loading"
     style="width: 100%"
     height="100%"
+    :row-class-name="getRowClassName"
     @row-click="onRowClick"
   >
     <el-table-column label="名称" min-width="280">
       <template #default="{ row }">
-        <div class="file-name">
+        <div
+          class="file-name"
+          :class="{
+            'is-draggable': canDragItem(row),
+            'is-dragging': isDraggingItem(row),
+            'is-drop-target': isMoveTarget(row)
+          }"
+          :draggable="canDragItem(row)"
+          @dragstart="handleItemDragStart($event, row)"
+          @dragend="handleItemDragEnd"
+          @dragenter="handleDirectoryDragEnter($event, row)"
+          @dragover="handleDirectoryDragOver($event, row)"
+          @dragleave="handleDirectoryDragLeave($event, row)"
+          @drop="handleDirectoryDrop($event, row)"
+        >
           <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
           <span class="name" :title="row.name">{{ row.name }}</span>
+          <span v-if="isMoveTarget(row)" class="drop-tip">移动到此目录</span>
         </div>
       </template>
     </el-table-column>
@@ -163,3 +192,40 @@ function handleDropdownCommand(row: FileItem, command: string | number) {
 </template>
 
 <style scoped src="./homeShared.scss"></style>
+<style scoped>
+:deep(.move-target-row td) {
+  background: rgba(64, 158, 255, 0.08) !important;
+}
+
+:deep(.move-target-row .el-table__cell) {
+  box-shadow: inset 0 -1px 0 rgba(64, 158, 255, 0.18);
+}
+
+.file-name.is-draggable {
+  cursor: grab;
+}
+
+.file-name.is-draggable:active {
+  cursor: grabbing;
+}
+
+.file-name.is-dragging {
+  opacity: 0.48;
+  transform: scale(0.985);
+}
+
+.file-name.is-drop-target {
+  background: rgba(64, 158, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(64, 158, 255, 0.45);
+  padding: 6px 8px;
+  margin: -6px -8px;
+}
+
+.drop-tip {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #409eff;
+  flex-shrink: 0;
+}
+</style>

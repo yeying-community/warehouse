@@ -119,7 +119,7 @@ export const useAddressBookStore = defineStore('addressBook', {
       const name = this.groupForm.name.trim()
       if (!name) {
         showError('请输入分组名称')
-        return
+        return false
       }
       this.groupSaving = true
       try {
@@ -127,8 +127,10 @@ export const useAddressBookStore = defineStore('addressBook', {
         this.groupForm.name = ''
         await this.fetchAddressBook()
         showSuccess('分组已创建')
+        return true
       } catch (error: any) {
         showError(error?.message || '创建分组失败')
+        return false
       } finally {
         this.groupSaving = false
       }

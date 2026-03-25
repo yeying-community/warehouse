@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessageBox } from 'element-plus'
 import { Delete, DocumentCopy, Edit, Refresh } from '@element-plus/icons-vue'
@@ -37,6 +38,8 @@ const {
   removeContact
 } = addressBookStore
 
+const groupDialogVisible = ref(false)
+
 function showError(message: string, title = '错误') {
   void ElMessageBox.alert(message, title, {
     confirmButtonText: '确定',
@@ -53,26 +56,51 @@ function copyContactAddress(contact: AddressContact) {
   }
   copyText(address, '钱包地址已复制')
 }
+
+function contactGroupName(contact: AddressContact) {
+  return addressGroups.value.find(group => group.id === contact.groupId)?.name || '未分组'
+}
+
+function openCreateGroupDialog() {
+  groupForm.value.name = ''
+  groupDialogVisible.value = true
+}
+
+function closeCreateGroupDialog() {
+  groupDialogVisible.value = false
+  groupForm.value.name = ''
+}
+
+async function submitCreateGroup() {
+  const created = await createGroup()
+  if (created) {
+    groupDialogVisible.value = false
+  }
+}
 </script>
 
 <template>
   <div class="address-page">
     <div class="address-hero">
       <div class="address-title-row">
-        <div class="address-title">我的好友</div>
-        <el-tooltip content="刷新" placement="top">
-          <el-button
-            class="refresh-button"
-            circle
-            size="small"
-            :icon="Refresh"
-            :disabled="addressBookLoading"
-            :class="{ 'is-refreshing': addressBookLoading }"
-            @click="emit('refresh')"
-          />
-        </el-tooltip>
+        <div class="address-hero-main">
+          <div class="address-title">我的好友</div>
+          <div class="address-sub">管理分享过的好友地址与分组，仅自己可见。</div>
+        </div>
+        <div class="address-hero-actions">
+          <el-button type="primary" @click="openCreateContactDialog">新建联系人</el-button>
+          <el-tooltip content="刷新" placement="top">
+            <el-button
+              class="refresh-button"
+              circle
+              :icon="Refresh"
+              :disabled="addressBookLoading"
+              :class="{ 'is-refreshing': addressBookLoading }"
+              @click="emit('refresh')"
+            />
+          </el-tooltip>
+        </div>
       </div>
-      <div class="address-sub">管理分享过的好友地址与分组，仅自己可见。</div>
       <div class="address-stats">
         <div class="stat-card">
           <span class="stat-label">联系人</span>
@@ -92,10 +120,12 @@ function copyContactAddress(contact: AddressContact) {
     <div class="address-layout">
       <div class="address-sidebar">
         <div class="address-card">
-          <div class="card-title">分组</div>
-          <div class="group-toolbar">
-            <el-input v-model="groupForm.name" placeholder="分组名称" size="small" />
-            <el-button type="primary" size="small" :loading="groupSaving" @click="createGroup">新增</el-button>
+          <div class="section-header">
+            <div>
+              <div class="card-title">分组筛选</div>
+              <div class="card-subtitle">先筛选，再看联系人，避免列表过长。</div>
+            </div>
+            <el-button size="small" @click="openCreateGroupDialog">新建分组</el-button>
           </div>
           <div class="group-list">
             <div class="group-row" :class="{ active: addressGroupFilter === 'all' }">
@@ -132,47 +162,49 @@ function copyContactAddress(contact: AddressContact) {
             <span class="address-filter">当前分组：{{ addressGroupLabel }}</span>
           </div>
           <div class="toolbar-right">
-            <el-button size="small" @click="openCreateContactDialog">新建联系人</el-button>
+            <span class="address-total">共 {{ filteredAddressContacts.length }} 位联系人</span>
           </div>
         </div>
 
         <div class="address-card address-list-card">
-          <div class="card-title">联系人列表</div>
-          <div class="contact-header">
-            <span>联系人</span>
-            <span>钱包</span>
-            <span>分组</span>
-            <span>标签</span>
-            <span class="contact-header-actions">操作</span>
+          <div class="list-title-row">
+            <div>
+              <div class="card-title">联系人列表</div>
+              <div class="card-subtitle">按名称、钱包地址或标签快速定位联系人。</div>
+            </div>
           </div>
           <div class="contact-list">
             <div v-if="!filteredAddressContacts.length" class="address-empty">暂无联系人</div>
             <div v-for="contact in filteredAddressContacts" :key="contact.id" class="contact-row">
-              <div class="contact-cell contact-name">{{ contact.name }}</div>
-              <div class="contact-cell contact-wallet">
-                <span class="mono wallet-text" :title="contact.walletAddress">
-                  {{ shortenAddress(contact.walletAddress) }}
-                </span>
-                <el-tooltip content="复制钱包地址" placement="top">
-                  <el-button
-                    class="icon-button icon-button-inline"
-                    link
-                    :icon="DocumentCopy"
-                    :disabled="!contact.walletAddress"
-                    @click="copyContactAddress(contact)"
-                  />
-                </el-tooltip>
+              <div class="contact-main">
+                <div class="contact-top">
+                  <div class="contact-name">{{ contact.name }}</div>
+                  <el-tag size="small" effect="plain">{{ contactGroupName(contact) }}</el-tag>
+                </div>
+                <div class="contact-wallet">
+                  <span class="contact-label">钱包地址</span>
+                  <span class="mono wallet-text" :title="contact.walletAddress">
+                    {{ shortenAddress(contact.walletAddress) }}
+                  </span>
+                  <el-tooltip content="复制钱包地址" placement="top">
+                    <el-button
+                      class="icon-button icon-button-inline"
+                      link
+                      :icon="DocumentCopy"
+                      :disabled="!contact.walletAddress"
+                      @click="copyContactAddress(contact)"
+                    />
+                  </el-tooltip>
+                </div>
+                <div class="contact-tags">
+                  <span class="contact-label">标签</span>
+                  <el-tag v-for="tag in contact.tags || []" :key="tag" size="small" type="info">
+                    {{ tag }}
+                  </el-tag>
+                  <span v-if="!contact.tags || !contact.tags.length" class="address-tag-empty">无标签</span>
+                </div>
               </div>
-              <div class="contact-cell contact-group">
-                {{ addressGroups.find(g => g.id === contact.groupId)?.name || '未分组' }}
-              </div>
-              <div class="contact-cell contact-tags">
-                <el-tag v-for="tag in contact.tags || []" :key="tag" size="small" type="info">
-                  {{ tag }}
-                </el-tag>
-                <span v-if="!contact.tags || !contact.tags.length" class="address-tag-empty">无标签</span>
-              </div>
-              <div class="contact-cell contact-actions">
+              <div class="contact-actions">
                 <el-tooltip content="编辑" placement="top">
                   <el-button class="icon-button" link :icon="Edit" @click="editContact(contact)" />
                 </el-tooltip>
@@ -185,6 +217,26 @@ function copyContactAddress(contact: AddressContact) {
         </div>
       </div>
     </div>
+
+    <el-dialog
+      v-model="groupDialogVisible"
+      title="新建分组"
+      width="420px"
+      @closed="closeCreateGroupDialog"
+    >
+      <div class="group-dialog-body">
+        <el-input
+          v-model="groupForm.name"
+          placeholder="分组名称"
+          size="small"
+          @keyup.enter="submitCreateGroup"
+        />
+      </div>
+      <template #footer>
+        <el-button @click="closeCreateGroupDialog">取消</el-button>
+        <el-button type="primary" :loading="groupSaving" @click="submitCreateGroup">创建</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="contactDialogVisible"
@@ -236,9 +288,22 @@ function copyContactAddress(contact: AddressContact) {
   color: #1f2d3d;
 }
 
+.card-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
 .actions {
   display: flex;
   gap: 8px;
+}
+
+.section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .actions .el-button {
@@ -261,6 +326,16 @@ function copyContactAddress(contact: AddressContact) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.address-hero-main {
+  min-width: 0;
+}
+
+.address-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .address-title {
@@ -327,18 +402,12 @@ function copyContactAddress(contact: AddressContact) {
   min-height: 0;
 }
 
-.group-toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .group-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
   overflow: auto;
-  max-height: 420px;
+  max-height: 520px;
 }
 
 .group-row {
@@ -413,23 +482,26 @@ function copyContactAddress(contact: AddressContact) {
   white-space: nowrap;
 }
 
+.address-total {
+  font-size: 12px;
+  color: #606266;
+}
+
 .contact-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
-.contact-header {
-  display: grid;
-  grid-template-columns: 1.1fr 1.2fr 0.8fr 1.3fr 120px;
-  gap: 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: #909399;
+.group-dialog-body {
+  padding-top: 4px;
 }
 
-.contact-header-actions {
-  text-align: right;
+.list-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .contact-list {
@@ -437,29 +509,48 @@ function copyContactAddress(contact: AddressContact) {
   flex-direction: column;
   gap: 8px;
   overflow: auto;
-  max-height: 360px;
+  max-height: 480px;
 }
 
 .contact-row {
-  display: grid;
-  grid-template-columns: 1.1fr 1.2fr 0.8fr 1.3fr 120px;
-  gap: 8px;
-  align-items: center;
-  padding: 8px;
-  border-radius: 10px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border-radius: 12px;
   background: #f7f9fc;
+  border: 1px solid #eef1f4;
 }
 
-.contact-cell {
+.contact-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.contact-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
 .contact-wallet {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   min-width: 0;
   max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.contact-label {
+  font-size: 12px;
+  color: #909399;
+  flex-shrink: 0;
 }
 
 .wallet-text {
@@ -470,15 +561,10 @@ function copyContactAddress(contact: AddressContact) {
 }
 
 .contact-name {
-  font-weight: 400;
-  color: inherit;
-  font-size: 12px;
-}
-
-.contact-group {
-  font-weight: 400;
-  color: inherit;
-  font-size: 12px;
+  font-weight: 600;
+  color: #1f2d3d;
+  font-size: 14px;
+  min-width: 0;
 }
 
 .contact-tags {
@@ -491,7 +577,9 @@ function copyContactAddress(contact: AddressContact) {
 .contact-actions {
   display: flex;
   gap: 6px;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  flex-shrink: 0;
+  padding-top: 2px;
 }
 
 .icon-button {
@@ -538,17 +626,30 @@ function copyContactAddress(contact: AddressContact) {
     align-items: stretch;
   }
 
+  .toolbar-right {
+    justify-content: flex-start;
+  }
+
+  .section-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .contact-form {
     grid-template-columns: 1fr;
   }
 
-  .contact-header {
-    display: none;
+  .address-title-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .address-hero-actions {
+    justify-content: space-between;
   }
 
   .contact-row {
-    grid-template-columns: 1fr;
-    align-items: flex-start;
+    flex-direction: column;
   }
 
   .contact-actions {

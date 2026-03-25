@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { RefreshRight } from '@element-plus/icons-vue'
+import { FolderOpened, RefreshRight } from '@element-plus/icons-vue'
 import type { UploadTask, UploadTaskStatus } from '../types'
 
 const props = defineProps<{
@@ -7,6 +7,7 @@ const props = defineProps<{
   formatSize: (size: number) => string
   formatTime: (time: string | number) => string
   retryTask: (task: UploadTask) => void
+  openTaskLocation: (task: UploadTask) => void
 }>()
 
 function getTaskName(task: UploadTask): string {
@@ -58,6 +59,14 @@ function taskProgress(task: UploadTask): number {
 function handleRetry(task: UploadTask) {
   props.retryTask(task)
 }
+
+function canOpenTaskLocation(task: UploadTask): boolean {
+  return task.status === 'success' && !task.isShared && Boolean(task.targetPath)
+}
+
+function handleOpenTaskLocation(task: UploadTask) {
+  props.openTaskLocation(task)
+}
 </script>
 
 <template>
@@ -102,16 +111,32 @@ function handleRetry(task: UploadTask) {
         <span class="time-cell">{{ formatTime(row.updatedAt) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="120" fixed="right">
+    <el-table-column label="操作" width="120" fixed="right" align="left" header-align="left">
       <template #default="{ row }">
-        <el-button
-          v-if="row.status === 'failed'"
-          size="small"
-          type="primary"
-          @click="handleRetry(row)"
-        >
-          重试
-        </el-button>
+        <div class="task-actions">
+          <el-tooltip
+            v-if="canOpenTaskLocation(row)"
+            content="打开所在目录"
+            placement="top"
+          >
+            <el-button
+              size="small"
+              circle
+              type="primary"
+              plain
+              :icon="FolderOpened"
+              @click="handleOpenTaskLocation(row)"
+            />
+          </el-tooltip>
+          <el-button
+            v-if="row.status === 'failed'"
+            size="small"
+            type="primary"
+            @click="handleRetry(row)"
+          >
+            重试
+          </el-button>
+        </div>
       </template>
     </el-table-column>
   </el-table>
@@ -135,6 +160,20 @@ function handleRetry(task: UploadTask) {
       />
       <div v-if="row.error" class="task-error">{{ row.error }}</div>
       <div class="card-actions card-actions-inline">
+        <el-tooltip
+          v-if="canOpenTaskLocation(row)"
+          content="打开所在目录"
+          placement="top"
+        >
+          <el-button
+            size="small"
+            circle
+            type="primary"
+            plain
+            :icon="FolderOpened"
+            @click="handleOpenTaskLocation(row)"
+          />
+        </el-tooltip>
         <el-button
           v-if="row.status === 'failed'"
           size="small"
@@ -181,5 +220,12 @@ function handleRetry(task: UploadTask) {
 
 .card-item .el-progress {
   margin-top: 6px;
+}
+
+.task-actions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 </style>
