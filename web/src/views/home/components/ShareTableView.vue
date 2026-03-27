@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Delete, DocumentCopy, View } from '@element-plus/icons-vue'
+import { Delete, DocumentCopy, FolderOpened, View } from '@element-plus/icons-vue'
 import type { DirectShareItem, ShareItem } from '@/api'
 
 const props = defineProps<{
@@ -10,6 +10,7 @@ const props = defineProps<{
   loading: boolean
   onRowClick: (...args: any[]) => void
   copyShareLink: (item: ShareItem) => void
+  openShareLocation: (item: ShareItem) => void
   revokeShare: (item: ShareItem) => void
   revokeDirectShare: (item: DirectShareItem) => void
   openDirectShareDetail: (item: DirectShareItem) => void
@@ -63,9 +64,12 @@ function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
         <span class="time-cell">{{ row.createdAt ? formatTime(row.createdAt) : '-' }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="120" fixed="right">
+    <el-table-column label="操作" width="160" fixed="right">
       <template #default="{ row }">
         <div class="actions" @click.stop>
+          <el-tooltip content="跳转位置" placement="top">
+            <el-button type="primary" link :icon="FolderOpened" @click="openShareLocation(row)" />
+          </el-tooltip>
           <el-tooltip content="复制链接" placement="top">
             <el-button link :icon="DocumentCopy" @click="copyShareLink(row)" />
           </el-tooltip>
@@ -156,6 +160,7 @@ function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
             </span>
           </div>
           <div class="card-actions card-actions-inline">
+            <el-button size="small" circle type="primary" :icon="FolderOpened" @click="openShareLocation(row)" />
             <el-button size="small" circle :icon="DocumentCopy" @click="copyShareLink(row)" />
             <el-button size="small" circle type="danger" :icon="Delete" @click="revokeShare(row)" />
           </div>
