@@ -3252,6 +3252,17 @@ function openUploadTaskLocation(task: UploadTask) {
   enterFiles(parentPath)
 }
 
+function openShareLocation(item: ShareItem) {
+  const rawPath = stripUrlToPath(String(item.path || '').trim())
+  if (!rawPath) return
+  const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
+  const compactPath = normalizedPath.replace(/\/{2,}/g, '/')
+  const parentPath = compactPath.includes('/')
+    ? normalizeDirectoryPath(compactPath.replace(/\/[^/]+\/?$/, '') || '/')
+    : '/'
+  enterFiles(parentPath)
+}
+
 function openCreateFolderDialog(mode: 'file' | 'shared') {
   if (mode === 'shared' && (!sharedActive.value || !sharedCanCreate.value)) return
   createFolderMode.value = mode
@@ -4461,6 +4472,7 @@ onBeforeUnmount(() => {
               :loading="(shareTab === 'link' ? shareLoading : directShareLoading) && !manualRefresh"
               :on-row-click="handleRowClick"
               :copy-share-link="copyShareLink"
+              :open-share-location="openShareLocation"
               :revoke-share="revokeShare"
               :revoke-direct-share="revokeDirectShare"
               :open-direct-share-detail="openDirectShareDetail"
