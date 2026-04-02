@@ -93,8 +93,17 @@ prepare_target_tag() {
     local latest_hash
     latest_hash="$(git -C "${ROOT_DIR}" rev-list -n 1 "${latest_tag}")"
     if [[ "${latest_hash}" == "${main_hash}" ]]; then
-      echo "Latest tag ${latest_tag} already points to ${MAIN_BRANCH} HEAD, skip packaging." >&2
-      return 2
+      local main_short expected_archive
+      main_short="$(git -C "${ROOT_DIR}" rev-parse --short=7 "${main_hash}")"
+      expected_archive="${OUTPUT_DIR}/${PROJECT_NAME}-${latest_tag}-${main_short}.tar.gz"
+      if [[ -f "${expected_archive}" ]]; then
+        echo "Latest tag ${latest_tag} already points to ${MAIN_BRANCH} HEAD and package exists, skip packaging." >&2
+        return 2
+      fi
+
+      echo "Latest tag ${latest_tag} already points to ${MAIN_BRANCH} HEAD, but package is missing. Rebuild package with existing tag." >&2
+      TARGET_TAG="${latest_tag}"
+      return 0
     fi
   fi
 
@@ -161,6 +170,10 @@ create_package() {
   local tag="$1"
   local git_hash
   git_hash="$(git -C "${ROOT_DIR}" rev-parse --short=7 HEAD)"
+  mkdir -p "${OUTPUT_DIR}"
+  echo "Cleaning output directory: ${OUTPUT_DIR}"
+  find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+
   local package_name="${PROJECT_NAME}-${tag}-${git_hash}"
   local staging_dir="${OUTPUT_DIR}/${package_name}"
 
@@ -176,7 +189,6 @@ create_package() {
   fi
   cp -R "${ASSETS_DIR}" "${staging_dir}/web/"
 
-  mkdir -p "${OUTPUT_DIR}"
   local archive_path="${OUTPUT_DIR}/${package_name}.tar.gz"
   if [[ "$(uname -s)" == "Darwin" ]]; then
     # Prevent Apple metadata (._* and xattr headers) from leaking into release tarballs.
