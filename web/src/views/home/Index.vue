@@ -85,6 +85,7 @@ const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
 const detailItem = ref<FileItem | RecycleItem | ShareItem | DirectShareItem | null>(null)
+const selectedFileRows = ref<FileItem[]>([])
 const dragActive = ref(false)
 const dragCounter = ref(0)
 const draggingFileItem = ref<FileItem | null>(null)
@@ -547,6 +548,7 @@ const sharedParentTargetPath = computed(() => {
   return parts.length > 0 ? '/' + parts.join('/') + '/' : '/'
 })
 const sortedFileList = computed(() => [...fileList.value].sort(compareItemsByModifiedDesc))
+const selectedFileCount = computed(() => selectedFileRows.value.length)
 const searchToken = computed(() => searchKeyword.value.trim().toLowerCase())
 const filteredFileList = computed(() => {
   const token = searchToken.value
@@ -2801,6 +2803,116 @@ async function handleSharedParentButtonDrop(event: DragEvent) {
   await handleSharedBreadcrumbDrop(event, sharedParentTargetPath.value)
 }
 
+function handleFileSelectionChange(rows: FileItem[]) {
+  selectedFileRows.value = rows
+}
+
+function buildBatchShareRevokePlan(
+  items: FileItem[],
+  linkShares: ShareItem[],
+  directShares: DirectShareItem[]
+): { link: ShareItem[]; direct: DirectShareItem[] } {
+  const linkMap = new Map<string, ShareItem>()
+  const directMap = new Map<string, DirectShareItem>()
+  for (const item of items) {
+    for (const share of linkShares) {
+      if (!isSharePathAffected(item.path, item.isDir, share.path)) continue
+      linkMap.set(share.token, share)
+    }
+    for (const share of directShares) {
+      if (!isSharePathAffected(item.path, item.isDir, share.path)) continue
+      directMap.set(share.id, share)
+    }
+  }
+  return {
+    link: Array.from(linkMap.values()),
+    direct: Array.from(directMap.values())
+  }
+}
+
+async function revokeSharesBeforeBatchDelete(items: FileItem[]): Promise<{ proceed: boolean }> {
+  try {
+    const [linkShares, directShares] = await Promise.all([
+      shareApi.list(),
+      directShareApi.listMine()
+    ])
+    const plan = buildBatchShareRevokePlan(items, linkShares.items || [], directShares.items || [])
+    if (!plan.link.length && !plan.direct.length) {
+      const confirmed = await confirmAction(`确定删除选中的 ${items.length} 项吗？删除后可在回收站恢复`, '删除确认')
+      return { proceed: confirmed }
+    }
+    const parts: string[] = []
+    if (plan.link.length) parts.push(`分享链接 ${plan.link.length} 个`)
+    if (plan.direct.length) parts.push(`定向分享 ${plan.direct.length} 个`)
+    const message = `检测到选中项存在分享（${parts.join('，')}），删除后分享将失效。是否撤销分享并删除选中的 ${items.length} 项？`
+    if (!(await confirmAction(message, '删除确认'))) return { proceed: false }
+
+    const revokeTasks: Promise<unknown>[] = []
+    for (const share of plan.link) {
+      revokeTasks.push(shareApi.revoke(share.token))
+    }
+    for (const share of plan.direct) {
+      revokeTasks.push(directShareApi.revoke(share.id))
+    }
+    const results = await Promise.allSettled(revokeTasks)
+    const failed = results.some(result => result.status === 'rejected')
+    if (failed) {
+      showError('撤销分享失败，已取消删除')
+      return { proceed: false }
+    }
+    return { proceed: true }
+  } catch (error) {
+    console.error('检测分享失败:', error)
+    const confirmed = await confirmAction(`检测分享失败，是否继续删除选中的 ${items.length} 项？`, '删除确认')
+    return { proceed: confirmed }
+  }
+}
+
+async function deleteSelectedFiles() {
+  if (isSharedBrowse.value) return
+  const selectedMap = new Map<string, FileItem>()
+  for (const item of selectedFileRows.value) {
+    selectedMap.set(item.path, item)
+  }
+  const items = Array.from(selectedMap.values())
+  if (!items.length) {
+    showInfo('请先选择要删除的资产')
+    return
+  }
+  const { proceed } = await revokeSharesBeforeBatchDelete(items)
+  if (!proceed) return
+
+  const token = localStorage.getItem('authToken') || ''
+  let deletedCount = 0
+  let failedCount = 0
+  for (const item of items) {
+    const apiPath = buildDavPath(item.path)
+    try {
+      const response = await fetch(apiPath, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      if (!response.ok) {
+        failedCount += 1
+        continue
+      }
+      deletedCount += 1
+    } catch {
+      failedCount += 1
+    }
+  }
+
+  selectedFileRows.value = []
+  fetchFiles(currentPath.value)
+  if (failedCount > 0) {
+    showError(`批量删除完成：成功 ${deletedCount} 项，失败 ${failedCount} 项`)
+    return
+  }
+  showSuccess(`已删除 ${deletedCount} 项`)
+}
+
 // 删除文件
 async function deleteFile(item: FileItem) {
   if (isSharedBrowse.value) {
@@ -3510,6 +3622,20 @@ async function restoreView() {
   const storedPath = localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'
   enterFiles(resolveInitialFilePath(storedPath))
 }
+
+watch(filteredFileList, rows => {
+  const visiblePaths = new Set(rows.map(item => item.path))
+  selectedFileRows.value = selectedFileRows.value.filter(item => visiblePaths.has(item.path))
+})
+
+watch(currentPath, () => {
+  selectedFileRows.value = []
+})
+
+watch(isFileView, visible => {
+  if (visible) return
+  selectedFileRows.value = []
+})
 
 watch(renameDialogVisible, visible => {
   if (visible) return
@@ -4231,6 +4357,16 @@ onBeforeUnmount(() => {
                   <el-tooltip content="上传目录" placement="top">
                     <el-button circle type="primary" :icon="FolderOpened" @click="triggerDirectoryUpload" />
                   </el-tooltip>
+                  <el-tooltip :content="selectedFileCount > 0 ? `删除已选 ${selectedFileCount} 项` : '先勾选要删除的资产'" placement="top">
+                    <el-button
+                      type="danger"
+                      circle
+                      :disabled="selectedFileCount === 0 || loading"
+                      @click="deleteSelectedFiles"
+                    >
+                      <el-icon><Delete /></el-icon>
+                    </el-button>
+                  </el-tooltip>
                   <el-tooltip content="刷新" placement="top">
                     <el-button
                       class="refresh-button"
@@ -4537,6 +4673,7 @@ onBeforeUnmount(() => {
               :rows="filteredFileList"
               :loading="loading && !manualRefresh"
               :on-row-click="handleRowClick"
+              :on-selection-change="handleFileSelectionChange"
               :can-drag-item="canDragItem"
               :is-dragging-item="isDraggingFile"
               :is-move-target="isMoveTarget"

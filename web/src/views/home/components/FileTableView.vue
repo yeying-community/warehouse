@@ -6,6 +6,7 @@ const props = defineProps<{
   rows: FileItem[]
   loading: boolean
   onRowClick: (...args: any[]) => void
+  onSelectionChange: (rows: FileItem[]) => void
   canDragItem: (item: FileItem) => boolean
   isDraggingItem: (item: FileItem) => boolean
   isMoveTarget: (item: FileItem) => boolean
@@ -70,6 +71,18 @@ function handleDropdownCommand(row: FileItem, command: string | number) {
 function getRowClassName({ row }: { row: FileItem }) {
   return props.isMoveTarget(row) ? 'move-target-row' : ''
 }
+
+function handleSelectionChange(rows: FileItem[]) {
+  props.onSelectionChange(rows)
+}
+
+function handleRowClick(row: FileItem, _column: unknown, event: MouseEvent) {
+  const target = event?.target as HTMLElement | null
+  if (target?.closest('.el-table-column--selection')) {
+    return
+  }
+  props.onRowClick(row)
+}
 </script>
 
 <template>
@@ -80,8 +93,11 @@ function getRowClassName({ row }: { row: FileItem }) {
     style="width: 100%"
     height="100%"
     :row-class-name="getRowClassName"
-    @row-click="onRowClick"
+    row-key="path"
+    @row-click="handleRowClick"
+    @selection-change="handleSelectionChange"
   >
+    <el-table-column type="selection" width="48" />
     <el-table-column label="名称" min-width="280">
       <template #default="{ row }">
         <div
