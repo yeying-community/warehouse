@@ -175,6 +175,11 @@ type AccessKeyForm = ShareExpiryForm & {
 }
 type DirectShareRelation = 'owned' | 'received'
 type DirectShareListItem = DirectShareItem & { relation?: DirectShareRelation }
+type AppRootDirectory = {
+  name: string
+  path: string
+  modified: string
+}
 const SHARE_EXPIRY_UNITS: Array<{ label: string; value: ShareExpiryUnit }> = [
   { label: '分钟', value: 'minute' },
   { label: '小时', value: 'hour' },
@@ -204,7 +209,7 @@ const DEFAULT_ASSET_SPACES: AssetSpace[] = [
 const assetSpaces = ref<AssetSpace[]>(DEFAULT_ASSET_SPACES)
 const defaultAssetSpaceKey = ref('personal')
 const assetSpaceLoading = ref(false)
-const appsRootDirectories = ref<Array<{ name: string; path: string }>>([])
+const appsRootDirectories = ref<AppRootDirectory[]>([])
 const sidePanelCollapsed = ref(false)
 
 // 是否显示回收站列表
@@ -541,11 +546,12 @@ const sharedParentTargetPath = computed(() => {
   parts.pop()
   return parts.length > 0 ? '/' + parts.join('/') + '/' : '/'
 })
+const sortedFileList = computed(() => [...fileList.value].sort(compareItemsByModifiedDesc))
 const searchToken = computed(() => searchKeyword.value.trim().toLowerCase())
 const filteredFileList = computed(() => {
   const token = searchToken.value
-  if (!token) return fileList.value
-  return fileList.value.filter(item => item.name.toLowerCase().includes(token))
+  if (!token) return sortedFileList.value
+  return sortedFileList.value.filter(item => item.name.toLowerCase().includes(token))
 })
 const filteredRecycleList = computed(() => {
   const token = searchToken.value
@@ -593,7 +599,7 @@ const filteredSharedEntries = computed(() => {
   return sharedEntries.value.filter(item => item.name.toLowerCase().includes(token))
 })
 const previewImageItems = computed(() => {
-  const items = isSharedBrowse.value ? sharedEntries.value : fileList.value
+  const items = isSharedBrowse.value ? sharedEntries.value : sortedFileList.value
   return items.filter(item => isImagePreviewItem(item))
 })
 const previewImageIndex = computed(() => {
@@ -749,6 +755,20 @@ function normalizePathForSpaceMatch(path: string): string {
   return normalized.replace(/\/$/, '')
 }
 
+function parseModifiedTimestamp(modified?: string): number {
+  const parsed = Date.parse(String(modified || '').trim())
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function compareItemsByModifiedDesc<T extends { name: string; modified?: string; isDir?: boolean }>(a: T, b: T): number {
+  if (typeof a.isDir === 'boolean' && typeof b.isDir === 'boolean' && a.isDir !== b.isDir) {
+    return a.isDir ? -1 : 1
+  }
+  const diff = parseModifiedTimestamp(b.modified) - parseModifiedTimestamp(a.modified)
+  if (diff !== 0) return diff
+  return a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true, sensitivity: 'base' })
+}
+
 function normalizeAssetSpaces(spaces: AssetSpace[]): AssetSpace[] {
   const normalized: AssetSpace[] = []
   const seen = new Set<string>()
@@ -816,9 +836,10 @@ function updateAppsRootDirectories(path: string, items: FileItem[]) {
     .filter(item => item.isDir)
     .map(item => ({
       name: item.name,
-      path: normalizeDirectoryPath(item.path)
+      path: normalizeDirectoryPath(item.path),
+      modified: item.modified
     }))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort(compareItemsByModifiedDesc)
   appsRootDirectories.value = dirs
 }
 
