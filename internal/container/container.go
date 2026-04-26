@@ -315,6 +315,7 @@ func (c *Container) initAuthenticators() error {
 		c.Config.Web3.UCAN.Enabled,
 		ucanAudience,
 		ucanCaps,
+		c.Config.Web3.UCAN.TrustedIssuerDIDs,
 		c.Logger,
 	)
 	c.Web3Auth = infraAuth.NewWeb3Authenticator(

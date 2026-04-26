@@ -108,6 +108,7 @@ type UCANConfig struct {
 	RequiredResource     string                   `yaml:"required_resource"`
 	RequiredAction       string                   `yaml:"required_action"`
 	RequiredCapabilities []UCANRequiredCapability `yaml:"required_capabilities"`
+	TrustedIssuerDIDs    []string                 `yaml:"trusted_issuer_dids"`
 	AppScope             AppScopeConfig           `yaml:"app_scope"`
 }
 
