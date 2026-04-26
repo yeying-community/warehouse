@@ -68,6 +68,9 @@ web3:
     # 兼容字段（旧配置）：required_resource + required_action
     # required_resource: "app:*"
     # required_action: "read,write"
+    # 若启用中心化签发（无 prf）并希望直接信任签发方 DID，可配置：
+    # trusted_issuer_dids:
+    #   - "did:key:z6Mkgwdj3oxDdLFXMsGpM8ZkF6MY3sVNGHhAebfPn3HuHBtT"
     app_scope:
       path_prefix: "/apps"
 

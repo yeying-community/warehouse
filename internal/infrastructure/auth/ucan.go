@@ -54,6 +54,7 @@ type ucanStatement struct {
 type ucanPayload struct {
 	Iss  string                                `json:"iss"`
 	Aud  string                                `json:"aud"`
+	Sub  string                                `json:"sub,omitempty"`
 	Cap  []json.RawMessage                     `json:"cap"`
 	Att  map[string]map[string]json.RawMessage `json:"att,omitempty"`
 	Exp  int64                                 `json:"exp"`
@@ -238,14 +239,15 @@ func extractCapabilities(rawCaps []json.RawMessage, att map[string]map[string]js
 
 // UcanVerifier validates UCAN invocation tokens.
 type UcanVerifier struct {
-	enabled      bool
-	audience     string
-	requiredCaps []UcanCapability
-	logger       *zap.Logger
+	enabled        bool
+	audience       string
+	requiredCaps   []UcanCapability
+	trustedIssuers map[string]struct{}
+	logger         *zap.Logger
 }
 
 // NewUcanVerifier creates a verifier for UCAN invocations.
-func NewUcanVerifier(enabled bool, audience string, requiredCaps []UcanCapability, logger *zap.Logger) *UcanVerifier {
+func NewUcanVerifier(enabled bool, audience string, requiredCaps []UcanCapability, trustedIssuerDIDs []string, logger *zap.Logger) *UcanVerifier {
 	caps := make([]UcanCapability, 0, len(requiredCaps))
 	for _, cap := range requiredCaps {
 		normalized, ok := normalizeRequiredCapability(cap)
@@ -256,11 +258,50 @@ func NewUcanVerifier(enabled bool, audience string, requiredCaps []UcanCapabilit
 	}
 
 	return &UcanVerifier{
-		enabled:      enabled,
-		audience:     strings.TrimSpace(audience),
-		requiredCaps: dedupeCapabilities(caps),
-		logger:       logger,
+		enabled:        enabled,
+		audience:       strings.TrimSpace(audience),
+		requiredCaps:   dedupeCapabilities(caps),
+		trustedIssuers: normalizeTrustedIssuerDIDs(trustedIssuerDIDs),
+		logger:         logger,
 	}
+}
+
+func normalizeTrustedIssuerDIDs(input []string) map[string]struct{} {
+	if len(input) == 0 {
+		return nil
+	}
+	result := make(map[string]struct{}, len(input))
+	for _, raw := range input {
+		normalized := strings.TrimSpace(raw)
+		if normalized == "" {
+			continue
+		}
+		result[normalized] = struct{}{}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func normalizeEthereumAddress(input string) string {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	if len(normalized) != 42 || !strings.HasPrefix(normalized, "0x") {
+		return ""
+	}
+	decoded, err := hexutil.Decode(normalized)
+	if err != nil || len(decoded) != 20 {
+		return ""
+	}
+	return normalized
+}
+
+func (v *UcanVerifier) isTrustedIssuer(issuer string) bool {
+	if v == nil || len(v.trustedIssuers) == 0 {
+		return false
+	}
+	_, ok := v.trustedIssuers[strings.TrimSpace(issuer)]
+	return ok
 }
 
 // Enabled returns true when UCAN verification is enabled.
@@ -301,6 +342,14 @@ func (v *UcanVerifier) VerifyInvocation(token string) (string, error) {
 			)
 		}
 		return "", fmt.Errorf("UCAN capability denied")
+	}
+
+	if v.isTrustedIssuer(payload.Iss) {
+		address := normalizeEthereumAddress(payload.Sub)
+		if address == "" {
+			return "", fmt.Errorf("invalid UCAN subject")
+		}
+		return address, nil
 	}
 
 	iss, err := verifyProofChain(payload.Iss, payload.Caps, exp, payload.Prf)
