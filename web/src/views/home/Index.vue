@@ -176,11 +176,6 @@ type AccessKeyForm = ShareExpiryForm & {
 }
 type DirectShareRelation = 'owned' | 'received'
 type DirectShareListItem = DirectShareItem & { relation?: DirectShareRelation }
-type AppRootDirectory = {
-  name: string
-  path: string
-  modified: string
-}
 const SHARE_EXPIRY_UNITS: Array<{ label: string; value: ShareExpiryUnit }> = [
   { label: '分钟', value: 'minute' },
   { label: '小时', value: 'hour' },
@@ -210,7 +205,6 @@ const DEFAULT_ASSET_SPACES: AssetSpace[] = [
 const assetSpaces = ref<AssetSpace[]>(DEFAULT_ASSET_SPACES)
 const defaultAssetSpaceKey = ref('personal')
 const assetSpaceLoading = ref(false)
-const appsRootDirectories = ref<AppRootDirectory[]>([])
 const sidePanelCollapsed = ref(false)
 
 // 是否显示回收站列表
@@ -395,10 +389,6 @@ const fileParentTargetPath = computed(() => {
   }
   return normalizeDirectoryPath(parentPath)
 })
-const appsSpacePath = computed(() => getAppsSpacePath())
-const isInAppsSpace = computed(() => isPathInSpace(currentPath.value, appsSpacePath.value))
-const currentTopLevelApp = computed(() => getTopLevelAppFromPath(currentPath.value))
-const showAppQuickRow = computed(() => isFileView.value && isInAppsSpace.value && appsRootDirectories.value.length > 0)
 const fileBreadcrumbRoot = computed(() => {
   const space = currentAssetSpace.value
   if (space) {
@@ -807,42 +797,11 @@ function resolveAssetSpaceByPath(path: string): AssetSpace | null {
   return null
 }
 
-function getAppsSpacePath(): string {
-  const appsSpace = normalizeAssetSpaces(assetSpaces.value).find(item => item.key === 'apps')
-  return normalizeDirectoryPath(appsSpace?.path || '/apps')
-}
-
 function isPathInSpace(path: string, spacePath: string): boolean {
   const normalizedPath = normalizePathForSpaceMatch(path)
   const normalizedSpace = normalizePathForSpaceMatch(spacePath)
   if (normalizedSpace === '/') return true
   return normalizedPath === normalizedSpace || normalizedPath.startsWith(`${normalizedSpace}/`)
-}
-
-function getTopLevelAppFromPath(path: string): string {
-  const appsRoot = normalizePathForSpaceMatch(getAppsSpacePath())
-  const normalizedPath = normalizePathForSpaceMatch(path)
-  if (!isPathInSpace(normalizedPath, appsRoot)) return ''
-  if (normalizedPath === appsRoot) return ''
-  const relative = normalizedPath.slice(appsRoot.length).replace(/^\/+/, '')
-  const [appName] = relative.split('/')
-  return appName || ''
-}
-
-function updateAppsRootDirectories(path: string, items: FileItem[]) {
-  const appsRootPath = getAppsSpacePath()
-  if (normalizePathForSpaceMatch(path) !== normalizePathForSpaceMatch(appsRootPath)) {
-    return
-  }
-  const dirs = items
-    .filter(item => item.isDir)
-    .map(item => ({
-      name: item.name,
-      path: normalizeDirectoryPath(item.path),
-      modified: item.modified
-    }))
-    .sort(compareItemsByModifiedDesc)
-  appsRootDirectories.value = dirs
 }
 
 function resolveInitialFilePath(storedPath: string): string {
@@ -1084,37 +1043,11 @@ async function fetchFiles(path: string = '/') {
     currentPath.value = path
     localStorage.setItem(FILE_PATH_STORAGE_KEY, currentPath.value)
     fileList.value = parsePropfindResponse(text, currentPath.value, DAV_PREFIX)
-    updateAppsRootDirectories(currentPath.value, fileList.value)
-    if (isPathInSpace(currentPath.value, appsSpacePath.value) && appsRootDirectories.value.length === 0) {
-      void fetchAppsRootDirectories()
-    }
     console.log('parsed items:', fileList.value)
   } catch (error) {
     console.error('获取文件列表失败:', error)
   } finally {
     loading.value = false
-  }
-}
-
-async function fetchAppsRootDirectories() {
-  const rootPath = appsSpacePath.value
-  const apiPath = buildDavPath(rootPath)
-  try {
-    const token = localStorage.getItem('authToken') || ''
-    const response = await fetch(apiPath, {
-      method: 'PROPFIND',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/xml',
-        'Depth': '1'
-      }
-    })
-    if (!response.ok) return
-    const text = await response.text()
-    const parsed = parsePropfindResponse(text, rootPath, DAV_PREFIX)
-    updateAppsRootDirectories(rootPath, parsed)
-  } catch (error) {
-    console.error('获取应用目录失败:', error)
   }
 }
 
@@ -4184,26 +4117,6 @@ onBeforeUnmount(() => {
                   </div>
                 </template>
               </div>
-              <div v-if="showAppQuickRow" class="app-quick-row">
-                <button
-                  type="button"
-                  class="app-quick-item"
-                  :class="{ active: !currentTopLevelApp }"
-                  @click="enterAssetSpace('apps')"
-                >
-                  全部
-                </button>
-                <button
-                  v-for="app in appsRootDirectories"
-                  :key="app.path"
-                  type="button"
-                  class="app-quick-item"
-                  :class="{ active: currentTopLevelApp === app.name }"
-                  @click="fetchFiles(app.path)"
-                >
-                  {{ app.name }}
-                </button>
-              </div>
             </div>
             <div class="list-header-right">
               <div v-if="showSearch" class="header-search">
@@ -5506,36 +5419,6 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.app-quick-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-
-.app-quick-item {
-  border: 1px solid #e4e9f2;
-  background: #fff;
-  color: #606266;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.app-quick-item:hover {
-  border-color: #bfd9ff;
-  color: #409eff;
-}
-
-.app-quick-item.active {
-  border-color: #409eff;
-  background: #eef6ff;
-  color: #1c4fb8;
-  font-weight: 600;
-}
 
 .path-pill {
   display: inline-flex;
@@ -6148,18 +6031,6 @@ onBeforeUnmount(() => {
 
   .asset-nav-item {
     width: 100%;
-  }
-
-  .app-quick-row {
-    width: 100%;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 2px;
-  }
-
-  .app-quick-item {
-    flex: 0 0 auto;
   }
 
   .key-item {
