@@ -603,6 +603,7 @@ const canPreviewPreviousImage = computed(() => previewImageIndex.value > 0)
 const canPreviewNextImage = computed(
   () => previewImageIndex.value >= 0 && previewImageIndex.value < previewImageItems.value.length - 1
 )
+const accessKeyMountURL = computed(() => buildAbsoluteDavURL(accessKeyScopePath.value))
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 const TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'markdown', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
@@ -697,6 +698,22 @@ function ensureDavPrefixedPath(path: string): string {
 
 function buildDavPath(path: string): string {
   return ensureDavPrefixedPath(path)
+}
+
+function buildAbsoluteDavURL(path: string): string {
+  const rawBase = String(API_BASE || '').trim()
+  const normalizedBase = rawBase ? rawBase.replace(/\/+$/, '') : ''
+  if (typeof window === 'undefined') {
+    return `${normalizedBase}${buildDavPath(path)}`
+  }
+  try {
+    const resolvedBase = normalizedBase
+      ? new URL(normalizedBase, window.location.origin).toString().replace(/\/+$/, '')
+      : window.location.origin.replace(/\/+$/, '')
+    return `${resolvedBase}${buildDavPath(path)}`
+  } catch {
+    return `${window.location.origin.replace(/\/+$/, '')}${buildDavPath(path)}`
+  }
 }
 
 function isInternalMoveDrag(event?: DragEvent | null): boolean {
@@ -4686,6 +4703,22 @@ onBeforeUnmount(() => {
                   <span class="access-key-scope-count">已授权 {{ accessKeysForScope.length }}</span>
                 </div>
                 <span class="access-key-scope-value mono">{{ accessKeyScopePath }}</span>
+                <div class="access-key-scope-mount">
+                  <div class="access-key-scope-mount-head">
+                    <span class="access-key-scope-mount-label">挂载 URL</span>
+                    <el-button
+                      size="small"
+                      text
+                      @click="copyAccessKeyValue(accessKeyMountURL, '挂载 URL')"
+                    >
+                      复制
+                    </el-button>
+                  </div>
+                  <span class="access-key-scope-mount-value mono">{{ accessKeyMountURL }}</span>
+                  <span class="access-key-scope-mount-hint">
+                    可直接作为 `scripts/mount_davfs.sh mount` 的第一个参数
+                  </span>
+                </div>
               </div>
 
               <div class="access-key-section">
@@ -5790,6 +5823,38 @@ onBeforeUnmount(() => {
   font-size: 12px;
   color: #1f2d3d;
   word-break: break-all;
+}
+
+.access-key-scope-mount {
+  border-top: 1px dashed #dce7f7;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.access-key-scope-mount-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.access-key-scope-mount-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.access-key-scope-mount-value {
+  font-size: 12px;
+  color: #1f2d3d;
+  word-break: break-all;
+}
+
+.access-key-scope-mount-hint {
+  font-size: 12px;
+  color: #909399;
 }
 
 .access-key-section {

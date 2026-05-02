@@ -175,14 +175,15 @@ do_mount() {
   local username="$3"
   local password="${4:-}"
 
+  if mountpoint -q "$mount_point"; then
+    echo "Already mounted: $mount_point" >&2
+    echo "Credentials were not updated. Run 'scripts/mount_davfs.sh umount $mount_point' first if you want to remount with a different key." >&2
+    return 0
+  fi
+
   if [[ -z "$password" ]]; then
     read -r -s -p "Password for ${username}: " password
     echo
-  fi
-
-  if mountpoint -q "$mount_point"; then
-    echo "Already mounted: $mount_point"
-    return 0
   fi
 
   sudo mkdir -p "$mount_point"
