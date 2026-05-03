@@ -294,10 +294,8 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d warehouse
 
 - 文档索引：[docs/文档索引.md](docs/文档索引.md)
 - API 文档：[docs/WebDAV文件CRUD API（简明版）.md](docs/WebDAV文件CRUD API（简明版）.md)
-- 配置与部署设计：[docs/配置与部署设计.md](docs/配置与部署设计.md)
-- 阶段一高可用部署：[docs/阶段一高可用部署.md](docs/阶段一高可用部署.md)
+- 部署手册：[docs/部署手册.md](docs/部署手册.md)
 - 容灾方案：[docs/容灾方案.md](docs/容灾方案.md)
-- 安装包部署文档：[docs/安装包部署文档.md](docs/安装包部署文档.md)
 
 README 只覆盖本地开发、调试和最短启动路径。  
-正式环境部署、安装包拷贝、启动、验证与回滚，请直接看部署文档。
+正式环境部署、active/standby 上线、验证与回滚，请直接看部署手册。
