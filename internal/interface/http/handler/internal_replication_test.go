@@ -1040,6 +1040,82 @@ func TestInternalReplicationHandleReconcileStartPersistsAssignmentError(t *testi
 	if assignment.LastError == nil || !strings.Contains(*assignment.LastError, "scan failed") {
 		t.Fatalf("expected assignment last error to be persisted, got %#v", assignment.LastError)
 	}
+	if assignment.FailureCount != 1 {
+		t.Fatalf("expected assignment failure count to increment, got %#v", assignment.FailureCount)
+	}
+	if assignment.NextRetryAt == nil {
+		t.Fatalf("expected assignment next retry to be persisted")
+	}
+}
+
+func TestStartReconcileAutoPausesAssignmentAfterRepeatedFailures(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Replication.Enabled = true
+	cfg.Replication.ReconcileAutoPauseFailures = 2
+
+	lastOutboxID := int64(7)
+	generation := int64(5)
+	reconcileStore := &fakeReconcileStore{}
+	assignments := &fakeHandlerAssignmentRepository{
+		pairAssignments: map[string]*cluster.ReplicationAssignment{
+			"node-a->node-b": {
+				ActiveNodeID:   "node-a",
+				StandbyNodeID:  "node-b",
+				State:          cluster.AssignmentStatePending,
+				Generation:     generation,
+				LeaseExpiresAt: timePointer(time.Now().UTC().Add(time.Minute)),
+			},
+		},
+	}
+	handler := NewInternalReplicationHandler(
+		cfg,
+		zap.NewNop(),
+		fakeReplicationOutboxReader{
+			expectedSource: "node-a",
+			expectedTarget: "node-b",
+			summary: &replication.OutboxStatus{
+				LastOutboxID: &lastOutboxID,
+			},
+		},
+		nil,
+		reconcileStore,
+		fakeReconcileScanner{
+			err: fmt.Errorf("scan failed"),
+		},
+		fakeHandlerPeerResolver{
+			target: &service.ResolvedReplicationPeer{
+				NodeID:               "node-b",
+				AssignmentGeneration: &generation,
+			},
+		},
+		assignments,
+	)
+
+	for i := 0; i < 2; i++ {
+		_, err := handler.startReconcile(context.Background(), "node-b")
+		if err == nil {
+			t.Fatalf("expected reconcile failure on attempt %d", i+1)
+		}
+	}
+
+	assignment := assignments.pairAssignments["node-a->node-b"]
+	if assignment == nil {
+		t.Fatalf("expected assignment to exist")
+	}
+	if assignment.State != cluster.AssignmentStatePaused {
+		t.Fatalf("expected assignment to auto-pause after repeated failures, got %#v", assignment)
+	}
+	if assignment.FailureCount != 2 {
+		t.Fatalf("expected assignment failure count to reach threshold, got %#v", assignment.FailureCount)
+	}
+	if assignment.NextRetryAt != nil {
+		t.Fatalf("expected paused assignment to clear next retry, got %#v", assignment.NextRetryAt)
+	}
+	if assignment.LastError == nil || !strings.Contains(*assignment.LastError, "auto-paused") {
+		t.Fatalf("expected assignment last error to explain auto-pause, got %#v", assignment.LastError)
+	}
 }
 
 func TestStartReconcileReturnsAssignmentUnavailableWhenNoEffectiveAssignment(t *testing.T) {

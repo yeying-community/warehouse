@@ -93,8 +93,16 @@ func (r *fakeAllocatorAssignmentRepository) UpsertLease(_ context.Context, assig
 	copied.Generation = 1
 	if existing := r.assignmentsByPair[copied.ActiveNodeID+"->"+copied.StandbyNodeID]; existing != nil {
 		copied.Generation = existing.Generation
+		copied.LastError = existing.LastError
+		copied.FailureCount = existing.FailureCount
+		copied.NextRetryAt = existing.NextRetryAt
 		if cluster.AdvancesAssignmentGeneration(existing.State, copied.State) {
 			copied.Generation++
+		}
+		if copied.State == cluster.AssignmentStatePending {
+			copied.LastError = nil
+			copied.FailureCount = 0
+			copied.NextRetryAt = nil
 		}
 	}
 	r.upserted = append(r.upserted, &copied)
@@ -117,6 +125,11 @@ func (r *fakeAllocatorAssignmentRepository) ReleaseByActiveExcept(_ context.Cont
 	r.releaseActiveNodeID = activeNodeID
 	r.releaseKeepStandbyIDs = append([]string(nil), keepStandbyIDs...)
 	return nil
+}
+
+func retryTimePointer(value time.Time) *time.Time {
+	v := value
+	return &v
 }
 
 func TestReplicationAssignmentAllocatorSyncOnceKeepsCurrentHealthyStandby(t *testing.T) {
@@ -243,10 +256,51 @@ func TestReplicationAssignmentAllocatorSyncOnceRecoversErrorStateAutomatically(t
 	if assignments.upserted[0].State != cluster.AssignmentStatePending {
 		t.Fatalf("expected automatic recovery to move error to pending, got %#v", assignments.upserted[0])
 	}
-	if recovery, ok := allocator.errorRecoveryPairs["active-a->standby-a"]; !ok {
-		t.Fatalf("expected recovered error pair to be tracked")
-	} else if recovery.attempt != 1 {
-		t.Fatalf("expected first recovery attempt to be tracked, got %#v", recovery)
+	if assignments.upserted[0].FailureCount != 0 || assignments.upserted[0].NextRetryAt != nil {
+		t.Fatalf("expected recovery to reset failure state, got %#v", assignments.upserted[0])
+	}
+}
+
+func TestReplicationAssignmentAllocatorSyncOnceKeepsPausedAssignmentPaused(t *testing.T) {
+	now := time.Date(2026, 3, 13, 10, 0, 0, 0, time.UTC)
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "active-a"
+	cfg.Node.Role = "active"
+	cfg.Replication.Enabled = true
+
+	nodes := &fakeAllocatorNodeRepository{
+		nodesByRole: map[string][]*cluster.Node{
+			"standby": {
+				{NodeID: "standby-a", Role: "standby", AdvertiseURL: "http://standby-a", LastHeartbeatAt: now},
+			},
+		},
+	}
+	assignments := &fakeAllocatorAssignmentRepository{
+		assignmentsByPair: map[string]*cluster.ReplicationAssignment{
+			"active-a->standby-a": {
+				ActiveNodeID:  "active-a",
+				StandbyNodeID: "standby-a",
+				State:         cluster.AssignmentStatePaused,
+				Generation:    5,
+				LastError:     stringPointer("manual pause after repeated reconcile failure"),
+			},
+		},
+	}
+
+	allocator := NewReplicationAssignmentAllocator(cfg, nodes, assignments, zap.NewNop())
+	allocator.now = func() time.Time { return now }
+
+	if err := allocator.SyncOnce(context.Background()); err != nil {
+		t.Fatalf("SyncOnce: %v", err)
+	}
+	if len(assignments.upserted) != 1 {
+		t.Fatalf("expected 1 upsert, got %d", len(assignments.upserted))
+	}
+	if assignments.upserted[0].State != cluster.AssignmentStatePaused {
+		t.Fatalf("expected paused state to be preserved, got %#v", assignments.upserted[0])
+	}
+	if assignments.upserted[0].LastError == nil || *assignments.upserted[0].LastError != "manual pause after repeated reconcile failure" {
+		t.Fatalf("expected paused assignment to preserve last error, got %#v", assignments.upserted[0].LastError)
 	}
 }
 
@@ -271,20 +325,20 @@ func TestReplicationAssignmentAllocatorSyncOnceBacksOffErrorRecovery(t *testing.
 				StandbyNodeID: "standby-a",
 				State:         cluster.AssignmentStateError,
 				Generation:    3,
+				FailureCount:  1,
+				NextRetryAt:   retryTimePointer(now.Add(10 * time.Second)),
 			},
 		},
 	}
 
 	allocator := NewReplicationAssignmentAllocator(cfg, nodes, assignments, zap.NewNop())
 	allocator.now = func() time.Time { return now }
-	allocator.errorRetryBase = 10 * time.Second
-	allocator.errorRetryMax = time.Minute
 
 	if err := allocator.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("initial SyncOnce: %v", err)
 	}
-	if assignments.upserted[0].State != cluster.AssignmentStatePending {
-		t.Fatalf("expected first automatic recovery to move error to pending, got %#v", assignments.upserted[0])
+	if assignments.upserted[0].State != cluster.AssignmentStateError {
+		t.Fatalf("expected backoff window to preserve error state, got %#v", assignments.upserted[0])
 	}
 
 	assignments.upserted = nil
@@ -293,6 +347,8 @@ func TestReplicationAssignmentAllocatorSyncOnceBacksOffErrorRecovery(t *testing.
 		StandbyNodeID: "standby-a",
 		State:         cluster.AssignmentStateError,
 		Generation:    4,
+		FailureCount:  1,
+		NextRetryAt:   retryTimePointer(now.Add(10 * time.Second)),
 	}
 
 	allocator.now = func() time.Time { return now.Add(5 * time.Second) }
@@ -318,12 +374,12 @@ func TestReplicationAssignmentAllocatorSyncOnceBacksOffErrorRecovery(t *testing.
 	if assignments.upserted[0].State != cluster.AssignmentStatePending {
 		t.Fatalf("expected retry after backoff to move error to pending, got %#v", assignments.upserted[0])
 	}
-	if recovery := allocator.errorRecoveryPairs["active-a->standby-a"]; recovery.attempt != 2 {
-		t.Fatalf("expected second recovery attempt to be tracked, got %#v", recovery)
+	if assignments.upserted[0].FailureCount != 0 || assignments.upserted[0].NextRetryAt != nil {
+		t.Fatalf("expected retry after backoff to reset failure state, got %#v", assignments.upserted[0])
 	}
 }
 
-func TestReplicationAssignmentAllocatorSyncOnceClearsErrorBackoffAfterEffectiveState(t *testing.T) {
+func TestReplicationAssignmentAllocatorSyncOnceAllowsRecoveryAgainAfterEffectiveState(t *testing.T) {
 	now := time.Date(2026, 3, 13, 10, 0, 0, 0, time.UTC)
 	cfg := config.DefaultConfig()
 	cfg.Node.ID = "active-a"
@@ -344,20 +400,20 @@ func TestReplicationAssignmentAllocatorSyncOnceClearsErrorBackoffAfterEffectiveS
 				StandbyNodeID: "standby-a",
 				State:         cluster.AssignmentStateError,
 				Generation:    3,
+				FailureCount:  1,
+				NextRetryAt:   retryTimePointer(now),
 			},
 		},
 	}
 
 	allocator := NewReplicationAssignmentAllocator(cfg, nodes, assignments, zap.NewNop())
 	allocator.now = func() time.Time { return now }
-	allocator.errorRetryBase = 10 * time.Second
-	allocator.errorRetryMax = time.Minute
 
 	if err := allocator.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("initial SyncOnce: %v", err)
 	}
-	if recovery := allocator.errorRecoveryPairs["active-a->standby-a"]; recovery.attempt != 1 {
-		t.Fatalf("expected recovery state to exist after first retry, got %#v", recovery)
+	if len(assignments.upserted) != 1 || assignments.upserted[0].State != cluster.AssignmentStatePending {
+		t.Fatalf("expected initial recovery to move error to pending, got %#v", assignments.upserted)
 	}
 
 	assignments.upserted = nil
@@ -371,8 +427,8 @@ func TestReplicationAssignmentAllocatorSyncOnceClearsErrorBackoffAfterEffectiveS
 	if err := allocator.SyncOnce(context.Background()); err != nil {
 		t.Fatalf("replicating SyncOnce: %v", err)
 	}
-	if _, ok := allocator.errorRecoveryPairs["active-a->standby-a"]; ok {
-		t.Fatalf("expected effective assignment to clear recovery backoff")
+	if len(assignments.upserted) != 1 || assignments.upserted[0].State != cluster.AssignmentStateReplicating {
+		t.Fatalf("expected replicating assignment to be preserved, got %#v", assignments.upserted)
 	}
 
 	assignments.upserted = nil
@@ -381,6 +437,8 @@ func TestReplicationAssignmentAllocatorSyncOnceClearsErrorBackoffAfterEffectiveS
 		StandbyNodeID: "standby-a",
 		State:         cluster.AssignmentStateError,
 		Generation:    4,
+		FailureCount:  1,
+		NextRetryAt:   retryTimePointer(now.Add(3 * time.Second)),
 	}
 	allocator.now = func() time.Time { return now.Add(3 * time.Second) }
 	if err := allocator.SyncOnce(context.Background()); err != nil {
@@ -388,9 +446,6 @@ func TestReplicationAssignmentAllocatorSyncOnceClearsErrorBackoffAfterEffectiveS
 	}
 	if len(assignments.upserted) != 1 || assignments.upserted[0].State != cluster.AssignmentStatePending {
 		t.Fatalf("expected recovery after effective-state reset, got %#v", assignments.upserted)
-	}
-	if recovery := allocator.errorRecoveryPairs["active-a->standby-a"]; recovery.attempt != 1 {
-		t.Fatalf("expected recovery attempt to restart from 1, got %#v", recovery)
 	}
 }
 

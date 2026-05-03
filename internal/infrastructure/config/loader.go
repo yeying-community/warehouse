@@ -142,6 +142,11 @@ func (l *Loader) overrideFromEnv(config *Config) {
 			config.Replication.MaxRetryBackoff = d
 		}
 	}
+	if v := os.Getenv("WEBDAV_REPLICATION_RECONCILE_AUTO_PAUSE_FAILURES"); v != "" {
+		if count, err := strconv.Atoi(v); err == nil {
+			config.Replication.ReconcileAutoPauseFailures = count
+		}
+	}
 	if v := os.Getenv("WEBDAV_PREFIX"); v != "" {
 		config.WebDAV.Prefix = v
 	}
@@ -345,6 +350,9 @@ func (l *Loader) validateReplication(config *Config) error {
 	}
 	if replication.MaxRetryBackoff < replication.RetryBackoffBase {
 		return errors.New("replication.max_retry_backoff must be greater than or equal to retry_backoff_base")
+	}
+	if replication.ReconcileAutoPauseFailures < 0 {
+		return errors.New("replication.reconcile_auto_pause_failures must be greater than or equal to zero")
 	}
 
 	return nil

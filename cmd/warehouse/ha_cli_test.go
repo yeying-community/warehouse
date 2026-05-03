@@ -232,6 +232,33 @@ func TestPlanAssignmentStateMutationDrain(t *testing.T) {
 	}
 }
 
+func TestPlanAssignmentStateMutationPause(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStateReplicating,
+		Generation:    4,
+		LastError:     stringPointer("previous reconcile failure"),
+	}
+
+	updated, changed, notes, err := planAssignmentStateMutation("pause", assignment, true, false, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("planAssignmentStateMutation returned error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected pause to change assignment")
+	}
+	if updated.State != cluster.AssignmentStatePaused {
+		t.Fatalf("expected paused state, got %#v", updated)
+	}
+	if updated.LastError == nil || *updated.LastError != "previous reconcile failure" {
+		t.Fatalf("expected pause to preserve last error, got %#v", updated.LastError)
+	}
+	if len(notes) == 0 {
+		t.Fatalf("expected pause notes")
+	}
+}
+
 func TestPlanAssignmentStateMutationReleaseRequiresDraining(t *testing.T) {
 	assignment := &cluster.ReplicationAssignment{
 		ActiveNodeID:  "node-a",
@@ -292,6 +319,8 @@ func TestPlanAssignmentStateMutationRetry(t *testing.T) {
 		State:         cluster.AssignmentStateError,
 		Generation:    4,
 		LastError:     stringPointer("dispatch failed"),
+		FailureCount:  2,
+		NextRetryAt:   timePointer(time.Now().UTC().Add(time.Minute)),
 	}
 
 	updated, changed, notes, err := planAssignmentStateMutation("retry", assignment, true, false, time.Now().UTC())
@@ -307,12 +336,65 @@ func TestPlanAssignmentStateMutationRetry(t *testing.T) {
 	if updated.LastError != nil {
 		t.Fatalf("expected last error to be cleared, got %#v", updated.LastError)
 	}
+	if updated.FailureCount != 0 || updated.NextRetryAt != nil {
+		t.Fatalf("expected retry to clear failure state, got %#v", updated)
+	}
 	if len(notes) == 0 {
 		t.Fatalf("expected retry note")
 	}
 }
 
+func TestPlanAssignmentStateMutationResume(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStatePaused,
+		Generation:    4,
+		LastError:     stringPointer("manual pause after repeated failures"),
+		FailureCount:  3,
+		NextRetryAt:   timePointer(time.Now().UTC().Add(time.Minute)),
+	}
+
+	updated, changed, notes, err := planAssignmentStateMutation("resume", assignment, true, false, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("planAssignmentStateMutation returned error: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected resume to change assignment")
+	}
+	if updated.State != cluster.AssignmentStatePending {
+		t.Fatalf("expected pending state, got %#v", updated)
+	}
+	if updated.LastError != nil {
+		t.Fatalf("expected resume to clear last error, got %#v", updated.LastError)
+	}
+	if updated.FailureCount != 0 || updated.NextRetryAt != nil {
+		t.Fatalf("expected resume to clear failure state, got %#v", updated)
+	}
+	if len(notes) == 0 {
+		t.Fatalf("expected resume notes")
+	}
+}
+
+func TestPlanAssignmentStateMutationResumeRejectsNonPausedState(t *testing.T) {
+	assignment := &cluster.ReplicationAssignment{
+		ActiveNodeID:  "node-a",
+		StandbyNodeID: "node-b",
+		State:         cluster.AssignmentStateError,
+		Generation:    4,
+	}
+
+	if _, _, _, err := planAssignmentStateMutation("resume", assignment, true, false, time.Now().UTC()); err == nil {
+		t.Fatalf("expected resume to reject non-paused state")
+	}
+}
+
 func stringPointer(value string) *string {
+	v := value
+	return &v
+}
+
+func timePointer(value time.Time) *time.Time {
 	v := value
 	return &v
 }

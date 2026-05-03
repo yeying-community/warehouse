@@ -14,30 +14,20 @@ import (
 )
 
 const (
-	defaultAssignmentRenewInterval  = 5 * time.Second
-	defaultAssignmentLeaseDuration  = 20 * time.Second
-	defaultAssignmentErrorRetryBase = 10 * time.Second
-	defaultAssignmentErrorRetryMax  = 5 * time.Minute
+	defaultAssignmentRenewInterval = 5 * time.Second
+	defaultAssignmentLeaseDuration = 20 * time.Second
 )
-
-type assignmentErrorRecoveryState struct {
-	attempt     int
-	nextRetryAt time.Time
-}
 
 // ReplicationAssignmentAllocator maintains the effective standby assignment for one active node.
 type ReplicationAssignmentAllocator struct {
-	config             *config.Config
-	nodes              repository.ClusterNodeRepository
-	assignments        repository.ClusterReplicationAssignmentRepository
-	logger             *zap.Logger
-	now                func() time.Time
-	renewInterval      time.Duration
-	leaseDuration      time.Duration
-	maxStaleness       time.Duration
-	errorRetryBase     time.Duration
-	errorRetryMax      time.Duration
-	errorRecoveryPairs map[string]assignmentErrorRecoveryState
+	config        *config.Config
+	nodes         repository.ClusterNodeRepository
+	assignments   repository.ClusterReplicationAssignmentRepository
+	logger        *zap.Logger
+	now           func() time.Time
+	renewInterval time.Duration
+	leaseDuration time.Duration
+	maxStaleness  time.Duration
 }
 
 // NewReplicationAssignmentAllocator creates an active-side assignment allocator/renewer.
@@ -51,17 +41,14 @@ func NewReplicationAssignmentAllocator(
 		return nil
 	}
 	return &ReplicationAssignmentAllocator{
-		config:             cfg,
-		nodes:              nodes,
-		assignments:        assignments,
-		logger:             logger,
-		now:                time.Now,
-		renewInterval:      defaultAssignmentRenewInterval,
-		leaseDuration:      defaultAssignmentLeaseDuration,
-		maxStaleness:       defaultClusterNodeStaleness,
-		errorRetryBase:     defaultAssignmentErrorRetryBase,
-		errorRetryMax:      defaultAssignmentErrorRetryMax,
-		errorRecoveryPairs: make(map[string]assignmentErrorRecoveryState),
+		config:        cfg,
+		nodes:         nodes,
+		assignments:   assignments,
+		logger:        logger,
+		now:           time.Now,
+		renewInterval: defaultAssignmentRenewInterval,
+		leaseDuration: defaultAssignmentLeaseDuration,
+		maxStaleness:  defaultClusterNodeStaleness,
 	}
 }
 
@@ -144,22 +131,20 @@ func (a *ReplicationAssignmentAllocator) SyncOnce(ctx context.Context) error {
 			switch {
 			case currentAssignment.Effective():
 				state = currentAssignment.State
-				a.clearErrorRecoveryPair(activeNodeID, target.NodeID)
-			case currentAssignment.State == cluster.AssignmentStateError && a.shouldRecoverErrorPair(activeNodeID, target.NodeID, a.now().UTC()):
+			case currentAssignment.State == cluster.AssignmentStatePaused:
+				state = currentAssignment.State
+			case currentAssignment.State == cluster.AssignmentStateError && a.shouldRecoverErrorPair(currentAssignment, a.now().UTC()):
 				if a.logger != nil {
-					recovery := a.errorRecoveryPairs[a.errorRecoveryKey(activeNodeID, target.NodeID)]
 					a.logger.Info("recovering error assignment to pending",
 						zap.String("active_node_id", activeNodeID),
 						zap.String("standby_node_id", target.NodeID),
 						zap.Int64("generation", currentAssignment.Generation),
-						zap.Int("attempt", recovery.attempt),
-						zap.Time("next_retry_at", recovery.nextRetryAt))
+						zap.Int("failure_count", currentAssignment.FailureCount),
+						zap.Timep("next_retry_at", currentAssignment.NextRetryAt))
 				}
 			case currentAssignment.State == cluster.AssignmentStateError:
 				state = currentAssignment.State
 			}
-		} else {
-			a.clearErrorRecoveryPair(activeNodeID, target.NodeID)
 		}
 		assignment := &cluster.ReplicationAssignment{
 			ActiveNodeID:   activeNodeID,
@@ -238,59 +223,12 @@ func (a *ReplicationAssignmentAllocator) selectTargetStandbys(ctx context.Contex
 	return selected, nil
 }
 
-func (a *ReplicationAssignmentAllocator) shouldRecoverErrorPair(activeNodeID, standbyNodeID string, now time.Time) bool {
-	if a == nil {
+func (a *ReplicationAssignmentAllocator) shouldRecoverErrorPair(assignment *cluster.ReplicationAssignment, now time.Time) bool {
+	if a == nil || assignment == nil {
 		return false
 	}
-	key := a.errorRecoveryKey(activeNodeID, standbyNodeID)
-	if recovery, ok := a.errorRecoveryPairs[key]; ok && recovery.nextRetryAt.After(now) {
+	if assignment.NextRetryAt != nil && assignment.NextRetryAt.After(now) {
 		return false
-	}
-
-	attempt := 1
-	if recovery, ok := a.errorRecoveryPairs[key]; ok {
-		attempt = recovery.attempt + 1
-	}
-	a.errorRecoveryPairs[key] = assignmentErrorRecoveryState{
-		attempt:     attempt,
-		nextRetryAt: now.Add(a.errorRecoveryDelay(attempt)),
 	}
 	return true
-}
-
-func (a *ReplicationAssignmentAllocator) clearErrorRecoveryPair(activeNodeID, standbyNodeID string) {
-	if a == nil {
-		return
-	}
-	delete(a.errorRecoveryPairs, a.errorRecoveryKey(activeNodeID, standbyNodeID))
-}
-
-func (a *ReplicationAssignmentAllocator) errorRecoveryKey(activeNodeID, standbyNodeID string) string {
-	return strings.TrimSpace(activeNodeID) + "->" + strings.TrimSpace(standbyNodeID)
-}
-
-func (a *ReplicationAssignmentAllocator) errorRecoveryDelay(attempt int) time.Duration {
-	base := a.errorRetryBase
-	maxDelay := a.errorRetryMax
-	if base <= 0 {
-		base = defaultAssignmentErrorRetryBase
-	}
-	if maxDelay < base {
-		maxDelay = defaultAssignmentErrorRetryMax
-	}
-	if attempt <= 1 {
-		return base
-	}
-
-	delay := base
-	for i := 1; i < attempt; i++ {
-		if delay >= maxDelay/2 {
-			return maxDelay
-		}
-		delay *= 2
-	}
-	if delay > maxDelay {
-		return maxDelay
-	}
-	return delay
 }

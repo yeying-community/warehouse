@@ -17,6 +17,7 @@ const (
 	AssignmentStateReconciling = "reconciling"
 	AssignmentStateReplicating = "replicating"
 	AssignmentStateDraining    = "draining"
+	AssignmentStatePaused      = "paused"
 	AssignmentStateReleased    = "released"
 	AssignmentStateError       = "error"
 )
@@ -31,6 +32,8 @@ type ReplicationAssignment struct {
 	LeaseExpiresAt     *time.Time
 	LastReconcileJobID *int64
 	LastError          *string
+	FailureCount       int
+	NextRetryAt        *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -87,15 +90,17 @@ func CanTransitionAssignmentState(from, to string) bool {
 
 	switch from {
 	case AssignmentStatePending:
-		return to == AssignmentStateReconciling || to == AssignmentStateDraining || to == AssignmentStateError
+		return to == AssignmentStateReconciling || to == AssignmentStateDraining || to == AssignmentStatePaused || to == AssignmentStateError
 	case AssignmentStateReconciling:
-		return to == AssignmentStateReplicating || to == AssignmentStateDraining || to == AssignmentStateError
+		return to == AssignmentStateReplicating || to == AssignmentStateDraining || to == AssignmentStatePaused || to == AssignmentStateError
 	case AssignmentStateReplicating:
-		return to == AssignmentStateDraining || to == AssignmentStateError
+		return to == AssignmentStateDraining || to == AssignmentStatePaused || to == AssignmentStateError
 	case AssignmentStateDraining:
-		return to == AssignmentStateReleased || to == AssignmentStateError
-	case AssignmentStateError:
+		return to == AssignmentStateReleased || to == AssignmentStatePaused || to == AssignmentStateError
+	case AssignmentStatePaused:
 		return to == AssignmentStatePending || to == AssignmentStateReleased
+	case AssignmentStateError:
+		return to == AssignmentStatePending || to == AssignmentStatePaused || to == AssignmentStateReleased
 	case AssignmentStateReleased:
 		return to == AssignmentStatePending
 	default:
@@ -108,5 +113,5 @@ func CanTransitionAssignmentState(from, to string) bool {
 func AdvancesAssignmentGeneration(from, to string) bool {
 	from = strings.TrimSpace(from)
 	to = strings.TrimSpace(to)
-	return to == AssignmentStatePending && (from == AssignmentStateReleased || from == AssignmentStateError)
+	return to == AssignmentStatePending && (from == AssignmentStateReleased || from == AssignmentStateError || from == AssignmentStatePaused)
 }

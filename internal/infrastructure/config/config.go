@@ -54,14 +54,15 @@ type NodeConfig struct {
 
 // ReplicationConfig active / standby 复制配置
 type ReplicationConfig struct {
-	Enabled          bool          `yaml:"enabled"`
-	SharedSecret     string        `yaml:"shared_secret"`
-	AllowedClockSkew time.Duration `yaml:"allowed_clock_skew"`
-	DispatchInterval time.Duration `yaml:"dispatch_interval"`
-	RequestTimeout   time.Duration `yaml:"request_timeout"`
-	BatchSize        int           `yaml:"batch_size"`
-	RetryBackoffBase time.Duration `yaml:"retry_backoff_base"`
-	MaxRetryBackoff  time.Duration `yaml:"max_retry_backoff"`
+	Enabled                    bool          `yaml:"enabled"`
+	SharedSecret               string        `yaml:"shared_secret"`
+	AllowedClockSkew           time.Duration `yaml:"allowed_clock_skew"`
+	DispatchInterval           time.Duration `yaml:"dispatch_interval"`
+	RequestTimeout             time.Duration `yaml:"request_timeout"`
+	BatchSize                  int           `yaml:"batch_size"`
+	RetryBackoffBase           time.Duration `yaml:"retry_backoff_base"`
+	MaxRetryBackoff            time.Duration `yaml:"max_retry_backoff"`
+	ReconcileAutoPauseFailures int           `yaml:"reconcile_auto_pause_failures"`
 }
 
 // WebDAVConfig WebDAV 配置
@@ -179,13 +180,14 @@ func DefaultConfig() *Config {
 			Role: "active",
 		},
 		Replication: ReplicationConfig{
-			Enabled:          false,
-			AllowedClockSkew: 30 * time.Second,
-			DispatchInterval: 2 * time.Second,
-			RequestTimeout:   30 * time.Second,
-			BatchSize:        32,
-			RetryBackoffBase: 2 * time.Second,
-			MaxRetryBackoff:  5 * time.Minute,
+			Enabled:                    false,
+			AllowedClockSkew:           30 * time.Second,
+			DispatchInterval:           2 * time.Second,
+			RequestTimeout:             30 * time.Second,
+			BatchSize:                  32,
+			RetryBackoffBase:           2 * time.Second,
+			MaxRetryBackoff:            5 * time.Minute,
+			ReconcileAutoPauseFailures: 3,
 		},
 		WebDAV: WebDAVConfig{
 			Prefix:              "/dav",

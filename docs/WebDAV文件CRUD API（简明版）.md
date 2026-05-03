@@ -1,6 +1,6 @@
-# WebDAV 文件 CRUD API（简明版）
+# WebDAV 与相关接口 API（简明版）
 
-本文档面向“文件增删改查”，重点覆盖 WebDAV 操作与常用辅助接口。
+本文档面向调用方，汇总 WebDAV 文件操作以及与之配套的认证、用户、分享、地址簿、访问密钥等常用接口。
 
 ## 1. 基本信息
 
@@ -9,46 +9,18 @@
   - 例如 `webdav.prefix: "/dav"`，则 WebDAV 路由为 `/dav/`
 - 每个用户的根目录为其配置的用户目录（服务端自动映射）
 
-### 1.1 修改 `webdav.prefix` 要改哪些地方（直接照做）
+### 1.1 修改 `webdav.prefix` 时需要同步的地方
 
-下面按顺序改，保持一致即可：
+最少同步这四处：
 
-1) **后端配置**
-   - `config.yaml`：
-     ```yaml
-     webdav:
-       prefix: "/dav"   # 改成你想要的前缀，例如 "/" 或 "/webdav"
-     ```
+1. 后端配置：`config.yaml` 中的 `webdav.prefix`
+2. WebDAV 客户端访问地址
+3. 前端构建变量：`VITE_WEBDAV_PREFIX`
+4. 反向代理的前缀保留或剥离规则
 
-2) **WebDAV 客户端地址**
-   - 把客户端 URL 的前缀改成上面配置值  
-     例：前缀 `/dav` → `http://host:6065/dav/`  
-     例：前缀 `/` → `http://host:6065/`
+`/api/v1/public/*` 这类 JSON API 不受 `webdav.prefix` 影响。
 
-3) **前端 Web UI（构建时）**
-   - 设置环境变量 `VITE_WEBDAV_PREFIX` 与后端一致：
-     ```bash
-     VITE_WEBDAV_PREFIX=/dav   # 或 /
-     ```
-
-4) **Nginx/Ingress 代理**
-   - 后端前缀 **就是** `/dav`（保留前缀）：
-     ```nginx
-     location /dav/ { proxy_pass http://127.0.0.1:6065; }
-     ```
-   - 后端前缀 **是** `/`（需要剥离 `/dav`）：
-     ```nginx
-     location /dav/ { proxy_pass http://127.0.0.1:6065/; }
-     ```
-
-5) **开发环境（Vite）**
-   - 后端前缀 `/dav`：`web/vite.config.ts` 的 `/dav` 代理 **不要** rewrite
-   - 后端前缀 `/`：给 `/dav` 代理加 rewrite：
-     ```ts
-     rewrite: (path) => path.replace(/^\/dav(?=\/|$)/, '') || '/'
-     ```
-
-> API 接口（如 `/api/v1/public/*`）不受 `webdav.prefix` 影响，无需修改。
+完整示例与 Nginx 规则请直接看：[部署手册.md](./部署手册.md)
 
 ## 2. 认证方式
 
@@ -68,7 +40,7 @@ Authorization: Basic <base64(username:password)>
 
 说明：
 - Bearer Token 由 `/api/v1/public/auth/*` 获取（JWT），或由 UCAN 颁发方签发（UCAN）。
-- UCAN 需在配置中开启 `web3.ucan.enabled: true`，并设置 `audience` 与必需能力（推荐 `required_capabilities`，兼容 `required_resource/required_action`）与令牌能力匹配。
+- UCAN 的启用方式、`audience`、必需能力、`app scope` 与 proof chain 规则，请看：[认证设计.md](./认证设计.md)
 
 ## 3. 认证接口流程（challenge / verify / refresh）
 
@@ -116,10 +88,8 @@ POST Body：
 说明：`challenge` 需用钱包签名，过期时间约 5 分钟。
 
 说明（自动注册）：
-- 若该钱包地址首次使用且未注册，服务端会在 `challenge` 阶段自动创建账号。
-- 当前默认会创建随机用户名/目录并赋予默认权限与配额。
-- 可通过 `web3.auto_create_on_challenge` / `web3.auto_create_on_ucan` 配置开关控制自动创建行为。
-- 规划：后续会在自动创建前校验钱包是否持有足够额度的权益代币，不满足则不会自动创建。
+- 若钱包地址首次使用且未注册，服务端可按配置自动创建账号。
+- 自动创建行为与 UCAN/JWT 认证边界，见：[认证设计.md](./认证设计.md)
 
 ### 3.2 Verify
 
@@ -333,7 +303,7 @@ Body：
 
 因此建议客户端兼容：**先看 HTTP 状态码，再尝试 JSON 解析**。
 
-### 3.9 资产空间接口（个人资产 / 应用资产）
+### 3.9 资产空间接口
 
 - 方法：`GET`
 - 路径：`/api/v1/public/assets/spaces`
@@ -357,8 +327,9 @@ Body：
 ```
 
 说明：
-- 服务端会在读取该接口前自动自愈用户空间目录（`personal` / `apps`），确保前端首次登录可直接展示双入口。
-- `spaces[].path` 中 `apps` 路径来自服务端配置的 app scope 前缀（默认 `/apps`）。
+- 服务端会在读取该接口前自动自愈用户空间目录。
+- `spaces[].path` 中 `apps` 路径来自服务端配置的 app scope 前缀。
+- 资产空间分层、目录命名与 `app scope` 语义，见：[资产空间分层设计.md](./资产空间分层设计.md)
 
 ## 4. CRUD 方法矩阵
 
@@ -578,7 +549,7 @@ Body：
 
 ### 8.4 管理员用户管理
 
-需要管理员权限（`security.admin_addresses` 白名单中的钱包地址登录）。
+需要管理员权限。管理员账号识别规则见：[认证设计.md](./认证设计.md)
 
 - `GET /api/v1/public/admin/users/list`
 - `POST /api/v1/public/admin/users/create`
@@ -830,19 +801,17 @@ Body：
 - `permissions` 也可传单个 `"CRUD"` 字符串。
 - `expiresValue=0` 表示永不过期。
 - `expiresUnit` 支持 `minute`、`hour`、`day`、`week`、`month`、`year`。
-- `targetMode` 支持：
-  - `addresses`：地址共享（使用 `targetAddresses`，可传 1~N 个地址）
-  - `groups`：按地址簿多分组共享（使用 `groupIds`，可传多个分组 ID，后端会展开为用户快照）
-  - `all_users`：共享给所有已登录用户
-- 路径：`/api/v1/public/share/user/create`
+- `targetMode` 支持：`addresses`、`groups`、`all_users`。
+- 地址簿分组展开、全员共享语义、站内共享模型边界，见：[共享能力演进方案.md](./共享能力演进方案.md)
+- 当前站内共享实现与数据落点，见：[分享与回收站设计.md](./分享与回收站设计.md)
 
-创建响应新增字段：
+创建响应常用字段：
 
 - `targetType`：`addresses` / `groups` / `all_users`
 - `targetCount`：用户受众数量（去重后）
 - `audienceCount`：总受众数量（包含 `all_users`）
 - `allUsers`：是否包含全员受众
-- `targetWallet`：展示字段；地址共享/分组/全员时会返回占位值（例如 `@addresses:N` / `@groups:N` / `@all_users`）
+- `targetWallet`：展示字段，占位值可能为 `@addresses:N` / `@groups:N` / `@all_users`
 
 ### 11.2 列表/撤销
 
@@ -994,7 +963,7 @@ Body 示例（folder/rename/item）：
 
 ## 14. 权限规则（rules）
 
-用户规则存储在数据库，可通过管理员接口更新。规则按顺序匹配，命中后不再继续匹配；未命中则回退到用户默认权限。
+这里只保留管理员接口更新示例。权限匹配顺序、WebDAV 方法到 `C/R/U/D` 的映射、UCAN 与访问密钥的授权边界，请看：[认证设计.md](./认证设计.md)
 
 更新示例（管理员接口）：
 
@@ -1015,27 +984,7 @@ Body 示例（folder/rename/item）：
 
 ## 15. WebDAV 目录访问密钥（Access Key）
 
-为降低“账号密码泄漏即全量数据暴露”的风险，支持给用户生成 **目录级、最小权限** 的 WebDAV 访问密钥。
-
-核心约束：
-
-- 密钥只允许用于 WebDAV 路径（`webdav.prefix`），不能调用其他 API。
-- 新建密钥时不指定目录；目录绑定通过独立接口完成。
-- 一个密钥可以绑定多个目录（`1 key -> N paths`）。
-- 每个密钥绑定独立权限位（`C/R/U/D`），可小于用户自身权限。
-- 密钥可设置过期时间，也可随时撤销。
-
-权限语义约定：
-
-- `R`：只读，允许列目录、下载、读取元数据。
-- `C`：只允许新建原本不存在的文件或目录，不允许覆盖已有内容。
-- `U`：允许覆盖已有文件、修改已有内容、重命名，以及需要“更新语义”的写操作。
-- `D`：允许删除。
-- 因此：
-  - `R` = `read_only`
-  - `C+R` = 只新增不覆盖
-  - `C+R+U` = 可新增、可覆盖、可重命名
-  - `C+R+U+D` = 完整文件管理
+本节只说明接口与请求体。访问密钥的认证顺序、目录作用域、最小权限语义，以及与普通 Basic/UCAN 的关系，请看：[认证设计.md](./认证设计.md)
 
 ### 15.1 创建密钥
 
@@ -1082,7 +1031,6 @@ Body 示例（folder/rename/item）：
 说明：
 - `keySecret` 只在创建时返回一次，请立即安全保存。
 - 新建后默认 `bindingPaths=[]`，需要后续绑定目录才能使用。
-- 如果计划给脚本/应用做“只新增不覆盖”的直传，推荐权限为 `read + create`。
 - 如果计划给 `davfs2` 挂载后像本地目录一样写入，通常至少需要 `read + create + update`。
 
 ### 15.2 绑定目录

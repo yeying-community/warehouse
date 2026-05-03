@@ -186,8 +186,8 @@ const SHARE_EXPIRY_UNITS: Array<{ label: string; value: ShareExpiryUnit }> = [
 ]
 const ACCESS_KEY_PERMISSIONS: Array<{ label: string; value: AccessKeyPermission }> = [
   { label: '读取', value: 'read' },
-  { label: '上传', value: 'create' },
-  { label: '重命名', value: 'update' },
+  { label: '新增', value: 'create' },
+  { label: '修改', value: 'update' },
   { label: '删除', value: 'delete' }
 ]
 const ASSET_SPACE_NAME_BY_KEY: Record<string, string> = {
@@ -462,6 +462,9 @@ const accessKeysForScope = computed(() => {
   const scope = normalizeAccessKeyRootPath(accessKeyScopePath.value)
   return accessKeys.value.filter(item => isAccessKeyBoundToScope(item, scope))
 })
+const activeAccessKeysForScope = computed(() =>
+  accessKeysForScope.value.filter(item => item.status === 'active')
+)
 const activeUnboundKeysForScope = computed(() => {
   const scope = normalizeAccessKeyRootPath(accessKeyScopePath.value)
   return accessKeys.value.filter(item => item.status === 'active' && !isAccessKeyBoundToScope(item, scope))
@@ -697,6 +700,22 @@ function ensureDavPrefixedPath(path: string): string {
 
 function buildDavPath(path: string): string {
   return ensureDavPrefixedPath(path)
+}
+
+function buildAbsoluteDavURL(path: string): string {
+  const rawBase = String(API_BASE || '').trim()
+  const normalizedBase = rawBase ? rawBase.replace(/\/+$/, '') : ''
+  if (typeof window === 'undefined') {
+    return `${normalizedBase}${buildDavPath(path)}`
+  }
+  try {
+    const resolvedBase = normalizedBase
+      ? new URL(normalizedBase, window.location.origin).toString().replace(/\/+$/, '')
+      : window.location.origin.replace(/\/+$/, '')
+    return `${resolvedBase}${buildDavPath(path)}`
+  } catch {
+    return `${window.location.origin.replace(/\/+$/, '')}${buildDavPath(path)}`
+  }
 }
 
 function isInternalMoveDrag(event?: DragEvent | null): boolean {
@@ -4393,7 +4412,7 @@ onBeforeUnmount(() => {
                     <div class="user-value user-inline">
                       <span class="user-text">{{ userProfile.hasPassword ? '已设置' : '未设置' }}</span>
                       <div class="user-actions">
-                        <el-button size="small" text @click="openPasswordDialog">
+                        <el-button size="small" class="access-key-ghost-button" @click="openPasswordDialog">
                           {{ userProfile.hasPassword ? '修改' : '设置' }}
                         </el-button>
                       </div>
@@ -4493,7 +4512,7 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                     <div class="key-actions">
-                      <el-button size="small" text @click="copyAccessKeyValue(item.keyId, 'Key ID')">复制 ID</el-button>
+                      <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(item.keyId, 'Key ID')">复制 ID</el-button>
                       <el-button
                         size="small"
                         text
@@ -4683,44 +4702,60 @@ onBeforeUnmount(() => {
               <div class="access-key-scope-card">
                 <div class="access-key-scope-header">
                   <span class="access-key-scope-label">当前目录</span>
-                  <span class="access-key-scope-count">已授权 {{ accessKeysForScope.length }}</span>
+                  <el-button
+                    size="small"
+                    class="access-key-ghost-button"
+                    @click="copyAccessKeyValue(buildAbsoluteDavURL(accessKeyScopePath), '挂载URL')"
+                  >
+                    复制挂载 URL
+                  </el-button>
                 </div>
-                <span class="access-key-scope-value mono">{{ accessKeyScopePath }}</span>
+                <div class="access-key-scope-content">
+                  <span class="access-key-scope-value mono">{{ accessKeyScopePath }}</span>
+                  <span class="access-key-scope-count">生效中 {{ activeAccessKeysForScope.length }}</span>
+                </div>
               </div>
 
               <div class="access-key-section">
                 <div class="access-key-section-head">
-                  <span class="access-key-section-title">已授权</span>
+                  <span class="access-key-section-title">授权列表</span>
                 </div>
-                <div v-if="accessKeysForScope.length" class="access-key-bound-list">
-                  <div
-                    v-for="item in accessKeysForScope"
-                    :key="`scope-${item.id}`"
-                    class="access-key-bound-item"
-                  >
-                    <div class="access-key-bound-main">
-                      <div class="access-key-bound-head">
-                        <span class="access-key-bound-name">{{ item.name }}</span>
-                        <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">
-                          {{ item.status === 'active' ? '生效中' : '已撤销' }}
-                        </el-tag>
-                      </div>
-                      <span class="access-key-bound-id mono">ID: {{ item.keyId }}</span>
-                    </div>
-                    <div class="access-key-bound-actions">
+                <el-table
+                  v-if="accessKeysForScope.length"
+                  :data="accessKeysForScope"
+                  size="small"
+                  border
+                  max-height="250"
+                  class="access-key-bound-table"
+                >
+                  <el-table-column prop="name" label="名称" min-width="180" />
+                  <el-table-column label="Key ID" min-width="190">
+                    <template #default="{ row }">
+                      <span class="mono">{{ row.keyId }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="100" align="center">
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">
+                        {{ row.status === 'active' ? '生效中' : '已撤销' }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="92" align="center">
+                    <template #default="{ row }">
                       <el-button
                         size="small"
                         text
                         type="danger"
-                        :disabled="item.status !== 'active'"
-                        @click="revokeAccessKey(item)"
+                        :disabled="row.status !== 'active'"
+                        @click="revokeAccessKey(row)"
                       >
                         撤销
                       </el-button>
-                    </div>
-                  </div>
-                </div>
-                <div v-else class="access-key-empty">当前目录还没有授权密钥</div>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <div v-else class="access-key-empty">当前目录还没有授权记录</div>
               </div>
 
               <div class="access-key-section access-key-bind-box">
@@ -4746,7 +4781,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div v-else class="access-key-empty">
                   <span>没有可授权的生效密钥</span>
-                  <el-button text type="primary" @click="openAccessKeyDialogFromUserCenter">去新建密钥</el-button>
+                  <el-button class="access-key-ghost-button" @click="openAccessKeyDialogFromUserCenter">去新建密钥</el-button>
                 </div>
               </div>
             </div>
@@ -4766,6 +4801,10 @@ onBeforeUnmount(() => {
                     {{ item.label }}
                   </el-checkbox>
                 </el-checkbox-group>
+                <div class="access-key-permission-help">
+                  <div>新增：上传新文件、创建目录。</div>
+                  <div>修改：覆盖已有文件、重命名、移动；如果要通过 `davfs2` 挂载后直接写入，通常至少需要“读取 + 新增 + 修改”。</div>
+                </div>
               </el-form-item>
               <el-form-item label="有效期">
                 <div class="access-key-expiry">
@@ -4788,12 +4827,12 @@ onBeforeUnmount(() => {
               <div class="access-key-created-row">
                 <span class="access-key-created-label">Key ID</span>
                 <span class="access-key-created-value mono">{{ accessKeyCreateResult.keyId }}</span>
-                <el-button size="small" text @click="copyAccessKeyValue(accessKeyCreateResult.keyId, 'Key ID')">复制</el-button>
+                <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(accessKeyCreateResult.keyId, 'Key ID')">复制</el-button>
               </div>
               <div class="access-key-created-row">
                 <span class="access-key-created-label">Key Secret</span>
                 <span class="access-key-created-value mono">{{ accessKeyCreateResult.keySecret }}</span>
-                <el-button size="small" text @click="copyAccessKeyValue(accessKeyCreateResult.keySecret, 'Key Secret')">复制</el-button>
+                <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(accessKeyCreateResult.keySecret, 'Key Secret')">复制</el-button>
               </div>
             </div>
           </template>
@@ -5775,7 +5814,23 @@ onBeforeUnmount(() => {
 .access-key-scope-label {
   font-size: 12px;
   font-weight: 600;
-  color: #909399;
+  color: #1f2d3d;
+}
+
+.access-key-ghost-button {
+  --el-button-bg-color: #f4f8ff;
+  --el-button-border-color: #d6e4ff;
+  --el-button-text-color: #2f5fa8;
+  --el-button-hover-bg-color: #e9f1ff;
+  --el-button-hover-border-color: #bfd4ff;
+  --el-button-hover-text-color: #24508f;
+  --el-button-active-bg-color: #dfeaff;
+  --el-button-active-border-color: #a9c5ff;
+  --el-button-active-text-color: #1f467d;
+  --el-button-disabled-bg-color: #f5f7fa;
+  --el-button-disabled-border-color: #e4e7ed;
+  --el-button-disabled-text-color: #c0c4cc;
+  padding-inline: 10px;
 }
 
 .access-key-scope-count {
@@ -5784,12 +5839,21 @@ onBeforeUnmount(() => {
   background: rgba(64, 158, 255, 0.12);
   border-radius: 999px;
   padding: 2px 8px;
+  flex-shrink: 0;
+}
+
+.access-key-scope-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .access-key-scope-value {
   font-size: 12px;
   color: #1f2d3d;
   word-break: break-all;
+  min-width: 0;
 }
 
 .access-key-section {
@@ -5823,52 +5887,9 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.access-key-bound-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 220px;
-  overflow: auto;
-}
-
-.access-key-bound-item {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 10px;
-  background: #f7f9fc;
-}
-
-.access-key-bound-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.access-key-bound-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.access-key-bound-name {
-  font-size: 13px;
-  color: #1f2d3d;
-}
-
-.access-key-bound-id {
-  font-size: 12px;
-  color: #606266;
-}
-
-.access-key-bound-actions {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
+.access-key-bound-table :deep(.el-table__cell) {
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .access-key-bind-box {
@@ -5883,6 +5904,13 @@ onBeforeUnmount(() => {
 
 .access-key-form :deep(.el-form-item) {
   margin-bottom: 12px;
+}
+
+.access-key-permission-help {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
 }
 
 .access-key-expiry {
