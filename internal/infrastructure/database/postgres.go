@@ -268,6 +268,8 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			lease_expires_at TIMESTAMP NULL,
 			last_reconcile_job_id BIGINT NULL,
 			last_error TEXT NULL,
+			failure_count INTEGER NOT NULL DEFAULT 0,
+			next_retry_at TIMESTAMP NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
 			updated_at TIMESTAMP NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
 			UNIQUE(active_node_id, standby_node_id)
@@ -281,6 +283,8 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`ALTER TABLE cluster_nodes ALTER COLUMN updated_at SET DEFAULT TIMEZONE('UTC', NOW())`,
 		`ALTER TABLE cluster_replication_assignments ALTER COLUMN created_at SET DEFAULT TIMEZONE('UTC', NOW())`,
 		`ALTER TABLE cluster_replication_assignments ALTER COLUMN updated_at SET DEFAULT TIMEZONE('UTC', NOW())`,
+		`ALTER TABLE cluster_replication_assignments ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE cluster_replication_assignments ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP NULL`,
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS download_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE internal_share_items ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`,

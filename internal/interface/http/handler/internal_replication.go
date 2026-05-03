@@ -608,6 +608,9 @@ func (h *InternalReplicationHandler) loadReconcileAssignment(ctx context.Context
 	if assignment == nil {
 		return nil, cluster.ErrReplicationAssignmentNotFound
 	}
+	if assignment.State == cluster.AssignmentStatePaused {
+		return nil, fmt.Errorf("replication assignment for target %q is paused", targetNodeID)
+	}
 	if expectedGeneration > 0 && assignment.Generation != expectedGeneration {
 		return nil, cluster.ErrReplicationAssignmentGenerationMismatch
 	}
@@ -623,6 +626,10 @@ func (h *InternalReplicationHandler) updateReconcileAssignmentState(ctx context.
 	updated.State = state
 	updated.LastReconcileJobID = jobID
 	updated.LastError = lastError
+	if state == cluster.AssignmentStateReplicating {
+		updated.FailureCount = 0
+		updated.NextRetryAt = nil
+	}
 	if err := h.assignments.UpdateState(ctx, &updated); err != nil {
 		return err
 	}
@@ -634,14 +641,75 @@ func (h *InternalReplicationHandler) recordReconcileAssignmentFailure(ctx contex
 	if h == nil || assignment == nil || reconcileErr == nil {
 		return
 	}
+
+	updated := *assignment
+	updated.LastReconcileJobID = int64Pointer(jobID)
+	updated.FailureCount = assignment.FailureCount + 1
+	state := cluster.AssignmentStateError
 	lastErr := reconcileErr.Error()
-	if err := h.updateReconcileAssignmentState(ctx, assignment, cluster.AssignmentStateError, int64Pointer(jobID), &lastErr); err != nil && h.logger != nil {
+	if threshold := h.reconcileAutoPauseFailures(); threshold > 0 && updated.FailureCount >= threshold {
+		state = cluster.AssignmentStatePaused
+		lastErr = fmt.Sprintf("assignment auto-paused after %d consecutive reconcile failures: %s", updated.FailureCount, lastErr)
+		updated.NextRetryAt = nil
+	} else {
+		nextRetryAt := h.nextReconcileRetryAt(updated.FailureCount)
+		updated.NextRetryAt = &nextRetryAt
+	}
+	updated.State = state
+	updated.LastError = &lastErr
+	if err := h.assignments.UpdateState(ctx, &updated); err != nil && h.logger != nil {
 		h.logger.Warn("failed to persist reconcile assignment error",
 			zap.String("source_node_id", assignment.ActiveNodeID),
 			zap.String("target_node_id", assignment.StandbyNodeID),
 			zap.Int64("generation", assignment.Generation),
 			zap.Error(err))
+		return
 	}
+	*assignment = updated
+}
+
+func (h *InternalReplicationHandler) reconcileAutoPauseFailures() int {
+	if h == nil {
+		return 0
+	}
+	if h.config.Replication.ReconcileAutoPauseFailures < 0 {
+		return 0
+	}
+	return h.config.Replication.ReconcileAutoPauseFailures
+}
+
+func (h *InternalReplicationHandler) nextReconcileRetryAt(failureCount int) time.Time {
+	now := time.Now().UTC()
+	if h == nil {
+		return now
+	}
+	return now.Add(h.reconcileRetryDelay(failureCount))
+}
+
+func (h *InternalReplicationHandler) reconcileRetryDelay(failureCount int) time.Duration {
+	base := h.config.Replication.RetryBackoffBase
+	maxDelay := h.config.Replication.MaxRetryBackoff
+	if base <= 0 {
+		base = 2 * time.Second
+	}
+	if maxDelay < base {
+		maxDelay = 5 * time.Minute
+	}
+	if failureCount <= 1 {
+		return base
+	}
+
+	delay := base
+	for i := 1; i < failureCount; i++ {
+		if delay >= maxDelay/2 {
+			return maxDelay
+		}
+		delay *= 2
+	}
+	if delay > maxDelay {
+		return maxDelay
+	}
+	return delay
 }
 
 func (h *InternalReplicationHandler) replicationPair(peer *service.ResolvedReplicationPeer) (string, string) {
@@ -817,6 +885,8 @@ func (h *InternalReplicationHandler) shouldRunAutomaticReconcileForPeer(ctx cont
 		return true, "assignment_pending", nil
 	case cluster.AssignmentStateReconciling:
 		return true, "assignment_reconciling", nil
+	case cluster.AssignmentStatePaused:
+		return false, "", nil
 	case cluster.AssignmentStateReplicating:
 		if h.offsets == nil {
 			return false, "", nil

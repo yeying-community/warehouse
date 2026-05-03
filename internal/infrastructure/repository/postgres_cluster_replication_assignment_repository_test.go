@@ -27,7 +27,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryListWithFilters(t *testin
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE active_node_id = $1
@@ -38,11 +38,11 @@ func TestPostgresClusterReplicationAssignmentRepositoryListWithFilters(t *testin
 		WithArgs("node-a", "node-b", "replicating", 50).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "active_node_id", "standby_node_id", "state", "generation",
-			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"lease_expires_at", "last_reconcile_job_id", "last_error", "failure_count", "next_retry_at",
 			"created_at", "updated_at",
 		}).AddRow(
 			int64(7), "node-a", "node-b", "replicating", int64(3),
-			leaseExpiresAt, lastReconcileJobID, "none", createdAt, updatedAt,
+			leaseExpiresAt, lastReconcileJobID, "none", 2, leaseExpiresAt.Add(time.Minute), createdAt, updatedAt,
 		))
 
 	assignments, err := repo.List(context.Background(), ClusterReplicationAssignmentFilter{
@@ -69,6 +69,12 @@ func TestPostgresClusterReplicationAssignmentRepositoryListWithFilters(t *testin
 	if assignments[0].LastError == nil || *assignments[0].LastError != "none" {
 		t.Fatalf("unexpected last_error: %#v", assignments[0].LastError)
 	}
+	if assignments[0].FailureCount != 2 {
+		t.Fatalf("unexpected failure_count: %#v", assignments[0].FailureCount)
+	}
+	if assignments[0].NextRetryAt == nil || !assignments[0].NextRetryAt.Equal(leaseExpiresAt.Add(time.Minute)) {
+		t.Fatalf("unexpected next_retry_at: %#v", assignments[0].NextRetryAt)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)
 	}
@@ -84,7 +90,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryListUsesDefaultLimit(t *t
 	repo := NewPostgresClusterReplicationAssignmentRepository(db)
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		ORDER BY updated_at DESC, id DESC
@@ -92,7 +98,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryListUsesDefaultLimit(t *t
 		WithArgs(defaultClusterAssignmentLimit).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "active_node_id", "standby_node_id", "state", "generation",
-			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"lease_expires_at", "last_reconcile_job_id", "last_error", "failure_count", "next_retry_at",
 			"created_at", "updated_at",
 		}))
 
@@ -122,7 +128,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryListEffectiveByActive(t *
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE active_node_id = $1
@@ -132,11 +138,11 @@ func TestPostgresClusterReplicationAssignmentRepositoryListEffectiveByActive(t *
 		WithArgs("node-a").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "active_node_id", "standby_node_id", "state", "generation",
-			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"lease_expires_at", "last_reconcile_job_id", "last_error", "failure_count", "next_retry_at",
 			"created_at", "updated_at",
 		}).AddRow(
 			int64(11), "node-a", "node-b", "replicating", int64(2),
-			leaseExpiresAt, nil, nil, createdAt, updatedAt,
+			leaseExpiresAt, nil, nil, 0, nil, createdAt, updatedAt,
 		))
 
 	assignments, err := repo.ListEffectiveByActive(context.Background(), "node-a")
@@ -176,21 +182,32 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpsertLease(t *testing.T)
 		DO UPDATE SET
 			state = EXCLUDED.state,
 			generation = CASE
-				WHEN cluster_replication_assignments.state IN ('released', 'error')
+				WHEN cluster_replication_assignments.state IN ('released', 'error', 'paused')
 				 AND EXCLUDED.state = 'pending'
 				THEN cluster_replication_assignments.generation + 1
 				ELSE cluster_replication_assignments.generation
 			END,
 			lease_expires_at = EXCLUDED.lease_expires_at,
-			last_error = NULL,
+			last_error = CASE
+				WHEN EXCLUDED.state = 'pending' THEN NULL
+				ELSE cluster_replication_assignments.last_error
+			END,
+			failure_count = CASE
+				WHEN EXCLUDED.state = 'pending' THEN 0
+				ELSE cluster_replication_assignments.failure_count
+			END,
+			next_retry_at = CASE
+				WHEN EXCLUDED.state = 'pending' THEN NULL
+				ELSE cluster_replication_assignments.next_retry_at
+			END,
 			updated_at = TIMEZONE('UTC', NOW())
-		RETURNING id, generation, last_reconcile_job_id, last_error, created_at, updated_at
+		RETURNING id, generation, last_reconcile_job_id, last_error, failure_count, next_retry_at, created_at, updated_at
 	`)).
 		WithArgs("node-a", "node-b", cluster.AssignmentStateReplicating, leaseExpiresAt).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "generation", "last_reconcile_job_id", "last_error", "created_at", "updated_at",
+			"id", "generation", "last_reconcile_job_id", "last_error", "failure_count", "next_retry_at", "created_at", "updated_at",
 		}).AddRow(
-			int64(15), int64(4), lastReconcileJobID, nil, createdAt, updatedAt,
+			int64(15), int64(4), lastReconcileJobID, nil, 0, nil, createdAt, updatedAt,
 		))
 
 	assignment := &cluster.ReplicationAssignment{
@@ -227,7 +244,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryGetEffectiveByStandby(t *
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE standby_node_id = $1
@@ -238,11 +255,11 @@ func TestPostgresClusterReplicationAssignmentRepositoryGetEffectiveByStandby(t *
 		WithArgs("node-b").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "active_node_id", "standby_node_id", "state", "generation",
-			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"lease_expires_at", "last_reconcile_job_id", "last_error", "failure_count", "next_retry_at",
 			"created_at", "updated_at",
 		}).AddRow(
 			int64(31), "node-a", "node-b", cluster.AssignmentStateReplicating, int64(5),
-			leaseExpiresAt, nil, nil, createdAt, updatedAt,
+			leaseExpiresAt, nil, nil, 0, nil, createdAt, updatedAt,
 		))
 
 	assignment, err := repo.GetEffectiveByStandby(context.Background(), "node-b")
@@ -274,7 +291,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryGetByPair(t *testing.T) {
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE active_node_id = $1
@@ -284,11 +301,11 @@ func TestPostgresClusterReplicationAssignmentRepositoryGetByPair(t *testing.T) {
 		WithArgs("node-a", "node-b").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "active_node_id", "standby_node_id", "state", "generation",
-			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"lease_expires_at", "last_reconcile_job_id", "last_error", "failure_count", "next_retry_at",
 			"created_at", "updated_at",
 		}).AddRow(
 			int64(31), "node-a", "node-b", cluster.AssignmentStatePending, int64(5),
-			leaseExpiresAt, nil, nil, createdAt, updatedAt,
+			leaseExpiresAt, nil, nil, 0, nil, createdAt, updatedAt,
 		))
 
 	assignment, err := repo.GetByPair(context.Background(), "node-a", "node-b")
@@ -323,7 +340,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpdateState(t *testing.T)
 		UPDATE cluster_replication_assignments
 		SET state = $4,
 		    generation = CASE
-		    	WHEN state IN ('released', 'error')
+		    	WHEN state IN ('released', 'error', 'paused')
 		    	 AND $4 = 'pending'
 		    	THEN generation + 1
 		    	ELSE generation
@@ -331,13 +348,15 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpdateState(t *testing.T)
 		    lease_expires_at = $5,
 		    last_reconcile_job_id = $6,
 		    last_error = $7,
+		    failure_count = $8,
+		    next_retry_at = $9,
 		    updated_at = TIMEZONE('UTC', NOW())
 		WHERE active_node_id = $1
 		  AND standby_node_id = $2
 		  AND generation = $3
 		RETURNING id, generation, created_at, updated_at
 	`)).
-		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStateReconciling, leaseExpiresAt, jobID, nil).
+		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStateReconciling, leaseExpiresAt, jobID, nil, 0, nil).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "generation", "created_at", "updated_at",
 		}).AddRow(int64(44), int64(6), createdAt, updatedAt))
@@ -380,7 +399,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpdateStateAdvancesGenera
 		UPDATE cluster_replication_assignments
 		SET state = $4,
 		    generation = CASE
-		    	WHEN state IN ('released', 'error')
+		    	WHEN state IN ('released', 'error', 'paused')
 		    	 AND $4 = 'pending'
 		    	THEN generation + 1
 		    	ELSE generation
@@ -388,13 +407,15 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpdateStateAdvancesGenera
 		    lease_expires_at = $5,
 		    last_reconcile_job_id = $6,
 		    last_error = $7,
+		    failure_count = $8,
+		    next_retry_at = $9,
 		    updated_at = TIMEZONE('UTC', NOW())
 		WHERE active_node_id = $1
 		  AND standby_node_id = $2
 		  AND generation = $3
 		RETURNING id, generation, created_at, updated_at
 	`)).
-		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStatePending, leaseExpiresAt, nil, nil).
+		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStatePending, leaseExpiresAt, nil, nil, 0, nil).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "generation", "created_at", "updated_at",
 		}).AddRow(int64(44), int64(7), createdAt, updatedAt))
@@ -431,7 +452,7 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpdateStateDetectsGenerat
 		UPDATE cluster_replication_assignments
 		SET state = $4,
 		    generation = CASE
-		    	WHEN state IN ('released', 'error')
+		    	WHEN state IN ('released', 'error', 'paused')
 		    	 AND $4 = 'pending'
 		    	THEN generation + 1
 		    	ELSE generation
@@ -439,18 +460,20 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpdateStateDetectsGenerat
 		    lease_expires_at = $5,
 		    last_reconcile_job_id = $6,
 		    last_error = $7,
+		    failure_count = $8,
+		    next_retry_at = $9,
 		    updated_at = TIMEZONE('UTC', NOW())
 		WHERE active_node_id = $1
 		  AND standby_node_id = $2
 		  AND generation = $3
 		RETURNING id, generation, created_at, updated_at
 	`)).
-		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStateReplicating, leaseExpiresAt, nil, nil).
+		WithArgs("node-a", "node-b", int64(6), cluster.AssignmentStateReplicating, leaseExpiresAt, nil, nil, 0, nil).
 		WillReturnError(sql.ErrNoRows)
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE active_node_id = $1
@@ -460,11 +483,11 @@ func TestPostgresClusterReplicationAssignmentRepositoryUpdateStateDetectsGenerat
 		WithArgs("node-a", "node-b").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "active_node_id", "standby_node_id", "state", "generation",
-			"lease_expires_at", "last_reconcile_job_id", "last_error",
+			"lease_expires_at", "last_reconcile_job_id", "last_error", "failure_count", "next_retry_at",
 			"created_at", "updated_at",
 		}).AddRow(
 			int64(31), "node-a", "node-b", cluster.AssignmentStateReconciling, int64(7),
-			leaseExpiresAt, nil, nil, leaseExpiresAt.Add(-time.Minute), leaseExpiresAt,
+			leaseExpiresAt, nil, nil, 0, nil, leaseExpiresAt.Add(-time.Minute), leaseExpiresAt,
 		))
 
 	assignment := &cluster.ReplicationAssignment{

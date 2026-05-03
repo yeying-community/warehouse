@@ -75,13 +75,12 @@ build/warehouse ha bootstrap mark -c config.yaml --peer --target-node-id warehou
 
 ## API 文档
 
-- WebDAV 文件 CRUD 与认证流程：`docs/webdav-api.md`
+- WebDAV 文件 CRUD 与认证流程：`docs/WebDAV文件CRUD API（简明版）.md`
 - 认证接口统一使用 `/api/v1/public/auth/*`
 
 ## 设计文档
 
-- 中文：`docs/zh/README.md`
-- English: `docs/en/README.md`
+- 设计文档索引：`docs/文档索引.md`
 
 
 # UCAN 认证
@@ -134,7 +133,7 @@ sudo apt-get install libxml2-utils
 
 # 注意：以下示例默认使用 webdav.prefix=/dav；
 # 如果你在 config.yaml 中改成了其他前缀，请替换为你的实际前缀。
-# 详细变更清单见：docs/webdav-api.md（“修改 webdav.prefix 需要同步的地方”）
+# 详细变更清单见：docs/WebDAV文件CRUD API（简明版）.md（“修改 webdav.prefix 需要同步的地方”）
 # 2. 列出目录（PROPFIND）
 curl -s -X PROPFIND -u alice:password123  -H "Depth: 1"  http://127.0.0.1:6065/dav/ | xq .
 
@@ -222,7 +221,7 @@ bash scripts/local.sh standby
 - 建议为每个实例设置唯一的 `node.id`，并设置 `node.advertise_url` 作为 internal 可达地址，供共享控制面发现
 - 生产环境建议设置 `webdav.auto_create_directory: false`
 - 切换前除了检查 `/api/v1/public/health/readiness`，还要检查复制状态
-- 详细说明参考 [docs/zh/ha-active-standby-deployment.md](docs/zh/ha-active-standby-deployment.md)
+- 详细说明参考 [docs/阶段一高可用部署.md](docs/阶段一高可用部署.md)
 
 ## scripts/package.sh
 

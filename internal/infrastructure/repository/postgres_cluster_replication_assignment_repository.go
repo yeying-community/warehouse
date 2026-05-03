@@ -49,7 +49,7 @@ func (r *PostgresClusterReplicationAssignmentRepository) List(ctx context.Contex
 
 	query := `
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 	`
@@ -99,7 +99,7 @@ func (r *PostgresClusterReplicationAssignmentRepository) List(ctx context.Contex
 func (r *PostgresClusterReplicationAssignmentRepository) ListEffectiveByActive(ctx context.Context, activeNodeID string) ([]*cluster.ReplicationAssignment, error) {
 	query := `
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE active_node_id = $1
@@ -130,7 +130,7 @@ func (r *PostgresClusterReplicationAssignmentRepository) ListEffectiveByActive(c
 func (r *PostgresClusterReplicationAssignmentRepository) GetEffectiveByStandby(ctx context.Context, standbyNodeID string) (*cluster.ReplicationAssignment, error) {
 	query := `
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE standby_node_id = $1
@@ -153,7 +153,7 @@ func (r *PostgresClusterReplicationAssignmentRepository) GetEffectiveByStandby(c
 func (r *PostgresClusterReplicationAssignmentRepository) GetByPair(ctx context.Context, activeNodeID, standbyNodeID string) (*cluster.ReplicationAssignment, error) {
 	query := `
 		SELECT id, active_node_id, standby_node_id, state, generation,
-		       lease_expires_at, last_reconcile_job_id, last_error,
+		       lease_expires_at, last_reconcile_job_id, last_error, failure_count, next_retry_at,
 		       created_at, updated_at
 		FROM cluster_replication_assignments
 		WHERE active_node_id = $1
@@ -202,18 +202,30 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpsertLease(ctx context
 		DO UPDATE SET
 			state = EXCLUDED.state,
 			generation = CASE
-				WHEN cluster_replication_assignments.state IN ('released', 'error')
+				WHEN cluster_replication_assignments.state IN ('released', 'error', 'paused')
 				 AND EXCLUDED.state = 'pending'
 				THEN cluster_replication_assignments.generation + 1
 				ELSE cluster_replication_assignments.generation
 			END,
 			lease_expires_at = EXCLUDED.lease_expires_at,
-			last_error = NULL,
+			last_error = CASE
+				WHEN EXCLUDED.state = 'pending' THEN NULL
+				ELSE cluster_replication_assignments.last_error
+			END,
+			failure_count = CASE
+				WHEN EXCLUDED.state = 'pending' THEN 0
+				ELSE cluster_replication_assignments.failure_count
+			END,
+			next_retry_at = CASE
+				WHEN EXCLUDED.state = 'pending' THEN NULL
+				ELSE cluster_replication_assignments.next_retry_at
+			END,
 			updated_at = TIMEZONE('UTC', NOW())
-		RETURNING id, generation, last_reconcile_job_id, last_error, created_at, updated_at
+		RETURNING id, generation, last_reconcile_job_id, last_error, failure_count, next_retry_at, created_at, updated_at
 	`
 	var lastReconcileJobID sql.NullInt64
 	var lastError sql.NullString
+	var nextRetryAt sql.NullTime
 	if err := r.db.QueryRowContext(
 		ctx,
 		query,
@@ -226,6 +238,8 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpsertLease(ctx context
 		&assignment.Generation,
 		&lastReconcileJobID,
 		&lastError,
+		&assignment.FailureCount,
+		&nextRetryAt,
 		&assignment.CreatedAt,
 		&assignment.UpdatedAt,
 	); err != nil {
@@ -242,6 +256,12 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpsertLease(ctx context
 		assignment.LastError = &value
 	} else {
 		assignment.LastError = nil
+	}
+	if nextRetryAt.Valid {
+		value := nextRetryAt.Time.UTC()
+		assignment.NextRetryAt = &value
+	} else {
+		assignment.NextRetryAt = nil
 	}
 	return nil
 }
@@ -269,12 +289,16 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpdateState(ctx context
 	if assignment.LeaseExpiresAt != nil && !assignment.LeaseExpiresAt.IsZero() {
 		leaseExpiresAt = assignment.LeaseExpiresAt.UTC()
 	}
+	var nextRetryAt any
+	if assignment.NextRetryAt != nil && !assignment.NextRetryAt.IsZero() {
+		nextRetryAt = assignment.NextRetryAt.UTC()
+	}
 
 	query := `
 		UPDATE cluster_replication_assignments
 		SET state = $4,
 		    generation = CASE
-		    	WHEN state IN ('released', 'error')
+		    	WHEN state IN ('released', 'error', 'paused')
 		    	 AND $4 = 'pending'
 		    	THEN generation + 1
 		    	ELSE generation
@@ -282,6 +306,8 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpdateState(ctx context
 		    lease_expires_at = $5,
 		    last_reconcile_job_id = $6,
 		    last_error = $7,
+		    failure_count = $8,
+		    next_retry_at = $9,
 		    updated_at = TIMEZONE('UTC', NOW())
 		WHERE active_node_id = $1
 		  AND standby_node_id = $2
@@ -298,6 +324,8 @@ func (r *PostgresClusterReplicationAssignmentRepository) UpdateState(ctx context
 		leaseExpiresAt,
 		assignment.LastReconcileJobID,
 		assignment.LastError,
+		assignment.FailureCount,
+		nextRetryAt,
 	).Scan(
 		&assignment.ID,
 		&assignment.Generation,
@@ -361,6 +389,7 @@ func scanClusterReplicationAssignment(scanner interface {
 	var leaseExpiresAt sql.NullTime
 	var lastReconcileJobID sql.NullInt64
 	var lastError sql.NullString
+	var nextRetryAt sql.NullTime
 	if err := scanner.Scan(
 		&assignment.ID,
 		&assignment.ActiveNodeID,
@@ -370,6 +399,8 @@ func scanClusterReplicationAssignment(scanner interface {
 		&leaseExpiresAt,
 		&lastReconcileJobID,
 		&lastError,
+		&assignment.FailureCount,
+		&nextRetryAt,
 		&assignment.CreatedAt,
 		&assignment.UpdatedAt,
 	); err != nil {
@@ -386,6 +417,10 @@ func scanClusterReplicationAssignment(scanner interface {
 	if lastError.Valid {
 		value := lastError.String
 		assignment.LastError = &value
+	}
+	if nextRetryAt.Valid {
+		value := nextRetryAt.Time.UTC()
+		assignment.NextRetryAt = &value
 	}
 	return assignment, nil
 }

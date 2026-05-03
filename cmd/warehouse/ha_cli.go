@@ -56,10 +56,14 @@ func runHAAssignments(args []string) error {
 		return runHAAssignmentsStatus(args[1:])
 	case "drain":
 		return runHAAssignmentsDrain(args[1:])
+	case "pause":
+		return runHAAssignmentsPause(args[1:])
 	case "release":
 		return runHAAssignmentsRelease(args[1:])
 	case "retry":
 		return runHAAssignmentsRetry(args[1:])
+	case "resume":
+		return runHAAssignmentsResume(args[1:])
 	case "-h", "--help", "help":
 		printHAAssignmentsHelp()
 		return nil
@@ -107,12 +111,20 @@ func runHAAssignmentsDrain(args []string) error {
 	return runHAAssignmentStateMutation(args, "drain")
 }
 
+func runHAAssignmentsPause(args []string) error {
+	return runHAAssignmentStateMutation(args, "pause")
+}
+
 func runHAAssignmentsRelease(args []string) error {
 	return runHAAssignmentStateMutation(args, "release")
 }
 
 func runHAAssignmentsRetry(args []string) error {
 	return runHAAssignmentStateMutation(args, "retry")
+}
+
+func runHAAssignmentsResume(args []string) error {
+	return runHAAssignmentStateMutation(args, "resume")
 }
 
 func runHAAssignmentStateMutation(args []string, action string) error {
@@ -586,8 +598,10 @@ func printHAHelp() {
 	fmt.Println("  warehouse ha status -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 	fmt.Println("  warehouse ha assignments status -c config.yaml [--all] [--active-node-id ID] [--standby-node-id ID] [--state STATE] [--limit N]")
 	fmt.Println("  warehouse ha assignments drain -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	fmt.Println("  warehouse ha assignments pause -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	fmt.Println("  warehouse ha assignments release -c config.yaml --standby-node-id ID [--active-node-id ID] [--force]")
 	fmt.Println("  warehouse ha assignments retry -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	fmt.Println("  warehouse ha assignments resume -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	fmt.Println("  warehouse ha reconcile start -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 	fmt.Println("  warehouse ha reconcile status -c config.yaml [--peer] [--base-url URL] [--target-node-id ID]")
 	fmt.Println("  warehouse ha bootstrap mark -c config.yaml [--peer] [--base-url URL] [--target-node-id ID] [--outbox-id N]")
@@ -604,8 +618,10 @@ func printHAAssignmentsHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  warehouse ha assignments status -c config.yaml [--all] [--active-node-id ID] [--standby-node-id ID] [--state STATE] [--limit N]")
 	fmt.Println("  warehouse ha assignments drain -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	fmt.Println("  warehouse ha assignments pause -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	fmt.Println("  warehouse ha assignments release -c config.yaml --standby-node-id ID [--active-node-id ID] [--force]")
 	fmt.Println("  warehouse ha assignments retry -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	fmt.Println("  warehouse ha assignments resume -c config.yaml --standby-node-id ID [--active-node-id ID]")
 }
 
 func printHAReconcileHelp() {
@@ -678,6 +694,8 @@ type haAssignmentStatusRecord struct {
 	LeaseExpired       bool       `json:"leaseExpired"`
 	LastReconcileJobID *int64     `json:"lastReconcileJobId,omitempty"`
 	LastError          *string    `json:"lastError,omitempty"`
+	FailureCount       int        `json:"failureCount,omitempty"`
+	NextRetryAt        *time.Time `json:"nextRetryAt,omitempty"`
 	CreatedAt          time.Time  `json:"createdAt"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
 }
@@ -765,6 +783,8 @@ func buildAssignmentStatusResponse(
 			LeaseExpired:       assignment.LeaseExpired(now),
 			LastReconcileJobID: assignment.LastReconcileJobID,
 			LastError:          assignment.LastError,
+			FailureCount:       assignment.FailureCount,
+			NextRetryAt:        assignment.NextRetryAt,
 			CreatedAt:          assignment.CreatedAt,
 			UpdatedAt:          assignment.UpdatedAt,
 		})
@@ -791,8 +811,12 @@ func printHAAssignmentMutationUsage(action string) {
 	switch action {
 	case "release":
 		fmt.Println("  warehouse ha assignments release -c config.yaml --standby-node-id ID [--active-node-id ID] [--force]")
+	case "pause":
+		fmt.Println("  warehouse ha assignments pause -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	case "retry":
 		fmt.Println("  warehouse ha assignments retry -c config.yaml --standby-node-id ID [--active-node-id ID]")
+	case "resume":
+		fmt.Println("  warehouse ha assignments resume -c config.yaml --standby-node-id ID [--active-node-id ID]")
 	default:
 		fmt.Printf("  warehouse ha assignments %s -c config.yaml --standby-node-id ID [--active-node-id ID]\n", action)
 	}
@@ -856,6 +880,20 @@ func planAssignmentStateMutation(
 		updated.State = cluster.AssignmentStateDraining
 		notes = append(notes, "draining keeps the assignment effective; standby will still accept the assigned active")
 		return &updated, true, notes, nil
+	case "pause":
+		if assignment.State == cluster.AssignmentStatePaused {
+			notes = append(notes, "assignment is already paused")
+			return &updated, false, notes, nil
+		}
+		if !cluster.CanTransitionAssignmentState(assignment.State, cluster.AssignmentStatePaused) {
+			return nil, false, nil, fmt.Errorf("assignment %s -> %s in state %q cannot transition to paused", assignment.ActiveNodeID, assignment.StandbyNodeID, assignment.State)
+		}
+		updated.State = cluster.AssignmentStatePaused
+		notes = append(notes, "paused assignments are removed from the effective set; allocator and automatic reconcile will not resume them until an operator runs resume")
+		if assignment.LastError != nil && strings.TrimSpace(*assignment.LastError) != "" {
+			notes = append(notes, "pause preserves last_error for diagnosis")
+		}
+		return &updated, true, notes, nil
 	case "release":
 		if assignment.State == cluster.AssignmentStateReleased {
 			notes = append(notes, "assignment is already released")
@@ -887,7 +925,26 @@ func planAssignmentStateMutation(
 		}
 		updated.State = cluster.AssignmentStatePending
 		updated.LastError = nil
+		updated.FailureCount = 0
+		updated.NextRetryAt = nil
 		notes = append(notes, "retry moves the assignment back to pending so active can re-run reconcile and resume generation-bound replication")
+		return &updated, true, notes, nil
+	case "resume":
+		if assignment.State == cluster.AssignmentStatePending {
+			notes = append(notes, "assignment is already pending")
+			return &updated, false, notes, nil
+		}
+		if assignment.State != cluster.AssignmentStatePaused {
+			return nil, false, nil, fmt.Errorf("assignment %s -> %s can only be resumed from paused, current state is %q", assignment.ActiveNodeID, assignment.StandbyNodeID, assignment.State)
+		}
+		if !cluster.CanTransitionAssignmentState(assignment.State, cluster.AssignmentStatePending) {
+			return nil, false, nil, fmt.Errorf("assignment %s -> %s in state %q cannot transition to pending", assignment.ActiveNodeID, assignment.StandbyNodeID, assignment.State)
+		}
+		updated.State = cluster.AssignmentStatePending
+		updated.LastError = nil
+		updated.FailureCount = 0
+		updated.NextRetryAt = nil
+		notes = append(notes, "resume starts a new assignment lifecycle from pending; repository update will bump generation so a fresh reconcile/bootstrap fence can be established")
 		return &updated, true, notes, nil
 	default:
 		return nil, false, nil, fmt.Errorf("unsupported assignment action %q", action)
@@ -924,6 +981,8 @@ func buildAssignmentMutationResponse(
 			LeaseExpired:       before.LeaseExpired(now),
 			LastReconcileJobID: before.LastReconcileJobID,
 			LastError:          before.LastError,
+			FailureCount:       before.FailureCount,
+			NextRetryAt:        before.NextRetryAt,
 			CreatedAt:          before.CreatedAt,
 			UpdatedAt:          before.UpdatedAt,
 		}
@@ -939,6 +998,8 @@ func buildAssignmentMutationResponse(
 			LeaseExpired:       after.LeaseExpired(now),
 			LastReconcileJobID: after.LastReconcileJobID,
 			LastError:          after.LastError,
+			FailureCount:       after.FailureCount,
+			NextRetryAt:        after.NextRetryAt,
 			CreatedAt:          after.CreatedAt,
 			UpdatedAt:          after.UpdatedAt,
 		}

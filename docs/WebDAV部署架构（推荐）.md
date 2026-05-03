@@ -64,7 +64,7 @@ flowchart LR
 4) **鉴权隔离**  
    - Web UI 主要使用 JWT 登录  
    - WebDAV 客户端可使用 Basic/JWT/UCAN  
-   - UCAN 建议启用 `app:*` 目录隔离（见 `docs/zh/ucan.md`）
+   - UCAN 建议启用 `app:*` 目录隔离（见 `docs/WebDAV中的UCAN认证说明.md`）
 
 ## 3. Nginx 配置要点（建议）
 
@@ -155,4 +155,4 @@ location / { try_files $uri /index.html; }
 
 ---
 
-如需更细的 UCAN app scope 配置，请参考：`docs/zh/ucan.md`。
+如需更细的 UCAN app scope 配置，请参考：`docs/WebDAV中的UCAN认证说明.md`。

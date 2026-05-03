@@ -39,8 +39,9 @@ replication:
   dispatch_interval: 2s
   request_timeout: 30s
   batch_size: 32
-  retry_backoff_base: 2s
+  retry_backoff_base: 2s   # outbox 重试与 assignment error 自动恢复都会复用这组退避参数
   max_retry_backoff: 5m
+  reconcile_auto_pause_failures: 3  # 连续 reconcile 失败达到阈值后自动切到 paused；设为 0 表示关闭自动暂停
 
 # WebDAV Configuration
 webdav:
