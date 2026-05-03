@@ -298,4 +298,4 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d warehouse
 - 容灾方案：[docs/容灾方案.md](docs/容灾方案.md)
 
 README 只覆盖本地开发、调试和最短启动路径。  
-正式环境部署、active/standby 上线、验证与回滚，请直接看部署手册。
+正式环境部署、Nginx/入口配置、active/standby 上线、验证与回滚，请直接看部署手册。
