@@ -53,6 +53,15 @@ build/warehouse ha status -c config.yaml --peer --target-node-id warehouse-stand
 # 查看当前节点相关的 assignment 状态
 build/warehouse ha assignments status -c config.yaml
 
+# 将某个 standby assignment 显式暂停
+build/warehouse ha assignments pause -c config.yaml --standby-node-id warehouse-standby-1
+
+# 将某个失败 assignment 显式重试
+build/warehouse ha assignments retry -c config.yaml --standby-node-id warehouse-standby-1
+
+# 将某个 paused assignment 恢复回 pending
+build/warehouse ha assignments resume -c config.yaml --standby-node-id warehouse-standby-1
+
 # 手工触发某个 standby 的历史补齐
 build/warehouse ha reconcile start -c config.yaml --target-node-id warehouse-standby-1
 
@@ -71,7 +80,9 @@ build/warehouse ha bootstrap mark -c config.yaml --peer --target-node-id warehou
 - 在多 standby 场景下，推荐把 `--peer` 和 `--target-node-id` 一起使用；如果只传 `--peer`，当前会使用控制面解析出的第一个匹配 peer
 - 也可以通过 `--base-url` 显式指定目标实例
 - `bootstrap mark` 现在要求携带当前 assignment generation；推荐使用 `--peer --target-node-id <standby-id>`，CLI 会自动补齐内部 header
-- `build/warehouse ha assignments status` 直接读取 PostgreSQL 控制面表，不走 HTTP；当前可以直接观察 active 侧 assignment allocator 写入的 lease / generation / state
+- `build/warehouse ha assignments status` 直接读取 PostgreSQL 控制面表，不走 HTTP；当前可以直接观察 active 侧 assignment allocator 写入的 lease / generation / state / failure_count / next_retry_at
+- 当某条 assignment 连续 `reconcile` 失败达到阈值后，会自动切到 `paused`
+- 自动暂停阈值由 `replication.reconcile_auto_pause_failures` 控制，默认 `3`，设为 `0` 表示关闭自动暂停
 
 ## API 文档
 
@@ -218,6 +229,7 @@ bash scripts/local.sh standby
 
 - `webdav.directory` 应指向每台机器自己的本地数据盘挂载目录
 - 当前阶段一推荐路线是：active 对外、standby 仅 internal，同步本地文件数据
+- 如果启用了 replication，建议显式配置 `replication.reconcile_auto_pause_failures`，让连续失败副本能自动停在 `paused`，便于运维观察和人工恢复
 - 建议为每个实例设置唯一的 `node.id`，并设置 `node.advertise_url` 作为 internal 可达地址，供共享控制面发现
 - 生产环境建议设置 `webdav.auto_create_directory: false`
 - 切换前除了检查 `/api/v1/public/health/readiness`，还要检查复制状态
