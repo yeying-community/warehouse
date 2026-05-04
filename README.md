@@ -293,7 +293,7 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d warehouse
 ## 相关文档
 
 - 文档索引：[docs/文档索引.md](docs/文档索引.md)
-- API 文档：[docs/WebDAV文件CRUD API（简明版）.md](docs/WebDAV文件CRUD API（简明版）.md)
+- API 文档：[docs/WebDAV与相关接口API（简明版）.md](docs/WebDAV与相关接口API（简明版）.md)
 - 部署手册：[docs/部署手册.md](docs/部署手册.md)
 - 容灾方案：[docs/容灾方案.md](docs/容灾方案.md)
 
