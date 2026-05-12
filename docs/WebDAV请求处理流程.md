@@ -53,12 +53,16 @@ sequenceDiagram
    - 若未设置 `user.Directory`，回退到 `webdav.directory`
    - 权限校验时使用 `user.Directory` 或 `user.Username` 作为逻辑前缀来组装路径
 4. **权限校验**：将 HTTP 方法映射为权限操作（C/R/U/D），使用用户规则或默认权限判断。
-5. **配额校验**：对 `PUT/POST/MKCOL` 检查追加大小是否超出 `user.quota`。
+5. **配额校验**：
+   - 对 `PUT/POST` 新建文件按完整大小检查
+   - 对 `PUT/POST` 覆盖已有文件按大小增量检查
+   - 对 `COPY` 按源路径与目标已存在路径的大小增量检查
+   - `MKCOL` 不增加逻辑容量，因此不产生额外 quota 压力
 6. **WebDAV 处理**：
    - 使用自定义 `UnicodeFileSystem`，确保 Unicode 路径正确处理
    - 使用内存锁 `webdav.NewMemLS()`
 7. **删除行为**：`DELETE` 默认移动到回收站目录 `.recycle` 并记录数据库。
-8. **用量刷新**：对写操作成功后重新计算 `used_space` 并持久化。
+8. **用量更新**：对主写路径成功操作按 delta 更新 `used_space`；回收站永久删除 / 清空回收站时释放对应额度。
 
 ## WebDAV 方法与权限映射
 

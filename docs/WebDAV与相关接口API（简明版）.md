@@ -458,6 +458,14 @@ curl -X POST -u alice:password123 \
 
 - `GET /api/v1/public/webdav/quota`
 
+当前语义说明：
+
+- `quota = 0` 表示不限额
+- `used` 表示当前逻辑已用容量
+- 文件移入回收站后，默认仍计入 `used`
+- 只有永久删除 / 清空回收站后，`used` 才会下降
+- 覆盖文件与 `COPY` 覆盖目标时，系统按大小增量判断是否超额，而不是按新文件完整大小重复计费
+
 ```bash
 curl -u alice:password123 \
   http://127.0.0.1:6065/api/v1/public/webdav/quota
