@@ -391,7 +391,7 @@ func (s *WebDAVService) moveToRecycle(ctx context.Context, u *user.User, relativ
 
 // isUploadMethod 判断是否为上传方法
 func isUploadMethod(method string) bool {
-	return method == "PUT" || method == "POST" || method == "MKCOL"
+	return method == "PUT" || method == "POST" || method == "MKCOL" || method == "COPY"
 }
 
 // isMutatingMethod 判断是否为可能改变存储的 WebDAV 方法
@@ -411,44 +411,152 @@ func (s *WebDAVService) checkQuota(ctx context.Context, u *user.User, r *http.Re
 		return nil
 	}
 
-	// 获取文件大小
-	var fileSize int64
-	if r.Method == "PUT" || r.Method == "POST" {
-		// 从 Content-Length 头获取大小
-		if contentLength := r.Header.Get("Content-Length"); contentLength != "" {
-			size, err := strconv.ParseInt(contentLength, 10, 64)
-			if err == nil {
-				fileSize = size
-			}
-		}
-
-		// 如果没有 Content-Length，尝试读取 body
-		if fileSize == 0 && r.Body != nil {
-			// 注意：这会消耗 body，需要重新设置
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				return fmt.Errorf("failed to read body: %w", err)
-			}
-			fileSize = int64(len(body))
-			// 重新设置 body
-			r.Body = io.NopCloser(io.NewSectionReader(
-				io.NewSectionReader(
-					&bodyReader{data: body},
-					0,
-					int64(len(body)),
-				),
-				0,
-				int64(len(body)),
-			))
-		}
+	additionalSize, err := s.estimateQuotaAdditionalSize(u, r)
+	if err != nil {
+		return err
 	}
 
 	// 检查是否超过配额
-	if err := s.quotaService.CheckQuota(ctx, u, fileSize); err != nil {
+	if err := s.quotaService.CheckQuota(ctx, u, additionalSize); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *WebDAVService) estimateQuotaAdditionalSize(u *user.User, r *http.Request) (int64, error) {
+	switch r.Method {
+	case "MKCOL":
+		return 0, nil
+	case "PUT", "POST":
+		newSize, err := s.readRequestBodySize(r)
+		if err != nil {
+			return 0, err
+		}
+
+		userDir := s.getUserDirectory(u)
+		targetPath := s.resolveUserFullPath(userDir, r.URL.Path)
+		oldSize, err := getExistingFileSize(targetPath)
+		if err != nil {
+			return 0, err
+		}
+
+		if newSize <= oldSize {
+			return 0, nil
+		}
+		return newSize - oldSize, nil
+	case "COPY":
+		userDir := s.getUserDirectory(u)
+		sourcePath := s.resolveUserFullPath(userDir, r.URL.Path)
+		destination := strings.TrimSpace(r.Header.Get("Destination"))
+		if destination == "" {
+			return 0, fmt.Errorf("missing Destination header for COPY")
+		}
+		targetPath := s.resolveUserFullPath(userDir, destination)
+
+		sourceSize, err := calculatePathSize(sourcePath)
+		if err != nil {
+			return 0, err
+		}
+		targetSize, err := getExistingPathSize(targetPath)
+		if err != nil {
+			return 0, err
+		}
+		if sourceSize <= targetSize {
+			return 0, nil
+		}
+		return sourceSize - targetSize, nil
+	default:
+		return 0, nil
+	}
+}
+
+func (s *WebDAVService) readRequestBodySize(r *http.Request) (int64, error) {
+	var fileSize int64
+
+	// 从 Content-Length 头获取大小
+	if contentLength := r.Header.Get("Content-Length"); contentLength != "" {
+		size, err := strconv.ParseInt(contentLength, 10, 64)
+		if err == nil {
+			fileSize = size
+		}
+	}
+
+	// 如果没有 Content-Length，尝试读取 body
+	if fileSize == 0 && r.Body != nil {
+		// 注意：这会消耗 body，需要重新设置
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return 0, fmt.Errorf("failed to read body: %w", err)
+		}
+		fileSize = int64(len(body))
+		// 重新设置 body
+		r.Body = io.NopCloser(io.NewSectionReader(
+			io.NewSectionReader(
+				&bodyReader{data: body},
+				0,
+				int64(len(body)),
+			),
+			0,
+			int64(len(body)),
+		))
+	}
+
+	return fileSize, nil
+}
+
+func getExistingFileSize(targetPath string) (int64, error) {
+	info, err := os.Stat(targetPath)
+	if err == nil {
+		if info.IsDir() {
+			return 0, nil
+		}
+		return info.Size(), nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("stat existing target: %w", err)
+}
+
+func getExistingPathSize(targetPath string) (int64, error) {
+	size, err := calculatePathSize(targetPath)
+	if err == nil {
+		return size, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("stat existing path: %w", err)
+}
+
+func calculatePathSize(targetPath string) (int64, error) {
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return 0, err
+	}
+	if !info.IsDir() {
+		return info.Size(), nil
+	}
+
+	var totalSize int64
+	err = filepath.Walk(targetPath, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == targetPath {
+			return nil
+		}
+		if info == nil || info.IsDir() {
+			return nil
+		}
+		totalSize += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return totalSize, nil
 }
 
 // bodyReader 用于重新读取 body
