@@ -249,6 +249,8 @@ func (s *RecycleService) Remove(ctx context.Context, u *user.User, hash string) 
 		zap.String("hash", hash),
 	)
 
+	s.applyUsedSpaceDelta(ctx, u, -item.Size)
+
 	return nil
 }
 
@@ -296,6 +298,7 @@ func (s *RecycleService) Clear(ctx context.Context, u *user.User) (int, error) {
 			}
 			continue
 		}
+		s.applyUsedSpaceDelta(ctx, u, -item.Size)
 		cleared += 1
 	}
 
@@ -304,6 +307,29 @@ func (s *RecycleService) Clear(ctx context.Context, u *user.User) (int, error) {
 	}
 
 	return cleared, nil
+}
+
+func (s *RecycleService) applyUsedSpaceDelta(ctx context.Context, u *user.User, delta int64) {
+	if s == nil || s.userRepo == nil || u == nil || delta == 0 {
+		return
+	}
+
+	used, err := s.userRepo.UpdateUsedSpaceDelta(ctx, u.Username, delta)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to update recycle used space delta",
+				zap.String("username", u.Username),
+				zap.Int64("delta", delta),
+				zap.Error(err))
+		}
+		return
+	}
+	if err := u.UpdateUsedSpace(used); err != nil && s.logger != nil {
+		s.logger.Error("failed to update in-memory recycle used space",
+			zap.String("username", u.Username),
+			zap.Int64("used_space", used),
+			zap.Error(err))
+	}
 }
 
 // getUserRootDir 获取用户的根目录

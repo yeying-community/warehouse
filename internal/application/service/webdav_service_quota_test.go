@@ -13,6 +13,7 @@ import (
 	"github.com/yeying-community/warehouse/internal/domain/quota"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
@@ -104,6 +105,35 @@ func TestCheckQuotaAllowsCopyOverwriteWhenOnlyDeltaFits(t *testing.T) {
 
 	if err := svc.checkQuota(context.Background(), u, req); err != nil {
 		t.Fatalf("expected copy overwrite quota check to pass, got %v", err)
+	}
+}
+
+func TestWebDAVServeHTTPOverwriteUpdatesUsedSpaceByDelta(t *testing.T) {
+	t.Parallel()
+
+	svc, u := newQuotaTestService(t, 100, 95)
+
+	userDir := svc.getUserDirectory(u)
+	targetPath := filepath.Join(userDir, "personal", "exists.txt")
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		t.Fatalf("mkdir target dir: %v", err)
+	}
+	if err := os.WriteFile(targetPath, []byte("1234567890"), 0o644); err != nil {
+		t.Fatalf("seed target file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPut, "/dav/personal/exists.txt", strings.NewReader("123456789012"))
+	req.Header.Set("Content-Length", "12")
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, u))
+	resp := httptest.NewRecorder()
+
+	svc.ServeHTTP(resp, req)
+
+	if resp.Code < 200 || resp.Code >= 300 {
+		t.Fatalf("expected overwrite PUT to succeed, got status=%d body=%q", resp.Code, resp.Body.String())
+	}
+	if u.UsedSpace != 97 {
+		t.Fatalf("expected used space to become 97, got %d", u.UsedSpace)
 	}
 }
 

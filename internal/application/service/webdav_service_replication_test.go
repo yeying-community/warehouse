@@ -266,4 +266,13 @@ func (r *testUserRepo) UpdateUsedSpace(_ context.Context, username string, usedS
 	}
 	return user.ErrUserNotFound
 }
+func (r *testUserRepo) UpdateUsedSpaceDelta(_ context.Context, username string, delta int64) (int64, error) {
+	if u, ok := r.byUsername[username]; ok {
+		if err := u.UpdateUsedSpace(u.UsedSpace + delta); err != nil {
+			return 0, err
+		}
+		return u.UsedSpace, nil
+	}
+	return 0, user.ErrUserNotFound
+}
 func (r *testUserRepo) UpdateQuota(context.Context, string, int64) error { return nil }

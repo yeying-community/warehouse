@@ -439,6 +439,26 @@ func (r *PostgresUserRepository) UpdateUsedSpace(ctx context.Context, username s
 	return nil
 }
 
+// UpdateUsedSpaceDelta 按增量更新用户已使用空间，并返回更新后的值
+func (r *PostgresUserRepository) UpdateUsedSpaceDelta(ctx context.Context, username string, delta int64) (int64, error) {
+	query := `
+		UPDATE users
+		SET used_space = GREATEST(used_space + $1, 0)
+		WHERE username = $2
+		RETURNING used_space
+	`
+
+	var usedSpace int64
+	if err := r.db.DB.QueryRowContext(ctx, query, delta, username).Scan(&usedSpace); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, user.ErrUserNotFound
+		}
+		return 0, fmt.Errorf("failed to update used space delta: %w", err)
+	}
+
+	return usedSpace, nil
+}
+
 // UpdateQuota 更新用户配额
 func (r *PostgresUserRepository) UpdateQuota(ctx context.Context, username string, quota int64) error {
 	query := "UPDATE users SET quota = $1 WHERE username = $2"
