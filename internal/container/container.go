@@ -47,6 +47,7 @@ type Container struct {
 
 	// Services
 	QuotaService           quota.Service
+	QuotaReconciler        *service.QuotaReconciler
 	AssetSpaceManager      *assetspace.Manager
 	MutationRecorder       service.MutationRecorder
 	NodeHeartbeat          *service.NodeHeartbeatRegistrar
@@ -219,6 +220,13 @@ func (c *Container) initServices() error {
 
 	// 配额服务
 	c.QuotaService = quota.NewService(c.UserRepository)
+	c.QuotaReconciler = service.NewQuotaReconciler(
+		c.Config,
+		c.UserRepository,
+		c.RecycleRepository,
+		c.QuotaService,
+		c.Logger,
+	)
 
 	// WebDAV 服务
 	fileSystem := webdav.Dir(c.Config.WebDAV.Directory)

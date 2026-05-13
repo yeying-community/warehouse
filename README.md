@@ -91,6 +91,11 @@ cp config.yaml.template config.yaml
 - `webdav.directory`
 - `web3.jwt_secret`
 
+如果要启用自动额度对账，还可以补充：
+
+- `quota.auto_reconcile_enabled`
+- `quota.auto_reconcile_interval`
+
 如果要本地验证 active / standby 复制，还需要确认：
 
 - `node.id`
@@ -302,6 +307,13 @@ README 只覆盖本地开发、调试和最短启动路径。
 正式环境部署、Nginx/入口配置、active/standby 上线、验证与回滚，请直接看部署手册。
 
 ## quota 运维示例
+
+如果开启：
+
+- `quota.auto_reconcile_enabled=true`
+- `quota.auto_reconcile_interval=6h`
+
+系统会在后台周期性重算所有用户的 `used_space`，自动修正“主路径增量记账”长期运行后的统计漂移。该任务默认关闭，只在非 `standby` 节点运行。
 
 查看某个用户当前记录值与重算值是否一致：
 

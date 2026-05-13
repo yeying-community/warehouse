@@ -3,10 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/pflag"
+	appservice "github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/quota"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
@@ -65,7 +65,7 @@ func runQuotaCheck(args []string) error {
 		return err
 	}
 
-	recalculated, recycleUsed, activeUsed, err := calculateQuotaUsedSpace(context.Background(), cfg, quotaSvc, recycleRepo, u)
+	snapshot, err := appservice.CalculateQuotaUsage(context.Background(), cfg, quotaSvc, recycleRepo, u)
 	if err != nil {
 		return err
 	}
@@ -75,13 +75,13 @@ func runQuotaCheck(args []string) error {
 		"user_id":             u.ID,
 		"quota":               u.Quota,
 		"stored_used_space":   u.UsedSpace,
-		"recalculated_used":   recalculated,
-		"active_used":         activeUsed,
-		"recycle_used":        recycleUsed,
-		"drift":               recalculated - u.UsedSpace,
-		"matches":             recalculated == u.UsedSpace,
+		"recalculated_used":   snapshot.TotalUsed,
+		"active_used":         snapshot.ActiveUsed,
+		"recycle_used":        snapshot.RecycleUsed,
+		"drift":               snapshot.TotalUsed - u.UsedSpace,
+		"matches":             snapshot.TotalUsed == u.UsedSpace,
 		"unlimited":           u.Quota == 0,
-		"user_directory_root": resolveQuotaUserDirectory(cfg, u),
+		"user_directory_root": snapshot.UserDir,
 	}
 	printPrettyJSONFromAny(response)
 	return nil
@@ -113,12 +113,12 @@ func runQuotaRebuild(args []string) error {
 		return err
 	}
 
-	recalculated, recycleUsed, activeUsed, err := calculateQuotaUsedSpace(context.Background(), cfg, quotaSvc, recycleRepo, u)
+	snapshot, err := appservice.CalculateQuotaUsage(context.Background(), cfg, quotaSvc, recycleRepo, u)
 	if err != nil {
 		return err
 	}
 	before := u.UsedSpace
-	if err := userRepo.UpdateUsedSpace(context.Background(), u.Username, recalculated); err != nil {
+	if err := userRepo.UpdateUsedSpace(context.Background(), u.Username, snapshot.TotalUsed); err != nil {
 		return err
 	}
 
@@ -127,10 +127,10 @@ func runQuotaRebuild(args []string) error {
 		"user_id":           u.ID,
 		"quota":             u.Quota,
 		"before_used_space": before,
-		"after_used_space":  recalculated,
-		"active_used":       activeUsed,
-		"recycle_used":      recycleUsed,
-		"delta":             recalculated - before,
+		"after_used_space":  snapshot.TotalUsed,
+		"active_used":       snapshot.ActiveUsed,
+		"recycle_used":      snapshot.RecycleUsed,
+		"delta":             snapshot.TotalUsed - before,
 		"unlimited":         u.Quota == 0,
 	}
 	printPrettyJSONFromAny(response)
@@ -165,35 +165,4 @@ func buildQuotaDependencies(flags *pflag.FlagSet) (*config.Config, *database.Pos
 	quotaSvc := quota.NewService(userRepo)
 
 	return cfg, db, userRepo, quotaSvc, recycleRepo, nil
-}
-
-func calculateQuotaUsedSpace(ctx context.Context, cfg *config.Config, quotaSvc quota.Service, recycleRepo repository.RecycleRepository, u *user.User) (total int64, recycleUsed int64, activeUsed int64, err error) {
-	userDir := resolveQuotaUserDirectory(cfg, u)
-	activeUsed, err = quotaSvc.CalculateUsedSpace(ctx, userDir)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("calculate active used space: %w", err)
-	}
-
-	items, err := recycleRepo.GetByUserID(ctx, u.ID)
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("load recycle items: %w", err)
-	}
-	for _, item := range items {
-		if item == nil || item.Size <= 0 {
-			continue
-		}
-		recycleUsed += item.Size
-	}
-
-	return activeUsed + recycleUsed, recycleUsed, activeUsed, nil
-}
-
-func resolveQuotaUserDirectory(cfg *config.Config, u *user.User) string {
-	if u.Directory != "" {
-		if filepath.IsAbs(u.Directory) {
-			return u.Directory
-		}
-		return filepath.Join(cfg.WebDAV.Directory, u.Directory)
-	}
-	return cfg.WebDAV.Directory
 }

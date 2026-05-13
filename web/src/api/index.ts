@@ -121,6 +121,26 @@ export const userApi = {
   }
 }
 
+export interface AdminUserItem {
+  id: string
+  username: string
+  wallet_address?: string
+  email?: string
+  directory: string
+  permissions: string[]
+  quota: number
+  used_space: number
+  created_at?: string
+  updated_at?: string
+  has_password: boolean
+}
+
+export const adminUserApi = {
+  list() {
+    return request<{ items: AdminUserItem[] }>('/api/v1/admin/users/list')
+  }
+}
+
 export interface AssetSpaceInfo {
   key: string
   name: string

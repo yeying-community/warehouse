@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	appservice "github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/quota"
 	"github.com/yeying-community/warehouse/internal/domain/recycle"
 	"github.com/yeying-community/warehouse/internal/domain/user"
@@ -18,7 +19,7 @@ func TestResolveQuotaUserDirectoryUsesAbsoluteDirectory(t *testing.T) {
 	cfg.WebDAV.Directory = "/data/root"
 
 	u := user.NewUser("alice", "/mnt/custom/alice")
-	if got := resolveQuotaUserDirectory(cfg, u); got != "/mnt/custom/alice" {
+	if got := appservice.ResolveQuotaUserDirectory(cfg, u); got != "/mnt/custom/alice" {
 		t.Fatalf("unexpected user dir: %q", got)
 	}
 }
@@ -28,7 +29,7 @@ func TestResolveQuotaUserDirectoryUsesRelativeDirectory(t *testing.T) {
 	cfg.WebDAV.Directory = "/data/root"
 
 	u := user.NewUser("alice", "alice")
-	if got := resolveQuotaUserDirectory(cfg, u); got != filepath.Join("/data/root", "alice") {
+	if got := appservice.ResolveQuotaUserDirectory(cfg, u); got != filepath.Join("/data/root", "alice") {
 		t.Fatalf("unexpected user dir: %q", got)
 	}
 }
@@ -54,31 +55,39 @@ func TestCalculateQuotaUsedSpaceIncludesRecycleItems(t *testing.T) {
 		},
 	}
 
-	total, recycleUsed, activeUsed, err := calculateQuotaUsedSpace(context.Background(), cfg, quotaSvc, recycleRepo, u)
+	snapshot, err := appservice.CalculateQuotaUsage(context.Background(), cfg, quotaSvc, recycleRepo, u)
 	if err != nil {
 		t.Fatalf("calculate quota used space: %v", err)
 	}
-	if activeUsed != 5 {
-		t.Fatalf("unexpected active used: %d", activeUsed)
+	if snapshot.ActiveUsed != 5 {
+		t.Fatalf("unexpected active used: %d", snapshot.ActiveUsed)
 	}
-	if recycleUsed != 7 {
-		t.Fatalf("unexpected recycle used: %d", recycleUsed)
+	if snapshot.RecycleUsed != 7 {
+		t.Fatalf("unexpected recycle used: %d", snapshot.RecycleUsed)
 	}
-	if total != 12 {
-		t.Fatalf("unexpected total used: %d", total)
+	if snapshot.TotalUsed != 12 {
+		t.Fatalf("unexpected total used: %d", snapshot.TotalUsed)
 	}
 }
 
 type quotaCLIUserRepo struct{}
 
-func (*quotaCLIUserRepo) FindByUsername(context.Context, string) (*user.User, error)      { return nil, user.ErrUserNotFound }
-func (*quotaCLIUserRepo) FindByWalletAddress(context.Context, string) (*user.User, error) { return nil, user.ErrUserNotFound }
-func (*quotaCLIUserRepo) FindByEmail(context.Context, string) (*user.User, error)         { return nil, user.ErrUserNotFound }
-func (*quotaCLIUserRepo) FindByID(context.Context, string) (*user.User, error)            { return nil, user.ErrUserNotFound }
-func (*quotaCLIUserRepo) Save(context.Context, *user.User) error                          { return nil }
-func (*quotaCLIUserRepo) Delete(context.Context, string) error                            { return nil }
-func (*quotaCLIUserRepo) List(context.Context) ([]*user.User, error)                      { return nil, nil }
-func (*quotaCLIUserRepo) UpdateUsedSpace(context.Context, string, int64) error            { return nil }
+func (*quotaCLIUserRepo) FindByUsername(context.Context, string) (*user.User, error) {
+	return nil, user.ErrUserNotFound
+}
+func (*quotaCLIUserRepo) FindByWalletAddress(context.Context, string) (*user.User, error) {
+	return nil, user.ErrUserNotFound
+}
+func (*quotaCLIUserRepo) FindByEmail(context.Context, string) (*user.User, error) {
+	return nil, user.ErrUserNotFound
+}
+func (*quotaCLIUserRepo) FindByID(context.Context, string) (*user.User, error) {
+	return nil, user.ErrUserNotFound
+}
+func (*quotaCLIUserRepo) Save(context.Context, *user.User) error               { return nil }
+func (*quotaCLIUserRepo) Delete(context.Context, string) error                 { return nil }
+func (*quotaCLIUserRepo) List(context.Context) ([]*user.User, error)           { return nil, nil }
+func (*quotaCLIUserRepo) UpdateUsedSpace(context.Context, string, int64) error { return nil }
 func (*quotaCLIUserRepo) UpdateUsedSpaceDelta(context.Context, string, int64) (int64, error) {
 	return 0, nil
 }

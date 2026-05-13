@@ -10,6 +10,7 @@ type Config struct {
 	Database    DatabaseConfig    `yaml:"database"` // 新增
 	Node        NodeConfig        `yaml:"node"`
 	Replication ReplicationConfig `yaml:"replication"`
+	Quota       QuotaConfig       `yaml:"quota"`
 	WebDAV      WebDAVConfig      `yaml:"webdav"`
 	Web3        Web3Config        `yaml:"web3"`
 	Email       EmailConfig       `yaml:"email"`
@@ -63,6 +64,12 @@ type ReplicationConfig struct {
 	RetryBackoffBase           time.Duration `yaml:"retry_backoff_base"`
 	MaxRetryBackoff            time.Duration `yaml:"max_retry_backoff"`
 	ReconcileAutoPauseFailures int           `yaml:"reconcile_auto_pause_failures"`
+}
+
+// QuotaConfig 配额后台巡检配置
+type QuotaConfig struct {
+	AutoReconcileEnabled  bool          `yaml:"auto_reconcile_enabled"`
+	AutoReconcileInterval time.Duration `yaml:"auto_reconcile_interval"`
 }
 
 // WebDAVConfig WebDAV 配置
@@ -188,6 +195,10 @@ func DefaultConfig() *Config {
 			RetryBackoffBase:           2 * time.Second,
 			MaxRetryBackoff:            5 * time.Minute,
 			ReconcileAutoPauseFailures: 3,
+		},
+		Quota: QuotaConfig{
+			AutoReconcileEnabled:  false,
+			AutoReconcileInterval: 6 * time.Hour,
 		},
 		WebDAV: WebDAVConfig{
 			Prefix:              "/dav",

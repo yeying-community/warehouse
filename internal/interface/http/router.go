@@ -110,11 +110,11 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/webdav/user/password", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.UpdatePassword)))
 
 	// 管理员用户管理（需要认证 + 管理员权限）
-	mux.Handle("/api/v1/public/admin/users/list", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleList)))
-	mux.Handle("/api/v1/public/admin/users/create", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleCreate)))
-	mux.Handle("/api/v1/public/admin/users/update", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleUpdate)))
-	mux.Handle("/api/v1/public/admin/users/delete", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleDelete)))
-	mux.Handle("/api/v1/public/admin/users/reset-password", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleResetPassword)))
+	mux.Handle("/api/v1/admin/users/list", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleList)))
+	mux.Handle("/api/v1/admin/users/create", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleCreate)))
+	mux.Handle("/api/v1/admin/users/update", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleUpdate)))
+	mux.Handle("/api/v1/admin/users/delete", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleDelete)))
+	mux.Handle("/api/v1/admin/users/reset-password", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleResetPassword)))
 
 	// 回收站路由
 	mux.Handle("/api/v1/public/webdav/recycle/list", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleList)))

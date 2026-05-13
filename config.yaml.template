@@ -43,6 +43,13 @@ replication:
   max_retry_backoff: 5m
   reconcile_auto_pause_failures: 3  # 连续 reconcile 失败达到阈值后自动切到 paused；设为 0 表示关闭自动暂停
 
+# Quota Configuration
+quota:
+  auto_reconcile_enabled: true # 是否开启后台自动额度对账；默认打开
+  auto_reconcile_interval: 6h  # 自动对账周期；只在非 standby 节点运行，启动时也会先执行一轮
+                               # 对账口径 = 用户目录实际文件大小 + recycle_items 中该用户回收站记录大小
+                               # 建议：单机或小规模先用 6h；用户量较大时再按负载调大
+
 # WebDAV Configuration
 webdav:
   prefix: "/dav"

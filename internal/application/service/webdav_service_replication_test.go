@@ -236,7 +236,11 @@ func newTestUserRepo() *testUserRepo {
 	}
 }
 
-func (r *testUserRepo) FindByUsername(context.Context, string) (*user.User, error) {
+func (r *testUserRepo) FindByUsername(_ context.Context, username string) (*user.User, error) {
+	if u, ok := r.byUsername[username]; ok {
+		copy := *u
+		return &copy, nil
+	}
 	return nil, user.ErrUserNotFound
 }
 func (r *testUserRepo) FindByWalletAddress(context.Context, string) (*user.User, error) {
@@ -258,8 +262,15 @@ func (r *testUserRepo) Save(_ context.Context, u *user.User) error {
 	r.byUsername[copy.Username] = &copy
 	return nil
 }
-func (r *testUserRepo) Delete(context.Context, string) error       { return nil }
-func (r *testUserRepo) List(context.Context) ([]*user.User, error) { return nil, nil }
+func (r *testUserRepo) Delete(context.Context, string) error { return nil }
+func (r *testUserRepo) List(context.Context) ([]*user.User, error) {
+	users := make([]*user.User, 0, len(r.byID))
+	for _, u := range r.byID {
+		copy := *u
+		users = append(users, &copy)
+	}
+	return users, nil
+}
 func (r *testUserRepo) UpdateUsedSpace(_ context.Context, username string, usedSpace int64) error {
 	if u, ok := r.byUsername[username]; ok {
 		return u.UpdateUsedSpace(usedSpace)

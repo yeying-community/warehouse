@@ -110,6 +110,9 @@ func runServer(args []string) {
 	if c.ReplicationWorker != nil && c.ReplicationWorker.Enabled() {
 		startBackground(c.ReplicationWorker.Run)
 	}
+	if c.QuotaReconciler != nil && c.QuotaReconciler.Enabled() {
+		startBackground(c.QuotaReconciler.Run)
+	}
 	if c.InternalReplicationHandler != nil {
 		startBackground(c.InternalReplicationHandler.RunAutoReconcile)
 	}

@@ -559,11 +559,11 @@ Body：
 
 需要管理员权限。管理员账号识别规则见：[认证设计.md](./认证设计.md)
 
-- `GET /api/v1/public/admin/users/list`
-- `POST /api/v1/public/admin/users/create`
-- `POST /api/v1/public/admin/users/update`
-- `POST /api/v1/public/admin/users/delete`
-- `POST /api/v1/public/admin/users/reset-password`
+- `GET /api/v1/admin/users/list`
+- `POST /api/v1/admin/users/create`
+- `POST /api/v1/admin/users/update`
+- `POST /api/v1/admin/users/delete`
+- `POST /api/v1/admin/users/reset-password`
 
 创建用户示例：
 

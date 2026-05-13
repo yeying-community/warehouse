@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent,
 import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult } from '@/api'
+import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
 import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
@@ -77,6 +77,11 @@ const sharedEntries = ref<FileItem[]>([])
 const sharedEntriesLoading = ref(false)
 const showQuotaManage = ref(false)
 const quotaManageLoading = ref(false)
+const adminQuotaLoading = ref(false)
+const adminQuotaAvailable = ref(false)
+const adminQuotaError = ref('')
+const adminUsers = ref<AdminUserItem[]>([])
+const adminQuotaFilter = ref<'all' | 'unlimited' | 'near_limit' | 'over_quota'>('all')
 const showAddressBook = ref(false)
 const showUploadTasks = ref(false)
 const uploadTasksReturnView = ref<ViewKey | null>(null)
@@ -457,6 +462,91 @@ const quotaAvailable = computed(() => {
     ? quota.value.available
     : quota.value.quota - quota.value.used
   return Math.max(available, 0)
+})
+const quotaAlertState = computed(() => {
+  if (quota.value.unlimited || quota.value.quota <= 0) {
+    return {
+      level: 'info' as 'info' | 'warning' | 'danger',
+      label: '未设置上限',
+      message: '当前账号未设置存储上限。'
+    }
+  }
+  const usage = quota.value.used / quota.value.quota
+  if (quota.value.used > quota.value.quota || usage > 1) {
+    return {
+      level: 'danger' as const,
+      label: '已超额',
+      message: '当前已超过存储额度上限，新增写入会被拒绝。'
+    }
+  }
+  if (usage >= 0.8) {
+    return {
+      level: 'warning' as const,
+      label: '接近上限',
+      message: '当前使用率已达到 80% 以上，建议尽快清理文件或联系管理员扩容。'
+    }
+  }
+  return {
+    level: 'info' as const,
+    label: '正常',
+    message: '当前额度使用正常。'
+  }
+})
+const adminQuotaSummary = computed(() => {
+  const items = adminUsers.value
+  const limitedUsers = items.filter(item => item.quota > 0)
+  const overQuotaUsers = limitedUsers.filter(item => item.used_space > item.quota)
+  const nearLimitUsers = limitedUsers.filter(item => {
+    if (item.quota <= 0) return false
+    return item.used_space <= item.quota && item.used_space / item.quota >= 0.8
+  })
+  return {
+    total: items.length,
+    limited: limitedUsers.length,
+    unlimited: items.length - limitedUsers.length,
+    nearLimit: nearLimitUsers.length,
+    overQuota: overQuotaUsers.length
+  }
+})
+const adminQuotaHeadline = computed(() => {
+  if (adminQuotaSummary.value.overQuota > 0) {
+    return {
+      type: 'error' as 'error' | 'warning' | 'info',
+      title: `当前有 ${adminQuotaSummary.value.overQuota} 个用户已超额，新增写入会被拒绝。`
+    }
+  }
+  if (adminQuotaSummary.value.nearLimit > 0) {
+    return {
+      type: 'warning' as const,
+      title: `当前有 ${adminQuotaSummary.value.nearLimit} 个用户使用率已达到 80% 以上。`
+    }
+  }
+  return {
+    type: 'info' as const,
+    title: '当前没有用户超额，额度状态整体稳定。'
+  }
+})
+const filteredAdminUsers = computed(() => {
+  const filter = adminQuotaFilter.value
+  const items = [...adminUsers.value]
+  const filtered = items.filter(item => {
+    if (filter === 'unlimited') return item.quota === 0
+    if (filter === 'near_limit') {
+      return item.quota > 0 && item.used_space <= item.quota && item.used_space / item.quota >= 0.8
+    }
+    if (filter === 'over_quota') return item.quota > 0 && item.used_space > item.quota
+    return true
+  })
+  filtered.sort((a, b) => {
+    const aUsage = adminUserUsageRate(a)
+    const bUsage = adminUserUsageRate(b)
+    if (aUsage === null && bUsage === null) return a.username.localeCompare(b.username)
+    if (aUsage === null) return 1
+    if (bUsage === null) return -1
+    if (bUsage !== aUsage) return bUsage - aUsage
+    return a.username.localeCompare(b.username)
+  })
+  return filtered
 })
 const accessKeysForScope = computed(() => {
   const scope = normalizeAccessKeyRootPath(accessKeyScopePath.value)
@@ -857,6 +947,38 @@ function showError(message: string, title = '错误'): void {
   })
 }
 
+function quotaExceededMessage(): string {
+  return [
+    '当前操作会超过你的存储额度，系统已拒绝写入。',
+    '你可以先删除不需要的文件，或清理回收站后重试。',
+    '如果仍然需要更多空间，请联系管理员调整额度。'
+  ].join('\n')
+}
+
+function isQuotaExceededErrorMessage(message: string): boolean {
+  const normalized = String(message || '').toLowerCase()
+  return normalized.includes('507') ||
+    normalized.includes('insufficient storage') ||
+    normalized.includes('storage quota exceeded') ||
+    normalized.includes('quota exceeded') ||
+    normalized.includes('quota')
+}
+
+function normalizeUserFacingErrorMessage(message: string, fallback: string): string {
+  const trimmed = String(message || '').trim()
+  if (isQuotaExceededErrorMessage(trimmed)) {
+    return quotaExceededMessage()
+  }
+  return trimmed || fallback
+}
+
+function errorMessageFromUnknown(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    return normalizeUserFacingErrorMessage(error.message, fallback)
+  }
+  return normalizeUserFacingErrorMessage(String(error || ''), fallback)
+}
+
 function createDefaultShareExpiryForm(): ShareExpiryForm {
   return {
     expiresValue: '0',
@@ -1136,9 +1258,51 @@ async function fetchAssetSpaces() {
 async function fetchUserCenter() {
   quotaManageLoading.value = true
   try {
-    await Promise.all([fetchUserInfo(), fetchQuota(), fetchAccessKeys()])
+    await Promise.all([fetchUserInfo(), fetchQuota(), fetchAccessKeys(), fetchAdminUsers()])
   } finally {
     quotaManageLoading.value = false
+  }
+}
+
+function extractApiErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const message = error.message?.trim()
+    if (!message) return ''
+    try {
+      const parsed = JSON.parse(message) as { error?: string; code?: number }
+      if (parsed?.error) return parsed.error
+      if (parsed?.code) return `HTTP ${parsed.code}`
+    } catch {
+      return message
+    }
+    return message
+  }
+  return String(error || '')
+}
+
+function isAdminPermissionError(error: unknown): boolean {
+  const message = extractApiErrorMessage(error).toLowerCase()
+  return message.includes('403') || message.includes('admin permission required') || message.includes('permission denied') || message.includes('forbidden')
+}
+
+async function fetchAdminUsers() {
+  adminQuotaLoading.value = true
+  adminQuotaError.value = ''
+  try {
+    const data = await adminUserApi.list()
+    adminUsers.value = Array.isArray(data.items) ? data.items : []
+    adminQuotaAvailable.value = true
+  } catch (error) {
+    adminUsers.value = []
+    if (isAdminPermissionError(error)) {
+      adminQuotaAvailable.value = false
+      return
+    }
+    adminQuotaAvailable.value = true
+    adminQuotaError.value = extractApiErrorMessage(error) || '加载失败'
+    console.error('获取管理员用户额度列表失败:', error)
+  } finally {
+    adminQuotaLoading.value = false
   }
 }
 
@@ -1160,6 +1324,31 @@ function openAccessKeyDialogFromDirectory(item: FileItem) {
 
 function openAccessKeyDialogFromUserCenter() {
   openAccessKeyDialog('/', false)
+}
+
+function adminUserUsageRate(item: AdminUserItem): number | null {
+  if (!item || item.quota <= 0) return null
+  return item.used_space / item.quota
+}
+
+function formatAdminUserUsage(item: AdminUserItem): string {
+  const rate = adminUserUsageRate(item)
+  if (rate === null) return '-'
+  return `${(rate * 100).toFixed(2)}%`
+}
+
+function adminUserQuotaStatus(item: AdminUserItem): { label: string; type: 'info' | 'warning' | 'danger' | 'success' } {
+  const rate = adminUserUsageRate(item)
+  if (rate === null) {
+    return { label: '不限额', type: 'info' }
+  }
+  if (item.used_space > item.quota) {
+    return { label: '已超额', type: 'danger' }
+  }
+  if (rate >= 0.8) {
+    return { label: '接近上限', type: 'warning' }
+  }
+  return { label: '正常', type: 'success' }
 }
 
 async function submitAccessKey() {
@@ -1501,7 +1690,8 @@ async function savePreview() {
         body: formData
       })
       if (!response.ok) {
-        throw new Error(`保存失败: ${response.status}`)
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `保存失败: ${response.status}`))
       }
       previewOrigin.value = previewContent.value
       showSuccess('已保存')
@@ -1516,7 +1706,8 @@ async function savePreview() {
         body: previewContent.value
       })
       if (!response.ok) {
-        throw new Error(`保存失败: ${response.status}`)
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `保存失败: ${response.status}`))
       }
       previewOrigin.value = previewContent.value
       showSuccess('已保存')
@@ -1524,7 +1715,7 @@ async function savePreview() {
     }
   } catch (error: any) {
     console.error('保存文件失败:', error)
-    showError(error?.message || '保存失败')
+    showError(errorMessageFromUnknown(error, '保存失败'))
   } finally {
     previewSaving.value = false
   }
@@ -1885,7 +2076,8 @@ async function submitRename() {
       })
 
       if (!response.ok) {
-        throw new Error(`重命名失败: ${response.status}`)
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `重命名失败: ${response.status}`))
       }
       await fetchFiles(currentPath.value)
     } else {
@@ -1898,7 +2090,7 @@ async function submitRename() {
     renameDialogVisible.value = false
   } catch (error: any) {
     console.error('重命名失败:', error)
-    showError(error?.message || '重命名失败')
+    showError(errorMessageFromUnknown(error, '重命名失败'))
   } finally {
     renameSubmitting.value = false
   }
@@ -1982,7 +2174,8 @@ async function ensureDirectories(path: string, ensured: Set<string>, token: stri
       ensured.add(current)
       continue
     }
-    throw new Error(`创建目录失败: ${response.status}`)
+    const text = (await response.text()).trim()
+    throw new Error(normalizeUserFacingErrorMessage(text, `创建目录失败: ${response.status}`))
   }
 }
 
@@ -2140,10 +2333,11 @@ function uploadFileWithProgress(
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve()
       } else {
-        reject(new Error(`上传失败: ${xhr.status}`))
+        const rawMessage = xhr.responseText?.trim() || `上传失败: ${xhr.status}`
+        reject(new Error(normalizeUserFacingErrorMessage(rawMessage, `上传失败: ${xhr.status}`)))
       }
     }
-    xhr.onerror = () => reject(new Error('上传失败'))
+    xhr.onerror = () => reject(new Error(normalizeUserFacingErrorMessage('上传失败', '上传失败')))
     if (useMultipart) {
       const formData = new FormData()
       formData.append('file', file)
@@ -2177,7 +2371,7 @@ async function performUploadTask(task: UploadTask) {
     })
     updateUploadTask(task, { status: 'success', progress: 100 })
   } catch (error: any) {
-    updateUploadTask(task, { status: 'failed', error: error?.message || '上传失败' })
+    updateUploadTask(task, { status: 'failed', error: errorMessageFromUnknown(error, '上传失败') })
   }
 }
 
@@ -2524,14 +2718,14 @@ async function moveFileToDirectoryPath(source: FileItem, targetPath: string) {
         throw new Error('目标目录中已存在同名文件或目录')
       }
       const text = (await response.text()).trim()
-      throw new Error(text || `移动失败: ${response.status}`)
+      throw new Error(normalizeUserFacingErrorMessage(text, `移动失败: ${response.status}`))
     }
 
     await fetchFiles(currentPath.value)
     showSuccess(`已移动到 ${targetDirPath}`)
   } catch (error: any) {
     console.error('拖拽移动失败:', error)
-    showError(error?.message || '移动失败')
+    showError(errorMessageFromUnknown(error, '移动失败'))
   } finally {
     movingByDrag.value = false
   }
@@ -3382,7 +3576,8 @@ async function createFolderWithName(name: string) {
     }
     return
   }
-  throw new Error(`创建失败: ${response.status}`)
+  const text = (await response.text()).trim()
+  throw new Error(normalizeUserFacingErrorMessage(text, `创建失败: ${response.status}`))
 }
 
 async function createSharedFolderWithName(name: string) {
@@ -3415,7 +3610,7 @@ async function submitCreateFolder() {
     createFolderDialogVisible.value = false
   } catch (error: any) {
     console.error('创建失败:', error)
-    showError(error?.message || '创建失败')
+    showError(errorMessageFromUnknown(error, '创建失败'))
   } finally {
     createFolderSubmitting.value = false
   }
@@ -4420,7 +4615,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-              <div class="user-card">
+              <div class="user-card" :class="`quota-card quota-card-${quotaAlertState.level}`">
                 <div class="card-title">当前额度</div>
                 <div class="quota-value">
                   <span>{{ formatSize(quota.used) }}</span>
@@ -4431,11 +4626,21 @@ onBeforeUnmount(() => {
                   v-if="!quota.unlimited"
                   :percentage="Math.min(Number(quota.percentage.toFixed(2)), 100)"
                   :stroke-width="8"
+                  :status="quotaAlertState.level === 'danger' ? 'exception' : undefined"
                 />
                 <div class="quota-meta">
                   <span v-if="quota.unlimited">未设置上限</span>
                   <span v-else>已使用 {{ quota.percentage.toFixed(2) }}%</span>
+                  <el-tag size="small" :type="quotaAlertState.level === 'danger' ? 'danger' : quotaAlertState.level === 'warning' ? 'warning' : 'info'">
+                    {{ quotaAlertState.label }}
+                  </el-tag>
                 </div>
+                <el-alert
+                  :type="quotaAlertState.level === 'danger' ? 'error' : quotaAlertState.level"
+                  :closable="false"
+                  show-icon
+                  :title="quotaAlertState.message"
+                />
                 <div class="quota-grid">
                   <div class="quota-item">
                     <span class="quota-label">已使用</span>
@@ -4456,6 +4661,75 @@ onBeforeUnmount(() => {
                     <span class="quota-amount">{{ quota.unlimited ? '-' : `${quota.percentage.toFixed(2)}%` }}</span>
                   </div>
                 </div>
+              </div>
+              <div v-if="adminQuotaAvailable" class="user-card user-card-full" v-loading="adminQuotaLoading">
+                <div class="card-head">
+                  <div class="card-title">用户额度概览</div>
+                  <div class="user-actions">
+                    <el-select v-model="adminQuotaFilter" size="small" class="admin-quota-filter">
+                      <el-option label="全部用户" value="all" />
+                      <el-option label="不限额" value="unlimited" />
+                      <el-option label="接近上限" value="near_limit" />
+                      <el-option label="已超额" value="over_quota" />
+                    </el-select>
+                    <el-button size="small" @click="fetchAdminUsers">刷新</el-button>
+                  </div>
+                </div>
+                <div class="key-summary">
+                  <span>总用户：{{ adminQuotaSummary.total }}</span>
+                  <span>已设上限：{{ adminQuotaSummary.limited }}</span>
+                  <span>不限额：{{ adminQuotaSummary.unlimited }}</span>
+                  <span>接近上限：{{ adminQuotaSummary.nearLimit }}</span>
+                  <span>已超额：{{ adminQuotaSummary.overQuota }}</span>
+                </div>
+                <el-alert
+                  :type="adminQuotaHeadline.type"
+                  :closable="false"
+                  show-icon
+                  :title="adminQuotaHeadline.title"
+                />
+                <el-alert
+                  v-if="adminQuotaError"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  :title="`用户额度列表加载失败：${adminQuotaError}`"
+                />
+                <el-empty
+                  v-else-if="!adminQuotaLoading && !filteredAdminUsers.length"
+                  description="当前筛选条件下暂无用户"
+                />
+                <el-table
+                  v-else
+                  :data="filteredAdminUsers"
+                  class="admin-quota-table"
+                  max-height="320"
+                  size="small"
+                >
+                  <el-table-column prop="username" label="用户名" min-width="140" />
+                  <el-table-column label="已使用" min-width="120">
+                    <template #default="{ row }">
+                      {{ formatSize(row.used_space) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="总额度" min-width="120">
+                    <template #default="{ row }">
+                      {{ row.quota > 0 ? formatSize(row.quota) : '无限' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="使用率" min-width="110">
+                    <template #default="{ row }">
+                      {{ formatAdminUserUsage(row) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" min-width="110">
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="adminUserQuotaStatus(row).type">
+                        {{ adminUserQuotaStatus(row).label }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                </el-table>
               </div>
               <div class="user-card user-card-full" v-loading="accessKeyLoading">
                 <div class="card-head">
@@ -5724,6 +5998,14 @@ onBeforeUnmount(() => {
   color: #909399;
 }
 
+.admin-quota-filter {
+  width: 140px;
+}
+
+.admin-quota-table {
+  width: 100%;
+}
+
 .key-list {
   display: flex;
   flex-direction: column;
@@ -5979,12 +6261,30 @@ onBeforeUnmount(() => {
   color: #1f2d3d;
 }
 
+.quota-card {
+  position: relative;
+}
+
+.quota-card-warning {
+  border-color: #f3d19e;
+  box-shadow: 0 10px 24px rgba(230, 162, 60, 0.12);
+}
+
+.quota-card-danger {
+  border-color: #f5c2c7;
+  box-shadow: 0 10px 24px rgba(245, 108, 108, 0.12);
+}
+
 .quota-sep {
   color: #c0c4cc;
   font-weight: 400;
 }
 
 .quota-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   font-size: 12px;
   color: #909399;
 }
