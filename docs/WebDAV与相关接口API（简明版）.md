@@ -458,6 +458,14 @@ curl -X POST -u alice:password123 \
 
 - `GET /api/v1/public/webdav/quota`
 
+当前语义说明：
+
+- `quota = 0` 表示不限额
+- `used` 表示当前逻辑已用容量
+- 文件移入回收站后，默认仍计入 `used`
+- 只有永久删除 / 清空回收站后，`used` 才会下降
+- 覆盖文件与 `COPY` 覆盖目标时，系统按大小增量判断是否超额，而不是按新文件完整大小重复计费
+
 ```bash
 curl -u alice:password123 \
   http://127.0.0.1:6065/api/v1/public/webdav/quota
@@ -551,11 +559,11 @@ Body：
 
 需要管理员权限。管理员账号识别规则见：[认证设计.md](./认证设计.md)
 
-- `GET /api/v1/public/admin/users/list`
-- `POST /api/v1/public/admin/users/create`
-- `POST /api/v1/public/admin/users/update`
-- `POST /api/v1/public/admin/users/delete`
-- `POST /api/v1/public/admin/users/reset-password`
+- `GET /api/v1/admin/users/list`
+- `POST /api/v1/admin/users/create`
+- `POST /api/v1/admin/users/update`
+- `POST /api/v1/admin/users/delete`
+- `POST /api/v1/admin/users/reset-password`
 
 创建用户示例：
 

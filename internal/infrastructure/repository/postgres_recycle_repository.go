@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yeying-community/warehouse/internal/domain/recycle"
@@ -19,6 +20,9 @@ type RecycleRepository interface {
 
 	// GetByUserID 获取用户的所有回收站项目
 	GetByUserID(ctx context.Context, userID string) ([]*recycle.RecycleItem, error)
+
+	// GetByUserIDPaged 分页获取用户的回收站项目
+	GetByUserIDPaged(ctx context.Context, userID string, page, pageSize int, search string) ([]*recycle.RecycleItem, int, error)
 
 	// DeleteByHash 根据哈希删除项目
 	DeleteByHash(ctx context.Context, hash string) error
@@ -43,8 +47,8 @@ func NewPostgresRecycleRepository(db *sql.DB) *PostgresRecycleRepository {
 // Create 创建回收站项目
 func (r *PostgresRecycleRepository) Create(ctx context.Context, item *recycle.RecycleItem) error {
 	query := `
-		INSERT INTO recycle_items (id, hash, user_id, username, directory, name, path, size, deleted_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO recycle_items (id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 	_, err := r.db.ExecContext(ctx, query,
 		item.ID,
@@ -54,6 +58,7 @@ func (r *PostgresRecycleRepository) Create(ctx context.Context, item *recycle.Re
 		item.Directory,
 		item.Name,
 		item.Path,
+		item.IsDir,
 		item.Size,
 		item.DeletedAt,
 		item.CreatedAt,
@@ -67,7 +72,7 @@ func (r *PostgresRecycleRepository) Create(ctx context.Context, item *recycle.Re
 // GetByHash 根据哈希获取项目
 func (r *PostgresRecycleRepository) GetByHash(ctx context.Context, hash string) (*recycle.RecycleItem, error) {
 	query := `
-		SELECT id, hash, user_id, username, directory, name, path, size, deleted_at, created_at
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
 		FROM recycle_items
 		WHERE hash = $1
 	`
@@ -80,6 +85,7 @@ func (r *PostgresRecycleRepository) GetByHash(ctx context.Context, hash string) 
 		&item.Directory,
 		&item.Name,
 		&item.Path,
+		&item.IsDir,
 		&item.Size,
 		&item.DeletedAt,
 		&item.CreatedAt,
@@ -96,7 +102,7 @@ func (r *PostgresRecycleRepository) GetByHash(ctx context.Context, hash string) 
 // GetByUserID 获取用户的所有回收站项目
 func (r *PostgresRecycleRepository) GetByUserID(ctx context.Context, userID string) ([]*recycle.RecycleItem, error) {
 	query := `
-		SELECT id, hash, user_id, username, directory, name, path, size, deleted_at, created_at
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
 		FROM recycle_items
 		WHERE user_id = $1
 		ORDER BY deleted_at DESC
@@ -118,6 +124,7 @@ func (r *PostgresRecycleRepository) GetByUserID(ctx context.Context, userID stri
 			&item.Directory,
 			&item.Name,
 			&item.Path,
+			&item.IsDir,
 			&item.Size,
 			&item.DeletedAt,
 			&item.CreatedAt,
@@ -132,6 +139,70 @@ func (r *PostgresRecycleRepository) GetByUserID(ctx context.Context, userID stri
 	}
 
 	return items, nil
+}
+
+// GetByUserIDPaged 分页获取用户的回收站项目
+func (r *PostgresRecycleRepository) GetByUserIDPaged(ctx context.Context, userID string, page, pageSize int, search string) ([]*recycle.RecycleItem, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	offset := (page - 1) * pageSize
+
+	whereParts := []string{"user_id = $1"}
+	args := []any{userID}
+	if token := strings.TrimSpace(search); token != "" {
+		whereParts = append(whereParts, fmt.Sprintf("(name ILIKE $%d OR path ILIKE $%d)", len(args)+1, len(args)+1))
+		args = append(args, "%"+token+"%")
+	}
+	whereClause := strings.Join(whereParts, " AND ")
+
+	countQuery := fmt.Sprintf(`SELECT COUNT(1) FROM recycle_items WHERE %s`, whereClause)
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count recycle items: %w", err)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
+		FROM recycle_items
+		WHERE %s
+		ORDER BY deleted_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, len(args)+1, len(args)+2)
+	rows, err := r.db.QueryContext(ctx, query, append(args, pageSize, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query recycle items: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]*recycle.RecycleItem, 0, pageSize)
+	for rows.Next() {
+		item := &recycle.RecycleItem{}
+		if err := rows.Scan(
+			&item.ID,
+			&item.Hash,
+			&item.UserID,
+			&item.Username,
+			&item.Directory,
+			&item.Name,
+			&item.Path,
+			&item.IsDir,
+			&item.Size,
+			&item.DeletedAt,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan recycle item: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate recycle items: %w", err)
+	}
+
+	return items, total, nil
 }
 
 // DeleteByHash 根据哈希删除项目
@@ -164,7 +235,7 @@ func (r *PostgresRecycleRepository) DeleteByUserID(ctx context.Context, userID s
 // GetDeletedItemsOlderThan 获取指定时间之前删除的项目
 func (r *PostgresRecycleRepository) GetDeletedItemsOlderThan(ctx context.Context, before time.Time) ([]*recycle.RecycleItem, error) {
 	query := `
-		SELECT id, hash, user_id, username, directory, name, path, size, deleted_at, created_at
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
 		FROM recycle_items
 		WHERE deleted_at < $1
 		ORDER BY deleted_at ASC
@@ -186,6 +257,7 @@ func (r *PostgresRecycleRepository) GetDeletedItemsOlderThan(ctx context.Context
 			&item.Directory,
 			&item.Name,
 			&item.Path,
+			&item.IsDir,
 			&item.Size,
 			&item.DeletedAt,
 			&item.CreatedAt,

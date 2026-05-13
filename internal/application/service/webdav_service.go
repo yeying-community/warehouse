@@ -42,6 +42,13 @@ type WebDAVService struct {
 	recycleDir       string // 回收站目录
 }
 
+type usedSpaceMutation struct {
+	method         string
+	targetPath     string
+	sourcePath     string
+	existingTarget int64
+}
+
 // statusRecorder 记录响应状态码
 type statusRecorder struct {
 	http.ResponseWriter
@@ -193,6 +200,17 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isMutatingMethod(r.Method) {
+		mutation, err := s.prepareUsedSpaceMutation(u, userDir, r)
+		if err != nil {
+			s.logger.Error("failed to prepare used space mutation",
+				zap.String("username", u.Username),
+				zap.String("method", r.Method),
+				zap.String("path", r.URL.Path),
+				zap.Error(err))
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
 		rec := newBufferedStatusRecorder()
 		handler.ServeHTTP(rec, r)
 
@@ -208,7 +226,7 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			s.updateUsedSpace(r.Context(), u, userDir)
+			s.applyUsedSpaceMutation(r.Context(), u, mutation)
 		}
 
 		if err := rec.FlushTo(w); err != nil {
@@ -220,10 +238,6 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	handler.ServeHTTP(rec, r)
 
-	// 写操作成功后刷新 used_space
-	if isMutatingMethod(r.Method) && rec.status >= 200 && rec.status < 300 {
-		s.updateUsedSpace(r.Context(), u, userDir)
-	}
 }
 
 func (s *WebDAVService) clearWebDAVDeadlines(w http.ResponseWriter) {
@@ -272,6 +286,11 @@ func (s *WebDAVService) handleDeleteWithRecycle(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if shouldHardDeleteSyncArtifact(normalizedPath) {
+		s.handleDirectDelete(w, r, u, fullPath, info.IsDir(), calculateFileSizeOrZero(info), handler)
+		return
+	}
+
 	// 文件/目录移动到回收站目录
 	moved, err := s.moveToRecycle(r.Context(), u, filePath, fullPath, info.IsDir())
 	if err != nil {
@@ -295,7 +314,7 @@ func (s *WebDAVService) handleDeleteWithRecycle(w http.ResponseWriter, r *http.R
 					return
 				}
 			}
-			s.updateUsedSpace(r.Context(), u, userDir)
+			s.applyUsedSpaceDelta(r.Context(), u, -calculateFileSizeOrZero(info))
 		}
 		if err := rec.FlushTo(w); err != nil {
 			s.logger.Error("failed to flush delete fallback response", zap.Error(err))
@@ -303,10 +322,71 @@ func (s *WebDAVService) handleDeleteWithRecycle(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	s.updateUsedSpace(r.Context(), u, userDir)
-
 	// 返回成功
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *WebDAVService) handleDirectDelete(
+	w http.ResponseWriter,
+	r *http.Request,
+	u *user.User,
+	fullPath string,
+	isDir bool,
+	sizeHint int64,
+	handler *webdav.Handler,
+) {
+	sizeDelta := sizeHint
+	if isDir {
+		totalSize, err := calculatePathSize(fullPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.logger.Error("failed to calculate path size before hard delete",
+				zap.String("path", fullPath),
+				zap.Error(err))
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		sizeDelta = totalSize
+	}
+
+	rec := newBufferedStatusRecorder()
+	handler.ServeHTTP(rec, r)
+	if rec.status >= 200 && rec.status < 300 {
+		if err := s.mutationRecorder.RemovePath(r.Context(), fullPath, isDir); err != nil {
+			if s.handleMutationRecordError("hard delete mutation skipped because no standby is currently available",
+				err,
+				zap.String("username", u.Username),
+				zap.String("path", r.URL.Path),
+				zap.Bool("is_dir", isDir),
+			) {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+		}
+		s.applyUsedSpaceDelta(r.Context(), u, -sizeDelta)
+	}
+	if err := rec.FlushTo(w); err != nil {
+		s.logger.Error("failed to flush hard delete response", zap.Error(err))
+	}
+}
+
+func shouldHardDeleteSyncArtifact(normalizedPath string) bool {
+	cleaned := path.Clean("/" + strings.TrimSpace(normalizedPath))
+	if cleaned == "/" || !strings.HasPrefix(cleaned, "/apps/") {
+		return false
+	}
+
+	base := path.Base(cleaned)
+	if strings.HasPrefix(base, "backup.__sync_txn_data_v1.") &&
+		strings.HasSuffix(base, ".json") {
+		return true
+	}
+
+	if base == "lock.json" {
+		parent := path.Base(path.Dir(cleaned))
+		return parent == "backup.__sync_mutex_v1.__sync_lock_v1"
+	}
+
+	return base == "backup.__sync_mutex_v1.__sync_lock_v1"
 }
 
 // moveToRecycle 将文件移动到回收站并保存记录
@@ -342,7 +422,7 @@ func (s *WebDAVService) moveToRecycle(ctx context.Context, u *user.User, relativ
 	}
 
 	// 创建回收站记录（先生成 hash，便于文件命名）
-	item := recycle.NewRecycleItem(u.ID, u.Username, dirName, fileName, cleanRelative, fileSize)
+	item := recycle.NewRecycleItem(u.ID, u.Username, dirName, fileName, cleanRelative, isDir, fileSize)
 
 	// 生成唯一的回收站文件名：{hash}_{原文件名}
 	recycleFileName := fmt.Sprintf("%s_%s", item.Hash, fileName)
@@ -391,7 +471,7 @@ func (s *WebDAVService) moveToRecycle(ctx context.Context, u *user.User, relativ
 
 // isUploadMethod 判断是否为上传方法
 func isUploadMethod(method string) bool {
-	return method == "PUT" || method == "POST" || method == "MKCOL"
+	return method == "PUT" || method == "POST" || method == "MKCOL" || method == "COPY"
 }
 
 // isMutatingMethod 判断是否为可能改变存储的 WebDAV 方法
@@ -411,44 +491,159 @@ func (s *WebDAVService) checkQuota(ctx context.Context, u *user.User, r *http.Re
 		return nil
 	}
 
-	// 获取文件大小
-	var fileSize int64
-	if r.Method == "PUT" || r.Method == "POST" {
-		// 从 Content-Length 头获取大小
-		if contentLength := r.Header.Get("Content-Length"); contentLength != "" {
-			size, err := strconv.ParseInt(contentLength, 10, 64)
-			if err == nil {
-				fileSize = size
-			}
-		}
-
-		// 如果没有 Content-Length，尝试读取 body
-		if fileSize == 0 && r.Body != nil {
-			// 注意：这会消耗 body，需要重新设置
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				return fmt.Errorf("failed to read body: %w", err)
-			}
-			fileSize = int64(len(body))
-			// 重新设置 body
-			r.Body = io.NopCloser(io.NewSectionReader(
-				io.NewSectionReader(
-					&bodyReader{data: body},
-					0,
-					int64(len(body)),
-				),
-				0,
-				int64(len(body)),
-			))
-		}
+	additionalSize, err := s.estimateQuotaAdditionalSize(u, r)
+	if err != nil {
+		return err
 	}
 
 	// 检查是否超过配额
-	if err := s.quotaService.CheckQuota(ctx, u, fileSize); err != nil {
+	if err := s.quotaService.CheckQuota(ctx, u, additionalSize); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *WebDAVService) estimateQuotaAdditionalSize(u *user.User, r *http.Request) (int64, error) {
+	switch r.Method {
+	case "MKCOL":
+		return 0, nil
+	case "PUT", "POST":
+		newSize, err := s.readRequestBodySize(r)
+		if err != nil {
+			return 0, err
+		}
+
+		userDir := s.getUserDirectory(u)
+		targetPath := s.resolveUserFullPath(userDir, r.URL.Path)
+		oldSize, err := getExistingFileSize(targetPath)
+		if err != nil {
+			return 0, err
+		}
+
+		if newSize <= oldSize {
+			return 0, nil
+		}
+		return newSize - oldSize, nil
+	case "COPY":
+		userDir := s.getUserDirectory(u)
+		sourcePath := s.resolveUserFullPath(userDir, r.URL.Path)
+		destination := strings.TrimSpace(r.Header.Get("Destination"))
+		if destination == "" {
+			return 0, fmt.Errorf("missing Destination header for COPY")
+		}
+		targetPath := s.resolveUserFullPath(userDir, destination)
+
+		sourceSize, err := calculatePathSize(sourcePath)
+		if err != nil {
+			return 0, err
+		}
+		targetSize, err := getExistingPathSize(targetPath)
+		if err != nil {
+			return 0, err
+		}
+		if sourceSize <= targetSize {
+			return 0, nil
+		}
+		return sourceSize - targetSize, nil
+	default:
+		return 0, nil
+	}
+}
+
+func (s *WebDAVService) readRequestBodySize(r *http.Request) (int64, error) {
+	var fileSize int64
+
+	// 从 Content-Length 头获取大小
+	if contentLength := r.Header.Get("Content-Length"); contentLength != "" {
+		size, err := strconv.ParseInt(contentLength, 10, 64)
+		if err == nil {
+			fileSize = size
+		}
+	}
+
+	// 如果没有 Content-Length，尝试读取 body
+	if fileSize == 0 && r.Body != nil {
+		// 注意：这会消耗 body，需要重新设置
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			return 0, fmt.Errorf("failed to read body: %w", err)
+		}
+		fileSize = int64(len(body))
+		// 重新设置 body
+		r.Body = io.NopCloser(io.NewSectionReader(
+			io.NewSectionReader(
+				&bodyReader{data: body},
+				0,
+				int64(len(body)),
+			),
+			0,
+			int64(len(body)),
+		))
+	}
+
+	return fileSize, nil
+}
+
+func getExistingFileSize(targetPath string) (int64, error) {
+	info, err := os.Stat(targetPath)
+	if err == nil {
+		if info.IsDir() {
+			return 0, nil
+		}
+		return info.Size(), nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("stat existing target: %w", err)
+}
+
+func calculateFileSizeOrZero(info os.FileInfo) int64 {
+	if info == nil || info.IsDir() {
+		return 0
+	}
+	return info.Size()
+}
+
+func getExistingPathSize(targetPath string) (int64, error) {
+	size, err := calculatePathSize(targetPath)
+	if err == nil {
+		return size, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return 0, fmt.Errorf("stat existing path: %w", err)
+}
+
+func calculatePathSize(targetPath string) (int64, error) {
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		return 0, err
+	}
+	if !info.IsDir() {
+		return info.Size(), nil
+	}
+
+	var totalSize int64
+	err = filepath.Walk(targetPath, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == targetPath {
+			return nil
+		}
+		if info == nil || info.IsDir() {
+			return nil
+		}
+		totalSize += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return totalSize, nil
 }
 
 // bodyReader 用于重新读取 body
@@ -752,25 +947,98 @@ func (s *WebDAVService) resolveUserFullPath(userDir, rawPath string) string {
 	return filepath.Join(userDir, filepath.FromSlash(relativePath))
 }
 
-func (s *WebDAVService) updateUsedSpace(ctx context.Context, u *user.User, userDir string) {
-	used, err := s.quotaService.CalculateUsedSpace(ctx, userDir)
+func (s *WebDAVService) prepareUsedSpaceMutation(u *user.User, userDir string, r *http.Request) (*usedSpaceMutation, error) {
+	mutation := &usedSpaceMutation{
+		method: r.Method,
+	}
+
+	switch r.Method {
+	case "PUT", "POST":
+		mutation.targetPath = s.resolveUserFullPath(userDir, r.URL.Path)
+		size, err := getExistingPathSize(mutation.targetPath)
+		if err != nil {
+			return nil, err
+		}
+		mutation.existingTarget = size
+	case "COPY":
+		mutation.sourcePath = s.resolveUserFullPath(userDir, r.URL.Path)
+		destination := strings.TrimSpace(r.Header.Get("Destination"))
+		if destination == "" {
+			return nil, fmt.Errorf("missing Destination header for COPY")
+		}
+		mutation.targetPath = s.resolveUserFullPath(userDir, destination)
+		size, err := getExistingPathSize(mutation.targetPath)
+		if err != nil {
+			return nil, err
+		}
+		mutation.existingTarget = size
+	}
+
+	return mutation, nil
+}
+
+func (s *WebDAVService) applyUsedSpaceMutation(ctx context.Context, u *user.User, mutation *usedSpaceMutation) {
+	if mutation == nil {
+		return
+	}
+
+	var delta int64
+	var err error
+
+	switch mutation.method {
+	case "PUT", "POST":
+		newSize, calcErr := getExistingPathSize(mutation.targetPath)
+		if calcErr != nil {
+			err = calcErr
+			break
+		}
+		delta = newSize - mutation.existingTarget
+	case "COPY":
+		newSize, calcErr := getExistingPathSize(mutation.targetPath)
+		if calcErr != nil {
+			err = calcErr
+			break
+		}
+		delta = newSize - mutation.existingTarget
+	default:
+		return
+	}
+
 	if err != nil {
-		s.logger.Error("failed to calculate used space",
+		s.logger.Error("failed to calculate used space delta",
 			zap.String("username", u.Username),
-			zap.String("directory", userDir),
+			zap.String("method", mutation.method),
+			zap.String("target_path", mutation.targetPath),
 			zap.Error(err))
 		return
 	}
-	if err := s.userRepo.UpdateUsedSpace(ctx, u.Username, used); err != nil {
-		s.logger.Error("failed to update used space in repo",
+
+	s.applyUsedSpaceDelta(ctx, u, delta)
+}
+
+func (s *WebDAVService) applyUsedSpaceDelta(ctx context.Context, u *user.User, delta int64) {
+	if u == nil || delta == 0 {
+		return
+	}
+
+	used, err := s.userRepo.UpdateUsedSpaceDelta(ctx, u.Username, delta)
+	if err != nil {
+		s.logger.Error("failed to update used space delta",
+			zap.String("username", u.Username),
+			zap.Int64("delta", delta),
+			zap.Error(err))
+		return
+	}
+	if err := u.UpdateUsedSpace(used); err != nil {
+		s.logger.Error("failed to update in-memory used space",
 			zap.String("username", u.Username),
 			zap.Int64("used_space", used),
 			zap.Error(err))
 		return
 	}
-	u.UpdateUsedSpace(used)
-	s.logger.Debug("used space updated",
+	s.logger.Debug("used space delta applied",
 		zap.String("username", u.Username),
+		zap.Int64("delta", delta),
 		zap.Int64("used_space", used))
 }
 

@@ -28,6 +28,9 @@ type Repository interface {
 	// UpdateUsedSpace 更新用户已使用空间
 	UpdateUsedSpace(ctx context.Context, username string, usedSpace int64) error
 
+	// UpdateUsedSpaceDelta 按增量更新用户已使用空间，并返回更新后的值
+	UpdateUsedSpaceDelta(ctx context.Context, username string, delta int64) (int64, error)
+
 	// UpdateQuota 更新用户配额
 	UpdateQuota(ctx context.Context, username string, quota int64) error
 }

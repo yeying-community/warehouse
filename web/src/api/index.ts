@@ -121,6 +121,32 @@ export const userApi = {
   }
 }
 
+export interface AdminUserItem {
+  id: string
+  username: string
+  wallet_address?: string
+  email?: string
+  directory: string
+  permissions: string[]
+  quota: number
+  used_space: number
+  created_at?: string
+  updated_at?: string
+  has_password: boolean
+}
+
+export const adminUserApi = {
+  list() {
+    return request<{ items: AdminUserItem[] }>('/api/v1/admin/users/list')
+  },
+  updateQuota(username: string, quota: number) {
+    return request<AdminUserItem>('/api/v1/admin/users/update', {
+      method: 'POST',
+      body: { username, quota }
+    })
+  }
+}
+
 export interface AssetSpaceInfo {
   key: string
   name: string
@@ -161,10 +187,18 @@ export interface RecycleItem {
 // 回收站 API
 export const recycleApi = {
   // 获取回收站列表（全局）
-  list() {
+  list(params?: { page?: number; pageSize?: number; search?: string }) {
+    const query = new URLSearchParams()
+    if (params?.page && params.page > 0) query.set('page', String(params.page))
+    if (params?.pageSize && params.pageSize > 0) query.set('page_size', String(params.pageSize))
+    if (params?.search?.trim()) query.set('search', params.search.trim())
+    const suffix = query.toString() ? `?${query.toString()}` : ''
     return request<{
       items: RecycleItem[]
-    }>('/api/v1/public/webdav/recycle/list')
+      total: number
+      page: number
+      pageSize: number
+    }>(`/api/v1/public/webdav/recycle/list${suffix}`)
   },
 
   // 恢复文件到原始目录

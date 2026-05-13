@@ -120,6 +120,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			directory TEXT NOT NULL,
 			name TEXT NOT NULL,
 			path TEXT NOT NULL,
+			is_dir BOOLEAN NOT NULL DEFAULT FALSE,
 			size BIGINT NOT NULL DEFAULT 0,
 			deleted_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -288,6 +289,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS download_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE internal_share_items ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`,
+		`ALTER TABLE recycle_items ADD COLUMN IF NOT EXISTS is_dir BOOLEAN NOT NULL DEFAULT FALSE`,
 
 		// 创建回收站的哈希索引
 		`CREATE INDEX IF NOT EXISTS idx_recycle_items_hash ON recycle_items(hash)`,

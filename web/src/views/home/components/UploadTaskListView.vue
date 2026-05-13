@@ -3,6 +3,7 @@ import { FolderOpened, RefreshRight } from '@element-plus/icons-vue'
 import type { UploadTask, UploadTaskStatus } from '../types'
 
 const props = defineProps<{
+  isMobile: boolean
   tasks: UploadTask[]
   formatSize: (size: number) => string
   formatTime: (time: string | number) => string
@@ -71,7 +72,7 @@ function handleOpenTaskLocation(task: UploadTask) {
 
 <template>
   <el-table
-    class="desktop-only"
+    v-if="!isMobile"
     :data="tasks"
     empty-text="暂无上传任务"
     height="100%"
@@ -141,7 +142,7 @@ function handleOpenTaskLocation(task: UploadTask) {
     </el-table-column>
   </el-table>
 
-  <div class="mobile-only card-list">
+  <div v-else class="card-list">
     <el-empty v-if="!tasks.length" description="暂无上传任务" />
     <div v-for="row in tasks" :key="row.id" class="card-item">
       <div class="card-header">

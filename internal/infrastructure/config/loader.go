@@ -147,6 +147,14 @@ func (l *Loader) overrideFromEnv(config *Config) {
 			config.Replication.ReconcileAutoPauseFailures = count
 		}
 	}
+	if v := os.Getenv("WEBDAV_QUOTA_AUTO_RECONCILE_ENABLED"); v != "" {
+		config.Quota.AutoReconcileEnabled = parseEnvBool(v)
+	}
+	if v := os.Getenv("WEBDAV_QUOTA_AUTO_RECONCILE_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			config.Quota.AutoReconcileInterval = d
+		}
+	}
 	if v := os.Getenv("WEBDAV_PREFIX"); v != "" {
 		config.WebDAV.Prefix = v
 	}
@@ -280,6 +288,9 @@ func (l *Loader) validate(config *Config) error {
 	if err := l.validateReplication(config); err != nil {
 		return fmt.Errorf("replication config: %w", err)
 	}
+	if err := l.validateQuota(config); err != nil {
+		return fmt.Errorf("quota config: %w", err)
+	}
 	if err := l.validateWebDAV(config); err != nil {
 		return fmt.Errorf("webdav config: %w", err)
 	}
@@ -291,6 +302,16 @@ func (l *Loader) validate(config *Config) error {
 	}
 	if err := l.validateDatabase(config); err != nil {
 		return fmt.Errorf("database config: %w", err)
+	}
+	return nil
+}
+
+func (l *Loader) validateQuota(config *Config) error {
+	if !config.Quota.AutoReconcileEnabled {
+		return nil
+	}
+	if config.Quota.AutoReconcileInterval <= 0 {
+		return errors.New("quota.auto_reconcile_interval must be greater than zero when auto_reconcile_enabled is true")
 	}
 	return nil
 }

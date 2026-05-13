@@ -8,6 +8,12 @@ import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
 import type { AddressContact } from '@/api'
 
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false
+})
+
 const addressBookStore = useAddressBookStore()
 const emit = defineEmits<{
   (event: 'refresh'): void
@@ -80,8 +86,8 @@ async function submitCreateGroup() {
 </script>
 
 <template>
-  <div class="address-page">
-    <div class="address-hero">
+  <div class="address-page" :class="{ embedded: props.embedded }">
+    <div v-if="!props.embedded" class="address-hero">
       <div class="address-title-row">
         <div class="address-hero-main">
           <div class="address-title">我的好友</div>
@@ -162,12 +168,13 @@ async function submitCreateGroup() {
             <span class="address-filter">当前分组：{{ addressGroupLabel }}</span>
           </div>
           <div class="toolbar-right">
+            <el-button v-if="props.embedded" type="primary" size="small" @click="openCreateContactDialog">新建联系人</el-button>
             <span class="address-total">共 {{ filteredAddressContacts.length }} 位联系人</span>
           </div>
         </div>
 
         <div class="address-card address-list-card">
-          <div class="list-title-row">
+          <div v-if="!props.embedded" class="list-title-row">
             <div>
               <div class="card-title">联系人列表</div>
               <div class="card-subtitle">按名称、钱包地址或标签快速定位联系人。</div>
@@ -282,6 +289,10 @@ async function submitCreateGroup() {
   min-height: 0;
 }
 
+.address-page.embedded {
+  padding: 0;
+}
+
 .card-title {
   font-size: 14px;
   font-weight: 600;
@@ -391,6 +402,11 @@ async function submitCreateGroup() {
   min-height: 0;
 }
 
+.address-page.embedded .address-sidebar,
+.address-page.embedded .address-main {
+  gap: 10px;
+}
+
 .address-card {
   background: #fff;
   border-radius: 12px;
@@ -400,6 +416,10 @@ async function submitCreateGroup() {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
+}
+
+.address-page.embedded .address-card {
+  background: #f7f9fc;
 }
 
 .group-list {
@@ -471,6 +491,12 @@ async function submitCreateGroup() {
   align-items: center;
   gap: 12px;
   flex: 1;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .address-filter {

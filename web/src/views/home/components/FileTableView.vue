@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { Delete, Download, Edit, Key, MoreFilled, Share, User, View } from '@element-plus/icons-vue'
+import { ref, watch } from 'vue'
+import { Download, MoreFilled, View } from '@element-plus/icons-vue'
 import type { FileItem } from '../types'
 
 const props = defineProps<{
+  isMobile: boolean
   rows: FileItem[]
   loading: boolean
   onRowClick: (...args: any[]) => void
@@ -27,7 +29,10 @@ const props = defineProps<{
   openAccessKeyDialog: (item: FileItem) => void
   renameItem: (item: FileItem) => void
   deleteFile: (item: FileItem) => void
+  selectionNonce: number
 }>()
+
+const tableRef = ref()
 
 function canPreview(row: FileItem): boolean {
   return !row.isDir && !!props.getPreviewMode(row)
@@ -83,17 +88,23 @@ function handleRowClick(row: FileItem, _column: unknown, event: MouseEvent) {
   }
   props.onRowClick(row)
 }
+
+watch(() => props.selectionNonce, () => {
+  tableRef.value?.clearSelection?.()
+})
 </script>
 
 <template>
   <el-table
-    class="desktop-only"
+    v-if="!isMobile"
+    ref="tableRef"
     :data="rows"
     v-loading="loading"
     style="width: 100%"
     height="100%"
     :row-class-name="getRowClassName"
     row-key="path"
+    empty-text="当前目录暂无资产"
     @row-click="handleRowClick"
     @selection-change="handleSelectionChange"
   >
@@ -131,40 +142,37 @@ function handleRowClick(row: FileItem, _column: unknown, event: MouseEvent) {
         <span class="time-cell">{{ formatTime(row.modified) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="280" fixed="right">
+    <el-table-column label="操作" width="140" fixed="right" align="left" header-align="left">
       <template #default="{ row }">
         <div class="actions" @click.stop>
-          <el-tooltip v-if="row.isDir" content="详情" placement="top">
-            <el-button type="primary" link :icon="View" @click="openDetailDrawer('file', row)" />
-          </el-tooltip>
-          <el-tooltip v-if="row.isDir" content="授权密钥" placement="top">
-            <el-button type="primary" link :icon="Key" @click="openAccessKeyDialog(row)" />
-          </el-tooltip>
-          <el-tooltip v-if="canPreview(row)" content="预览" placement="top">
-            <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
-          </el-tooltip>
           <el-tooltip v-if="!row.isDir" content="下载" placement="top">
             <el-button type="primary" link :icon="Download" @click="downloadFile(row)" />
           </el-tooltip>
-          <el-tooltip v-if="!row.isDir" content="分享" placement="top">
-            <el-button type="primary" link :icon="Share" @click="shareFile(row)" />
+          <el-tooltip v-else-if="canPreview(row)" content="预览" placement="top">
+            <el-button type="primary" link :icon="View" @click="openFilePreview(row)" />
           </el-tooltip>
-          <el-tooltip content="共享给用户" placement="top">
-            <el-button type="primary" link :icon="User" @click="openShareUserDialog(row)" />
-          </el-tooltip>
-          <el-tooltip content="重命名" placement="top">
-            <el-button type="primary" link :icon="Edit" @click="renameItem(row)" />
-          </el-tooltip>
-          <el-tooltip content="删除" placement="top">
-            <el-button type="danger" link :icon="Delete" @click="deleteFile(row)" />
-          </el-tooltip>
+          <el-dropdown @command="handleDropdownCommand(row, $event)">
+            <el-button type="primary" link :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="detail">详情</el-dropdown-item>
+                <el-dropdown-item v-if="row.isDir" command="accessKey">授权密钥</el-dropdown-item>
+                <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
+                <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
+                <el-dropdown-item v-if="!row.isDir" command="share">创建链接</el-dropdown-item>
+                <el-dropdown-item command="shareUser">指定对象</el-dropdown-item>
+                <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                <el-dropdown-item command="delete">删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </template>
     </el-table-column>
   </el-table>
 
-  <div class="mobile-only card-list" v-loading="loading">
-    <el-empty v-if="!loading && !rows.length" description="暂无数据" />
+  <div v-else class="card-list" v-loading="loading">
+    <el-empty v-if="!loading && !rows.length" description="当前目录暂无资产" />
     <div
       v-for="row in rows"
       :key="row.path"
@@ -194,8 +202,8 @@ function handleRowClick(row: FileItem, _column: unknown, event: MouseEvent) {
                 <el-dropdown-item v-if="row.isDir" command="accessKey">授权密钥</el-dropdown-item>
                 <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
-                <el-dropdown-item v-if="!row.isDir" command="share">分享</el-dropdown-item>
-                <el-dropdown-item command="shareUser">共享给用户</el-dropdown-item>
+                <el-dropdown-item v-if="!row.isDir" command="share">创建链接</el-dropdown-item>
+                <el-dropdown-item command="shareUser">指定对象</el-dropdown-item>
                 <el-dropdown-item command="rename">重命名</el-dropdown-item>
                 <el-dropdown-item command="delete">删除</el-dropdown-item>
               </el-dropdown-menu>

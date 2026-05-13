@@ -21,13 +21,14 @@ type RecycleItem struct {
 	Directory string    // 所在目录名
 	Name      string    // 文件名
 	Path      string    // 相对路径（相对于目录根）
+	IsDir     bool      // 是否目录
 	Size      int64     // 文件大小（字节）
 	DeletedAt time.Time // 删除时间
 	CreatedAt time.Time // 创建时间
 }
 
 // NewRecycleItem 创建新的回收站项目
-func NewRecycleItem(userID, username, directory, name, path string, size int64) *RecycleItem {
+func NewRecycleItem(userID, username, directory, name, path string, isDir bool, size int64) *RecycleItem {
 	now := time.Now()
 	return &RecycleItem{
 		ID:        generateID(),
@@ -37,6 +38,7 @@ func NewRecycleItem(userID, username, directory, name, path string, size int64) 
 		Directory: directory,
 		Name:      name,
 		Path:      path,
+		IsDir:     isDir,
 		Size:      size,
 		DeletedAt: now,
 		CreatedAt: now,

@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent,
 import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult } from '@/api'
+import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
 import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
@@ -52,6 +52,7 @@ const emailCodeSending = ref(false)
 const emailLoginSubmitting = ref(false)
 const emailCodeCountdown = ref(0)
 let emailCodeTimer: number | null = null
+const isMobileViewport = ref(false)
 const walletHistory = ref<string[]>([])
 const selectedWalletAccount = ref('')
 const walletRowRef = ref<HTMLElement | null>(null)
@@ -62,6 +63,9 @@ const showRecycle = ref(false)
 const recycleList = ref<RecycleItem[]>([])
 const recycleLoading = ref(false)
 const recycleClearing = ref(false)
+const recyclePage = ref(1)
+const recyclePageSize = 50
+const recycleTotal = ref(0)
 const showShare = ref(false)
 const shareList = ref<ShareItem[]>([])
 const shareLoading = ref(false)
@@ -77,8 +81,19 @@ const sharedEntries = ref<FileItem[]>([])
 const sharedEntriesLoading = ref(false)
 const showQuotaManage = ref(false)
 const quotaManageLoading = ref(false)
+const adminQuotaLoading = ref(false)
+const adminQuotaAvailable = ref(false)
+const adminQuotaError = ref('')
+const adminUsers = ref<AdminUserItem[]>([])
+const adminQuotaFilter = ref<'all' | 'unlimited' | 'near_limit' | 'over_quota'>('all')
+const adminQuotaDialogVisible = ref(false)
+const adminQuotaSubmitting = ref(false)
+const adminQuotaEditTarget = ref<AdminUserItem | null>(null)
+const adminQuotaEditValue = ref('')
+const adminQuotaEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showAddressBook = ref(false)
 const showUploadTasks = ref(false)
+const managementSection = ref<'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks'>('account')
 const uploadTasksReturnView = ref<ViewKey | null>(null)
 const uploadTasksReturnPath = ref('/')
 const manualRefresh = ref(false)
@@ -86,6 +101,7 @@ const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
 const detailItem = ref<FileItem | RecycleItem | ShareItem | DirectShareItem | null>(null)
 const selectedFileRows = ref<FileItem[]>([])
+const fileSelectionNonce = ref(0)
 const dragActive = ref(false)
 const dragCounter = ref(0)
 const draggingFileItem = ref<FileItem | null>(null)
@@ -360,8 +376,8 @@ const searchKeyword = computed({
 const searchPlaceholder = computed(() => {
   if (showUploadTasks.value) return '搜索上传任务'
   if (showRecycle.value) return '搜索回收站'
-  if (showShare.value) return shareTab.value === 'link' ? '搜索下载链接' : '搜索定向分享'
-  if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索定向分享'
+  if (showShare.value) return shareTab.value === 'link' ? '搜索链接分享' : '搜索指定对象分享'
+  if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索分享给我'
   return '搜索文件或目录'
 })
 const currentAssetSpace = computed(() => resolveAssetSpaceByPath(currentPath.value))
@@ -399,13 +415,21 @@ const fileBreadcrumbRoot = computed(() => {
   }
   return { name: '根目录', path: '/' }
 })
+const managementSectionLabel = computed(() => {
+  if (managementSection.value === 'keys') return '访问密钥'
+  if (managementSection.value === 'adminQuota') return '用户额度'
+  if (managementSection.value === 'addressBook') return '联系人'
+  if (managementSection.value === 'uploadTasks') return '上传记录'
+  return '个人资料'
+})
+const isManagementView = computed(() => showQuotaManage.value || showAddressBook.value || showUploadTasks.value)
 const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
-  if (showShare.value) return shareTab.value === 'link' ? '下载链接' : '定向分享'
-  if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '定向分享'
-  if (showQuotaManage.value) return '个人中心'
-  if (showAddressBook.value) return '我的好友'
-  if (showUploadTasks.value) return '上传任务'
+  if (showShare.value) return '分享'
+  if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
+  if (showQuotaManage.value) return managementSectionLabel.value
+  if (showAddressBook.value) return '联系人'
+  if (showUploadTasks.value) return '上传记录'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
     return currentAssetSpace.value.name
@@ -416,6 +440,13 @@ const mobileLocationLabel = computed(() => {
   return defaultSpace?.name || '根目录'
 })
 const mobileLocationText = computed(() => `当前位置：${mobileLocationLabel.value}`)
+const uploadTaskSummary = computed(() => ({
+  total: uploadTasks.value.length,
+  queued: uploadTasks.value.filter(task => task.status === 'queued').length,
+  uploading: uploadTasks.value.filter(task => task.status === 'uploading').length,
+  success: uploadTasks.value.filter(task => task.status === 'success').length,
+  failed: uploadTasks.value.filter(task => task.status === 'failed').length
+}))
 const detailTitle = computed(() => {
   if (detailMode.value === 'recycle') return '回收站详情'
   if (detailMode.value === 'share') return '分享详情'
@@ -457,6 +488,91 @@ const quotaAvailable = computed(() => {
     ? quota.value.available
     : quota.value.quota - quota.value.used
   return Math.max(available, 0)
+})
+const quotaAlertState = computed(() => {
+  if (quota.value.unlimited || quota.value.quota <= 0) {
+    return {
+      level: 'info' as 'info' | 'warning' | 'danger',
+      label: '未设置上限',
+      message: '当前账号未设置存储上限。'
+    }
+  }
+  const usage = quota.value.used / quota.value.quota
+  if (quota.value.used > quota.value.quota || usage > 1) {
+    return {
+      level: 'danger' as const,
+      label: '已超额',
+      message: '当前已超过存储额度上限，新增写入会被拒绝。'
+    }
+  }
+  if (usage >= 0.8) {
+    return {
+      level: 'warning' as const,
+      label: '接近上限',
+      message: '当前使用率已达到 80% 以上，建议尽快清理文件或联系管理员扩容。'
+    }
+  }
+  return {
+    level: 'info' as const,
+    label: '正常',
+    message: '当前额度使用正常。'
+  }
+})
+const adminQuotaSummary = computed(() => {
+  const items = adminUsers.value
+  const limitedUsers = items.filter(item => item.quota > 0)
+  const overQuotaUsers = limitedUsers.filter(item => item.used_space > item.quota)
+  const nearLimitUsers = limitedUsers.filter(item => {
+    if (item.quota <= 0) return false
+    return item.used_space <= item.quota && item.used_space / item.quota >= 0.8
+  })
+  return {
+    total: items.length,
+    limited: limitedUsers.length,
+    unlimited: items.length - limitedUsers.length,
+    nearLimit: nearLimitUsers.length,
+    overQuota: overQuotaUsers.length
+  }
+})
+const adminQuotaHeadline = computed(() => {
+  if (adminQuotaSummary.value.overQuota > 0) {
+    return {
+      type: 'error' as 'error' | 'warning' | 'info',
+      title: `当前有 ${adminQuotaSummary.value.overQuota} 个用户已超额，新增写入会被拒绝。`
+    }
+  }
+  if (adminQuotaSummary.value.nearLimit > 0) {
+    return {
+      type: 'warning' as const,
+      title: `当前有 ${adminQuotaSummary.value.nearLimit} 个用户使用率已达到 80% 以上。`
+    }
+  }
+  return {
+    type: 'info' as const,
+    title: '当前没有用户超额，额度状态整体稳定。'
+  }
+})
+const filteredAdminUsers = computed(() => {
+  const filter = adminQuotaFilter.value
+  const items = [...adminUsers.value]
+  const filtered = items.filter(item => {
+    if (filter === 'unlimited') return item.quota === 0
+    if (filter === 'near_limit') {
+      return item.quota > 0 && item.used_space <= item.quota && item.used_space / item.quota >= 0.8
+    }
+    if (filter === 'over_quota') return item.quota > 0 && item.used_space > item.quota
+    return true
+  })
+  filtered.sort((a, b) => {
+    const aUsage = adminUserUsageRate(a)
+    const bUsage = adminUserUsageRate(b)
+    if (aUsage === null && bUsage === null) return a.username.localeCompare(b.username)
+    if (aUsage === null) return 1
+    if (bUsage === null) return -1
+    if (bUsage !== aUsage) return bUsage - aUsage
+    return a.username.localeCompare(b.username)
+  })
+  return filtered
 })
 const accessKeysForScope = computed(() => {
   const scope = normalizeAccessKeyRootPath(accessKeyScopePath.value)
@@ -542,21 +658,39 @@ const sharedParentTargetPath = computed(() => {
 })
 const sortedFileList = computed(() => [...fileList.value].sort(compareItemsByModifiedDesc))
 const selectedFileCount = computed(() => selectedFileRows.value.length)
+const fileSelectionSummaryText = computed(() => {
+  const count = selectedFileCount.value
+  if (count <= 0) return ''
+  return `已选中 ${count} 项资产，可以执行批量删除`
+})
+const shareViewSummary = computed(() => {
+  if (showShare.value) {
+    if (shareTab.value === 'link') {
+      return {
+        title: '链接分享',
+        description: '生成公开访问链接，适合临时下载或外部访问。创建后会直接得到可复制的链接地址。'
+      }
+    }
+    return {
+      title: '指定对象分享',
+      description: '把目录或文件共享给当前账号体系下的用户、地址或分组，适合协作访问。'
+    }
+  }
+  if (showSharedWithMe.value && !sharedActive.value) {
+    return {
+      title: '分享给我',
+      description: '这里展示其他人共享给你的目录或文件。点击目录可继续浏览，点击文件可查看详情。'
+    }
+  }
+  return null
+})
 const searchToken = computed(() => searchKeyword.value.trim().toLowerCase())
 const filteredFileList = computed(() => {
   const token = searchToken.value
   if (!token) return sortedFileList.value
   return sortedFileList.value.filter(item => item.name.toLowerCase().includes(token))
 })
-const filteredRecycleList = computed(() => {
-  const token = searchToken.value
-  if (!token) return recycleList.value
-  return recycleList.value.filter(item => {
-    const nameMatch = item.name.toLowerCase().includes(token)
-    if (nameMatch) return true
-    return item.path?.toLowerCase().includes(token) || false
-  })
-})
+const filteredRecycleList = computed(() => recycleList.value)
 const filteredShareList = computed(() => {
   const token = searchToken.value
   if (!token) return shareList.value
@@ -857,6 +991,38 @@ function showError(message: string, title = '错误'): void {
   })
 }
 
+function quotaExceededMessage(): string {
+  return [
+    '当前操作会超过你的存储额度，系统已拒绝写入。',
+    '你可以先删除不需要的文件，或清理回收站后重试。',
+    '如果仍然需要更多空间，请联系管理员调整额度。'
+  ].join('\n')
+}
+
+function isQuotaExceededErrorMessage(message: string): boolean {
+  const normalized = String(message || '').toLowerCase()
+  return normalized.includes('507') ||
+    normalized.includes('insufficient storage') ||
+    normalized.includes('storage quota exceeded') ||
+    normalized.includes('quota exceeded') ||
+    normalized.includes('quota')
+}
+
+function normalizeUserFacingErrorMessage(message: string, fallback: string): string {
+  const trimmed = String(message || '').trim()
+  if (isQuotaExceededErrorMessage(trimmed)) {
+    return quotaExceededMessage()
+  }
+  return trimmed || fallback
+}
+
+function errorMessageFromUnknown(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    return normalizeUserFacingErrorMessage(error.message, fallback)
+  }
+  return normalizeUserFacingErrorMessage(String(error || ''), fallback)
+}
+
 function createDefaultShareExpiryForm(): ShareExpiryForm {
   return {
     expiresValue: '0',
@@ -1136,9 +1302,51 @@ async function fetchAssetSpaces() {
 async function fetchUserCenter() {
   quotaManageLoading.value = true
   try {
-    await Promise.all([fetchUserInfo(), fetchQuota(), fetchAccessKeys()])
+    await Promise.all([fetchUserInfo(), fetchQuota(), fetchAccessKeys(), fetchAdminUsers()])
   } finally {
     quotaManageLoading.value = false
+  }
+}
+
+function extractApiErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const message = error.message?.trim()
+    if (!message) return ''
+    try {
+      const parsed = JSON.parse(message) as { error?: string; code?: number }
+      if (parsed?.error) return parsed.error
+      if (parsed?.code) return `HTTP ${parsed.code}`
+    } catch {
+      return message
+    }
+    return message
+  }
+  return String(error || '')
+}
+
+function isAdminPermissionError(error: unknown): boolean {
+  const message = extractApiErrorMessage(error).toLowerCase()
+  return message.includes('403') || message.includes('admin permission required') || message.includes('permission denied') || message.includes('forbidden')
+}
+
+async function fetchAdminUsers() {
+  adminQuotaLoading.value = true
+  adminQuotaError.value = ''
+  try {
+    const data = await adminUserApi.list()
+    adminUsers.value = Array.isArray(data.items) ? data.items : []
+    adminQuotaAvailable.value = true
+  } catch (error) {
+    adminUsers.value = []
+    if (isAdminPermissionError(error)) {
+      adminQuotaAvailable.value = false
+      return
+    }
+    adminQuotaAvailable.value = true
+    adminQuotaError.value = extractApiErrorMessage(error) || '加载失败'
+    console.error('获取管理员用户额度列表失败:', error)
+  } finally {
+    adminQuotaLoading.value = false
   }
 }
 
@@ -1160,6 +1368,123 @@ function openAccessKeyDialogFromDirectory(item: FileItem) {
 
 function openAccessKeyDialogFromUserCenter() {
   openAccessKeyDialog('/', false)
+}
+
+function adminUserUsageRate(item: AdminUserItem): number | null {
+  if (!item || item.quota <= 0) return null
+  return item.used_space / item.quota
+}
+
+function formatAdminUserUsage(item: AdminUserItem): string {
+  const rate = adminUserUsageRate(item)
+  if (rate === null) return '-'
+  return `${(rate * 100).toFixed(2)}%`
+}
+
+function adminUserQuotaStatus(item: AdminUserItem): { label: string; type: 'info' | 'warning' | 'danger' | 'success' } {
+  const rate = adminUserUsageRate(item)
+  if (rate === null) {
+    return { label: '不限额', type: 'info' }
+  }
+  if (item.used_space > item.quota) {
+    return { label: '已超额', type: 'danger' }
+  }
+  if (rate >= 0.8) {
+    return { label: '接近上限', type: 'warning' }
+  }
+  return { label: '正常', type: 'success' }
+}
+
+function quotaUnitMultiplier(unit: 'B' | 'KB' | 'MB' | 'GB' | 'TB'): number {
+  switch (unit) {
+    case 'KB':
+      return 1024
+    case 'MB':
+      return 1024 * 1024
+    case 'GB':
+      return 1024 * 1024 * 1024
+    case 'TB':
+      return 1024 * 1024 * 1024 * 1024
+    default:
+      return 1
+  }
+}
+
+function normalizeQuotaEditor(quota: number): { value: string; unit: 'B' | 'KB' | 'MB' | 'GB' | 'TB' } {
+  if (quota <= 0) {
+    return { value: '0', unit: 'GB' }
+  }
+  const units: Array<'TB' | 'GB' | 'MB' | 'KB' | 'B'> = ['TB', 'GB', 'MB', 'KB', 'B']
+  for (const unit of units) {
+    const multiplier = quotaUnitMultiplier(unit)
+    if (quota >= multiplier && quota % multiplier === 0) {
+      return { value: String(quota / multiplier), unit }
+    }
+  }
+  return { value: String(quota), unit: 'B' }
+}
+
+const adminQuotaPreviewBytes = computed(() => {
+  const raw = adminQuotaEditValue.value.trim()
+  if (raw === '' || !/^\d+$/.test(raw)) return null
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 0) return null
+  const bytes = value * quotaUnitMultiplier(adminQuotaEditUnit.value)
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return null
+  return bytes
+})
+
+function openAdminQuotaDialog(item: AdminUserItem) {
+  adminQuotaEditTarget.value = item
+  const normalized = normalizeQuotaEditor(item.quota)
+  adminQuotaEditValue.value = normalized.value
+  adminQuotaEditUnit.value = normalized.unit
+  adminQuotaDialogVisible.value = true
+}
+
+function closeAdminQuotaDialog() {
+  adminQuotaDialogVisible.value = false
+  adminQuotaSubmitting.value = false
+  adminQuotaEditTarget.value = null
+  adminQuotaEditValue.value = ''
+  adminQuotaEditUnit.value = 'GB'
+}
+
+async function submitAdminQuotaUpdate() {
+  const target = adminQuotaEditTarget.value
+  if (!target) return
+  const raw = adminQuotaEditValue.value.trim()
+  if (raw === '') {
+    showError('请输入额度值')
+    return
+  }
+  if (!/^\d+$/.test(raw)) {
+    showError('额度必须是大于等于 0 的整数')
+    return
+  }
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 0) {
+    showError('额度值无效，请输入安全整数')
+    return
+  }
+  const multiplier = quotaUnitMultiplier(adminQuotaEditUnit.value)
+  const quota = value * multiplier
+  if (!Number.isSafeInteger(quota) || quota < 0) {
+    showError('换算后的额度值过大，请调整后重试')
+    return
+  }
+
+  adminQuotaSubmitting.value = true
+  try {
+    await adminUserApi.updateQuota(target.username, quota)
+    showSuccess('用户额度已更新')
+    closeAdminQuotaDialog()
+    await fetchAdminUsers()
+  } catch (error) {
+    showError(extractApiErrorMessage(error) || '更新用户额度失败')
+  } finally {
+    adminQuotaSubmitting.value = false
+  }
 }
 
 async function submitAccessKey() {
@@ -1501,7 +1826,8 @@ async function savePreview() {
         body: formData
       })
       if (!response.ok) {
-        throw new Error(`保存失败: ${response.status}`)
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `保存失败: ${response.status}`))
       }
       previewOrigin.value = previewContent.value
       showSuccess('已保存')
@@ -1516,7 +1842,8 @@ async function savePreview() {
         body: previewContent.value
       })
       if (!response.ok) {
-        throw new Error(`保存失败: ${response.status}`)
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `保存失败: ${response.status}`))
       }
       previewOrigin.value = previewContent.value
       showSuccess('已保存')
@@ -1524,7 +1851,7 @@ async function savePreview() {
     }
   } catch (error: any) {
     console.error('保存文件失败:', error)
-    showError(error?.message || '保存失败')
+    showError(errorMessageFromUnknown(error, '保存失败'))
   } finally {
     previewSaving.value = false
   }
@@ -1611,7 +1938,13 @@ async function refreshCurrentView() {
         await fetchSharedWithMe()
       }
     } else if (showQuotaManage.value) {
-      await fetchUserCenter()
+      if (managementSection.value === 'addressBook') {
+        await addressBookStore.fetchAddressBook()
+      } else if (managementSection.value === 'uploadTasks') {
+        return
+      } else {
+        await fetchUserCenter()
+      }
     } else if (showAddressBook.value) {
       await addressBookStore.fetchAddressBook()
     } else {
@@ -1885,7 +2218,8 @@ async function submitRename() {
       })
 
       if (!response.ok) {
-        throw new Error(`重命名失败: ${response.status}`)
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `重命名失败: ${response.status}`))
       }
       await fetchFiles(currentPath.value)
     } else {
@@ -1898,7 +2232,7 @@ async function submitRename() {
     renameDialogVisible.value = false
   } catch (error: any) {
     console.error('重命名失败:', error)
-    showError(error?.message || '重命名失败')
+    showError(errorMessageFromUnknown(error, '重命名失败'))
   } finally {
     renameSubmitting.value = false
   }
@@ -1982,7 +2316,8 @@ async function ensureDirectories(path: string, ensured: Set<string>, token: stri
       ensured.add(current)
       continue
     }
-    throw new Error(`创建目录失败: ${response.status}`)
+    const text = (await response.text()).trim()
+    throw new Error(normalizeUserFacingErrorMessage(text, `创建目录失败: ${response.status}`))
   }
 }
 
@@ -2140,10 +2475,11 @@ function uploadFileWithProgress(
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve()
       } else {
-        reject(new Error(`上传失败: ${xhr.status}`))
+        const rawMessage = xhr.responseText?.trim() || `上传失败: ${xhr.status}`
+        reject(new Error(normalizeUserFacingErrorMessage(rawMessage, `上传失败: ${xhr.status}`)))
       }
     }
-    xhr.onerror = () => reject(new Error('上传失败'))
+    xhr.onerror = () => reject(new Error(normalizeUserFacingErrorMessage('上传失败', '上传失败')))
     if (useMultipart) {
       const formData = new FormData()
       formData.append('file', file)
@@ -2177,7 +2513,7 @@ async function performUploadTask(task: UploadTask) {
     })
     updateUploadTask(task, { status: 'success', progress: 100 })
   } catch (error: any) {
-    updateUploadTask(task, { status: 'failed', error: error?.message || '上传失败' })
+    updateUploadTask(task, { status: 'failed', error: errorMessageFromUnknown(error, '上传失败') })
   }
 }
 
@@ -2524,14 +2860,14 @@ async function moveFileToDirectoryPath(source: FileItem, targetPath: string) {
         throw new Error('目标目录中已存在同名文件或目录')
       }
       const text = (await response.text()).trim()
-      throw new Error(text || `移动失败: ${response.status}`)
+      throw new Error(normalizeUserFacingErrorMessage(text, `移动失败: ${response.status}`))
     }
 
     await fetchFiles(currentPath.value)
     showSuccess(`已移动到 ${targetDirPath}`)
   } catch (error: any) {
     console.error('拖拽移动失败:', error)
-    showError(error?.message || '移动失败')
+    showError(errorMessageFromUnknown(error, '移动失败'))
   } finally {
     movingByDrag.value = false
   }
@@ -2759,6 +3095,11 @@ function handleFileSelectionChange(rows: FileItem[]) {
   selectedFileRows.value = rows
 }
 
+function clearSelectedFiles() {
+  selectedFileRows.value = []
+  fileSelectionNonce.value += 1
+}
+
 function buildBatchShareRevokePlan(
   items: FileItem[],
   linkShares: ShareItem[],
@@ -2857,6 +3198,7 @@ async function deleteSelectedFiles() {
   }
 
   selectedFileRows.value = []
+  fileSelectionNonce.value += 1
   fetchFiles(currentPath.value)
   if (failedCount > 0) {
     showError(`批量删除完成：成功 ${deletedCount} 项，失败 ${failedCount} 项`)
@@ -2911,10 +3253,17 @@ async function deleteSharedItem(item: FileItem) {
 async function fetchRecycle() {
   recycleLoading.value = true
   try {
-    const data = await recycleApi.list()
-    recycleList.value = data.items
+    const data = await recycleApi.list({
+      page: recyclePage.value,
+      pageSize: recyclePageSize,
+      search: recycleSearch.value
+    })
+    recycleList.value = Array.isArray(data.items) ? data.items : []
+    recycleTotal.value = Number(data.total || 0)
   } catch (error) {
     console.error('获取回收站失败:', error)
+    recycleList.value = []
+    recycleTotal.value = 0
   } finally {
     recycleLoading.value = false
   }
@@ -2923,6 +3272,7 @@ async function fetchRecycle() {
 // 进入回收站
 function enterRecycle() {
   detailDrawerVisible.value = false
+  recyclePage.value = 1
   showRecycle.value = true
   showShare.value = false
   showSharedWithMe.value = false
@@ -2972,6 +3322,11 @@ function toggleSidePanel() {
 
 function backToFiles() {
   enterFiles(resolveInitialFilePath(currentPath.value))
+}
+
+function syncViewportMode() {
+  if (typeof window === 'undefined') return
+  isMobileViewport.value = window.innerWidth <= 768
 }
 
 // 恢复文件
@@ -3103,6 +3458,11 @@ function enterShare(type: 'link' | 'direct' = shareTab.value) {
   }
 }
 
+function switchShareTab(type: 'link' | 'direct') {
+  if (shareTab.value === type && showShare.value) return
+  enterShare(type)
+}
+
 // 进入共享的目录
 function enterSharedRoot(item: DirectShareItem) {
   if (!item.isDir) return
@@ -3136,6 +3496,21 @@ function backToSharedList() {
   persistView('shareDirect')
   clearSharedState()
   fetchDirectShareList()
+}
+
+function enterSharedWithMeList() {
+  detailDrawerVisible.value = false
+  showSharedWithMe.value = true
+  showShare.value = false
+  showRecycle.value = false
+  showQuotaManage.value = false
+  showAddressBook.value = false
+  showUploadTasks.value = false
+  sharedActive.value = null
+  sharedPath.value = '/'
+  persistView('sharedWithMe')
+  clearSharedState()
+  fetchSharedWithMe()
 }
 
 // 取消分享
@@ -3276,9 +3651,10 @@ function enterAddressBook() {
   addressBookStore.fetchAddressBook()
 }
 
-// 进入个人中心
-function enterQuotaManage() {
+// 进入账户管理
+function enterQuotaManage(section: 'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks' = 'account') {
   detailDrawerVisible.value = false
+  managementSection.value = section
   showQuotaManage.value = true
   showShare.value = false
   showRecycle.value = false
@@ -3288,6 +3664,13 @@ function enterQuotaManage() {
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('quotaManage')
+  if (section === 'addressBook') {
+    addressBookStore.fetchAddressBook()
+    return
+  }
+  if (section === 'uploadTasks') {
+    return
+  }
   fetchUserCenter()
 }
 
@@ -3322,6 +3705,10 @@ async function exitUploadTasks() {
     return
   }
   enterFiles(uploadTasksReturnPath.value || currentPath.value)
+}
+
+function clearFinishedUploadTasks() {
+  uploadTasks.value = uploadTasks.value.filter(task => task.status !== 'success')
 }
 
 function openUploadTaskLocation(task: UploadTask) {
@@ -3382,7 +3769,8 @@ async function createFolderWithName(name: string) {
     }
     return
   }
-  throw new Error(`创建失败: ${response.status}`)
+  const text = (await response.text()).trim()
+  throw new Error(normalizeUserFacingErrorMessage(text, `创建失败: ${response.status}`))
 }
 
 async function createSharedFolderWithName(name: string) {
@@ -3415,7 +3803,7 @@ async function submitCreateFolder() {
     createFolderDialogVisible.value = false
   } catch (error: any) {
     console.error('创建失败:', error)
-    showError(error?.message || '创建失败')
+    showError(errorMessageFromUnknown(error, '创建失败'))
   } finally {
     createFolderSubmitting.value = false
   }
@@ -3580,6 +3968,22 @@ watch(filteredFileList, rows => {
   selectedFileRows.value = selectedFileRows.value.filter(item => visiblePaths.has(item.path))
 })
 
+watch(recyclePage, () => {
+  if (showRecycle.value) {
+    void fetchRecycle()
+  }
+})
+
+watch(recycleSearch, () => {
+  if (recyclePage.value !== 1) {
+    recyclePage.value = 1
+    return
+  }
+  if (showRecycle.value) {
+    void fetchRecycle()
+  }
+})
+
 watch(currentPath, () => {
   selectedFileRows.value = []
 })
@@ -3628,6 +4032,8 @@ onMounted(() => {
   } catch {
     sidePanelCollapsed.value = false
   }
+  syncViewportMode()
+  window.addEventListener('resize', syncViewportMode, { passive: true })
 })
 
 onMounted(() => {
@@ -3692,6 +4098,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncViewportMode)
   stopAccountWatch?.()
   clearEmailCodeTimer()
 })
@@ -3862,7 +4269,7 @@ onBeforeUnmount(() => {
 
         <div class="nav-block">
           <div class="nav-group">
-            <div class="nav-group-title" v-show="!sidePanelCollapsed">资产类型</div>
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">我的资产</div>
             <div class="asset-nav-list" v-if="assetSpaces.length">
               <el-tooltip
                 v-for="space in assetSpaces"
@@ -3885,88 +4292,106 @@ onBeforeUnmount(() => {
                   </div>
                 </button>
               </el-tooltip>
-            </div>
-          </div>
-
-          <div class="nav-group">
-            <div class="nav-group-title" v-show="!sidePanelCollapsed">共享协作</div>
-            <div class="nav-list">
-              <el-tooltip content="下载链接" placement="right" :disabled="!sidePanelCollapsed">
-                <button
-                  type="button"
-                  class="nav-item"
-                  :class="{ active: showShare && shareTab === 'link' }"
-                  @click="enterShare('link')"
-                >
-                  <el-icon class="nav-icon"><DocumentCopy /></el-icon>
-                  <span v-show="!sidePanelCollapsed">下载链接</span>
-                </button>
-              </el-tooltip>
-              <el-tooltip content="定向分享" placement="right" :disabled="!sidePanelCollapsed">
-                <button
-                  type="button"
-                  class="nav-item"
-                  :class="{ active: showShare && shareTab === 'direct' }"
-                  @click="enterShare('direct')"
-                >
-                  <el-icon class="nav-icon"><Share /></el-icon>
-                  <span v-show="!sidePanelCollapsed">定向分享</span>
-                </button>
-              </el-tooltip>
-            </div>
-          </div>
-
-          <div class="nav-group">
-            <div class="nav-group-title" v-show="!sidePanelCollapsed">系统工具</div>
-            <div class="nav-list">
-              <el-tooltip content="上传任务" placement="right" :disabled="!sidePanelCollapsed">
-                <button
-                  type="button"
-                  class="nav-item"
-                  :class="{ active: showUploadTasks }"
-                  @click="enterUploadTasks()"
-                >
-                  <el-icon class="nav-icon"><Upload /></el-icon>
-                  <span v-show="!sidePanelCollapsed">上传任务</span>
-                </button>
-              </el-tooltip>
               <el-tooltip content="回收站" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
-                  class="nav-item"
+                  class="asset-nav-item"
                   :class="{ active: showRecycle }"
                   @click="enterRecycle"
                 >
-                  <el-icon class="nav-icon"><Delete /></el-icon>
-                  <span v-show="!sidePanelCollapsed">回收站</span>
+                  <div class="asset-nav-main">
+                    <el-icon class="nav-icon"><Delete /></el-icon>
+                    <span v-show="!sidePanelCollapsed">回收站</span>
+                  </div>
                 </button>
               </el-tooltip>
             </div>
           </div>
 
           <div class="nav-group">
-            <div class="nav-group-title" v-show="!sidePanelCollapsed">账户管理</div>
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">分享与协作</div>
             <div class="nav-list">
-              <el-tooltip content="个人中心" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="分享" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
-                  :class="{ active: showQuotaManage }"
-                  @click="enterQuotaManage"
+                  :class="{ active: showShare }"
+                  @click="enterShare()"
                 >
-                  <el-icon class="nav-icon"><User /></el-icon>
-                  <span v-show="!sidePanelCollapsed">个人中心</span>
+                  <el-icon class="nav-icon"><Share /></el-icon>
+                  <span v-show="!sidePanelCollapsed">分享</span>
                 </button>
               </el-tooltip>
-              <el-tooltip content="我的好友" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="收到的分享" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
-                  :class="{ active: showAddressBook }"
-                  @click="enterAddressBook"
+                  :class="{ active: showSharedWithMe }"
+                  @click="enterSharedWithMeList"
+                >
+                  <el-icon class="nav-icon"><DocumentCopy /></el-icon>
+                  <span v-show="!sidePanelCollapsed">收到的分享</span>
+                </button>
+              </el-tooltip>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">管理</div>
+            <div class="nav-list">
+              <el-tooltip content="个人资料" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showQuotaManage && managementSection === 'account' }"
+                  @click="enterQuotaManage('account')"
+                >
+                  <el-icon class="nav-icon"><User /></el-icon>
+                  <span v-show="!sidePanelCollapsed">个人资料</span>
+                </button>
+              </el-tooltip>
+              <el-tooltip content="访问密钥" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showQuotaManage && managementSection === 'keys' }"
+                  @click="enterQuotaManage('keys')"
+                >
+                  <el-icon class="nav-icon"><DocumentCopy /></el-icon>
+                  <span v-show="!sidePanelCollapsed">访问密钥</span>
+                </button>
+              </el-tooltip>
+              <el-tooltip v-if="adminQuotaAvailable" content="用户额度" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showQuotaManage && managementSection === 'adminQuota' }"
+                  @click="enterQuotaManage('adminQuota')"
+                >
+                  <el-icon class="nav-icon"><Grid /></el-icon>
+                  <span v-show="!sidePanelCollapsed">用户额度</span>
+                </button>
+              </el-tooltip>
+              <el-tooltip content="联系人" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showQuotaManage && managementSection === 'addressBook' }"
+                  @click="enterQuotaManage('addressBook')"
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
-                  <span v-show="!sidePanelCollapsed">我的好友</span>
+                  <span v-show="!sidePanelCollapsed">联系人</span>
+                </button>
+              </el-tooltip>
+              <el-tooltip content="上传记录" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showQuotaManage && managementSection === 'uploadTasks' }"
+                  @click="enterQuotaManage('uploadTasks')"
+                >
+                  <el-icon class="nav-icon"><Upload /></el-icon>
+                  <span v-show="!sidePanelCollapsed">上传记录</span>
                 </button>
               </el-tooltip>
             </div>
@@ -3985,7 +4410,7 @@ onBeforeUnmount(() => {
           <div v-if="dragActive && canUpload" class="drop-mask">
             <div class="drop-hint">拖拽文件或文件夹到此处上传（支持空目录）</div>
           </div>
-          <div v-if="showListHeader" class="list-header">
+          <div v-if="showListHeader" class="list-header" :class="{ 'list-header-recycle': showRecycle }">
             <div class="list-header-left">
               <div class="path-row">
               <template v-if="showSharedWithMe && sharedActive">
@@ -4027,20 +4452,33 @@ onBeforeUnmount(() => {
                 </el-tooltip>
               </template>
                 <template v-if="showRecycle">
-                  <div class="path-pill">
-                    <span class="path-label">当前位置</span>
-                    <span class="path-value">回收站</span>
-                    <el-tooltip content="复制路径" placement="top">
-                      <button type="button" class="copy-icon" @click="copyCurrentPath">
-                        <el-icon><DocumentCopy /></el-icon>
-                      </button>
-                    </el-tooltip>
+                  <div class="section-title-row">
+                    <span class="section-title">回收站</span>
+                    <span class="section-subtitle">已删除资产可在此恢复或彻底清理</span>
                   </div>
                 </template>
                 <template v-else-if="showShare">
                   <div class="path-pill">
                     <span class="path-label">当前位置</span>
-                    <span class="path-value">{{ shareTab === 'link' ? '下载链接' : '定向分享' }}</span>
+                    <span class="path-value">分享</span>
+                  </div>
+                  <div class="view-segment">
+                    <button
+                      type="button"
+                      class="segment-button"
+                      :class="{ active: shareTab === 'link' }"
+                      @click="switchShareTab('link')"
+                    >
+                      链接分享
+                    </button>
+                    <button
+                      type="button"
+                      class="segment-button"
+                      :class="{ active: shareTab === 'direct' }"
+                      @click="switchShareTab('direct')"
+                    >
+                      指定对象分享
+                    </button>
                   </div>
                 </template>
                 <template v-else-if="showSharedWithMe">
@@ -4280,36 +4718,42 @@ onBeforeUnmount(() => {
                 <template v-else-if="showUploadTasks">
                 </template>
                 <template v-else>
-                  <el-tooltip content="新建文件夹" placement="top">
-                    <el-button circle type="primary" :icon="FolderAdd" @click="createFolder" />
-                  </el-tooltip>
-                  <el-tooltip content="上传文件" placement="top">
-                    <el-button circle type="primary" :icon="Upload" @click="triggerUpload" />
-                  </el-tooltip>
-                  <el-tooltip content="上传目录" placement="top">
-                    <el-button circle type="primary" :icon="FolderOpened" @click="triggerDirectoryUpload" />
-                  </el-tooltip>
-                  <el-tooltip :content="selectedFileCount > 0 ? `删除已选 ${selectedFileCount} 项` : '先勾选要删除的资产'" placement="top">
-                    <el-button
-                      type="danger"
-                      circle
-                      :disabled="selectedFileCount === 0 || loading"
-                      @click="deleteSelectedFiles"
-                    >
-                      <el-icon><Delete /></el-icon>
-                    </el-button>
-                  </el-tooltip>
-                  <el-tooltip content="刷新" placement="top">
-                    <el-button
-                      class="refresh-button"
-                      circle
-                      :disabled="loading"
-                      :class="{ 'is-refreshing': loading }"
-                      @click="refreshCurrentView"
-                    >
-                      <el-icon><Refresh /></el-icon>
-                    </el-button>
-                  </el-tooltip>
+                  <div class="action-cluster">
+                    <span class="action-cluster-label">新建与上传</span>
+                    <el-tooltip content="新建文件夹" placement="top">
+                      <el-button circle type="primary" :icon="FolderAdd" @click="createFolder" />
+                    </el-tooltip>
+                    <el-tooltip content="上传文件" placement="top">
+                      <el-button circle type="primary" :icon="Upload" @click="triggerUpload" />
+                    </el-tooltip>
+                    <el-tooltip content="上传目录" placement="top">
+                      <el-button circle type="primary" :icon="FolderOpened" @click="triggerDirectoryUpload" />
+                    </el-tooltip>
+                  </div>
+                  <div class="action-cluster action-cluster-subtle">
+                    <span class="action-cluster-label">批量与状态</span>
+                    <el-tooltip :content="selectedFileCount > 0 ? `删除已选 ${selectedFileCount} 项` : '先勾选要删除的资产'" placement="top">
+                      <el-button
+                        type="danger"
+                        circle
+                        :disabled="selectedFileCount === 0 || loading"
+                        @click="deleteSelectedFiles"
+                      >
+                        <el-icon><Delete /></el-icon>
+                      </el-button>
+                    </el-tooltip>
+                    <el-tooltip content="刷新" placement="top">
+                      <el-button
+                        class="refresh-button"
+                        circle
+                        :disabled="loading"
+                        :class="{ 'is-refreshing': loading }"
+                        @click="refreshCurrentView"
+                      >
+                        <el-icon><Refresh /></el-icon>
+                      </el-button>
+                    </el-tooltip>
+                  </div>
                   <input
                     ref="fileInput"
                     type="file"
@@ -4332,7 +4776,50 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="showQuotaManage" class="content-body content-scroll" v-loading="quotaManageLoading && !manualRefresh">
             <div class="user-center">
-              <div class="user-card">
+              <div class="view-segment management-segment">
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ active: managementSection === 'account' }"
+                  @click="managementSection = 'account'"
+                >
+                  账户
+                </button>
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ active: managementSection === 'keys' }"
+                  @click="managementSection = 'keys'"
+                >
+                  密钥
+                </button>
+                <button
+                  v-if="adminQuotaAvailable"
+                  type="button"
+                  class="segment-button"
+                  :class="{ active: managementSection === 'adminQuota' }"
+                  @click="managementSection = 'adminQuota'"
+                >
+                  用户额度
+                </button>
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ active: managementSection === 'addressBook' }"
+                  @click="enterQuotaManage('addressBook')"
+                >
+                  好友
+                </button>
+                <button
+                  type="button"
+                  class="segment-button"
+                  :class="{ active: managementSection === 'uploadTasks' }"
+                  @click="enterQuotaManage('uploadTasks')"
+                >
+                  上传任务
+                </button>
+              </div>
+              <div v-if="managementSection === 'account'" class="user-card">
                 <div class="card-head">
                   <div class="card-title">基础信息</div>
                   <el-tooltip content="刷新" placement="top">
@@ -4420,7 +4907,7 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-              <div class="user-card">
+              <div v-if="managementSection === 'account'" class="user-card" :class="`quota-card quota-card-${quotaAlertState.level}`">
                 <div class="card-title">当前额度</div>
                 <div class="quota-value">
                   <span>{{ formatSize(quota.used) }}</span>
@@ -4431,11 +4918,21 @@ onBeforeUnmount(() => {
                   v-if="!quota.unlimited"
                   :percentage="Math.min(Number(quota.percentage.toFixed(2)), 100)"
                   :stroke-width="8"
+                  :status="quotaAlertState.level === 'danger' ? 'exception' : undefined"
                 />
                 <div class="quota-meta">
                   <span v-if="quota.unlimited">未设置上限</span>
                   <span v-else>已使用 {{ quota.percentage.toFixed(2) }}%</span>
+                  <el-tag size="small" :type="quotaAlertState.level === 'danger' ? 'danger' : quotaAlertState.level === 'warning' ? 'warning' : 'info'">
+                    {{ quotaAlertState.label }}
+                  </el-tag>
                 </div>
+                <el-alert
+                  :type="quotaAlertState.level === 'danger' ? 'error' : quotaAlertState.level"
+                  :closable="false"
+                  show-icon
+                  :title="quotaAlertState.message"
+                />
                 <div class="quota-grid">
                   <div class="quota-item">
                     <span class="quota-label">已使用</span>
@@ -4457,7 +4954,85 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-              <div class="user-card user-card-full" v-loading="accessKeyLoading">
+              <div
+                v-if="adminQuotaAvailable && managementSection === 'adminQuota'"
+                class="user-card user-card-full"
+                v-loading="adminQuotaLoading"
+              >
+                <div class="card-head">
+                  <div class="card-title">用户额度概览</div>
+                  <div class="user-actions">
+                    <el-select v-model="adminQuotaFilter" size="small" class="admin-quota-filter">
+                      <el-option label="全部用户" value="all" />
+                      <el-option label="不限额" value="unlimited" />
+                      <el-option label="接近上限" value="near_limit" />
+                      <el-option label="已超额" value="over_quota" />
+                    </el-select>
+                    <el-button size="small" @click="fetchAdminUsers">刷新</el-button>
+                  </div>
+                </div>
+                <div class="key-summary">
+                  <span>总用户：{{ adminQuotaSummary.total }}</span>
+                  <span>已设上限：{{ adminQuotaSummary.limited }}</span>
+                  <span>不限额：{{ adminQuotaSummary.unlimited }}</span>
+                  <span>接近上限：{{ adminQuotaSummary.nearLimit }}</span>
+                  <span>已超额：{{ adminQuotaSummary.overQuota }}</span>
+                </div>
+                <el-alert
+                  :type="adminQuotaHeadline.type"
+                  :closable="false"
+                  show-icon
+                  :title="adminQuotaHeadline.title"
+                />
+                <el-alert
+                  v-if="adminQuotaError"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  :title="`用户额度列表加载失败：${adminQuotaError}`"
+                />
+                <el-empty
+                  v-else-if="!adminQuotaLoading && !filteredAdminUsers.length"
+                  description="当前筛选条件下暂无用户"
+                />
+                <el-table
+                  v-else
+                  :data="filteredAdminUsers"
+                  class="admin-quota-table"
+                  max-height="320"
+                  size="small"
+                >
+                  <el-table-column prop="username" label="用户名" min-width="140" />
+                  <el-table-column label="已使用" min-width="120">
+                    <template #default="{ row }">
+                      {{ formatSize(row.used_space) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="总额度" min-width="120">
+                    <template #default="{ row }">
+                      {{ row.quota > 0 ? formatSize(row.quota) : '无限' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="使用率" min-width="110">
+                    <template #default="{ row }">
+                      {{ formatAdminUserUsage(row) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" min-width="110">
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="adminUserQuotaStatus(row).type">
+                        {{ adminUserQuotaStatus(row).label }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="120" align="left" header-align="left">
+                    <template #default="{ row }">
+                      <el-button size="small" @click="openAdminQuotaDialog(row)">修改额度</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+              <div v-if="managementSection === 'keys'" class="user-card user-card-full" v-loading="accessKeyLoading">
                 <div class="card-head">
                   <div class="card-title">访问密钥</div>
                   <div class="user-actions">
@@ -4526,6 +5101,43 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
+              <div v-if="managementSection === 'addressBook'" class="user-card user-card-full" v-loading="addressBookLoading && !manualRefresh">
+                <div class="card-head">
+                  <div class="card-title">好友</div>
+                  <div class="user-actions">
+                    <el-button size="small" @click="addressBookStore.fetchAddressBook()">刷新</el-button>
+                  </div>
+                </div>
+                <div class="key-summary">
+                  <span>联系人：{{ addressBookStore.addressGroupCounts.total }}</span>
+                  <span>分组：{{ addressBookStore.addressGroups.length }}</span>
+                  <span>未分组：{{ addressBookStore.addressGroupCounts.ungrouped }}</span>
+                </div>
+                <AddressBookView embedded @refresh="refreshCurrentView" />
+              </div>
+              <div v-if="managementSection === 'uploadTasks'" class="user-card user-card-full">
+                <div class="card-head">
+                  <div class="card-title">上传任务</div>
+                  <div class="user-actions">
+                    <el-button size="small" @click="clearFinishedUploadTasks">清理已完成</el-button>
+                  </div>
+                </div>
+                <div class="key-summary">
+                  <span>总数：{{ uploadTaskSummary.total }}</span>
+                  <span>等待中：{{ uploadTaskSummary.queued }}</span>
+                  <span>上传中：{{ uploadTaskSummary.uploading }}</span>
+                  <span>已完成：{{ uploadTaskSummary.success }}</span>
+                  <span>失败：{{ uploadTaskSummary.failed }}</span>
+                </div>
+                <UploadTaskListView
+                  :is-mobile="isMobileViewport"
+                  :tasks="uploadTasks"
+                  :format-size="formatSize"
+                  :format-time="formatTime"
+                  :retry-task="retryUploadTask"
+                  :open-task-location="openUploadTaskLocation"
+                />
+              </div>
             </div>
           </div>
           <div v-else-if="showAddressBook" class="content-body content-scroll" v-loading="addressBookLoading && !manualRefresh">
@@ -4533,6 +5145,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="showUploadTasks" class="content-body table-wrapper">
             <UploadTaskListView
+              :is-mobile="isMobileViewport"
               :tasks="uploadTasks"
               :format-size="formatSize"
               :format-time="formatTime"
@@ -4541,20 +5154,59 @@ onBeforeUnmount(() => {
             />
           </div>
           <div v-else class="content-body table-wrapper">
-            <RecycleTableView
-              v-if="showRecycle"
-              :rows="filteredRecycleList"
-              :loading="recycleLoading && !manualRefresh"
-              :on-row-click="handleRowClick"
-              :format-recycle-full-path="formatRecycleFullPath"
-              :format-recycle-location="formatRecycleLocation"
-              :format-size="formatSize"
-              :format-deleted-time="formatDeletedTime"
-              :recover-file="recoverFile"
-              :permanently-delete="permanentlyDelete"
-            />
+            <div v-if="shareViewSummary" class="view-summary-bar">
+              <div class="view-summary-title">{{ shareViewSummary.title }}</div>
+              <div class="view-summary-text">{{ shareViewSummary.description }}</div>
+            </div>
+            <div v-if="selectedFileCount > 0" class="selection-summary-bar">
+              <div class="selection-summary-main">
+                <span class="selection-summary-title">已进入批量操作模式</span>
+                <span class="selection-summary-text">{{ fileSelectionSummaryText }}</span>
+              </div>
+              <div class="selection-summary-actions">
+                <el-button size="small" @click="clearSelectedFiles">取消选择</el-button>
+                <el-button size="small" type="danger" :disabled="loading" @click="deleteSelectedFiles">删除已选</el-button>
+              </div>
+            </div>
+            <template v-if="showRecycle">
+              <section class="recycle-panel">
+                <div class="recycle-summary-bar">
+                  <div class="recycle-summary-main">
+                    <span class="recycle-summary-title">删除记录</span>
+                    <span class="recycle-summary-text">按删除时间倒序展示，可恢复或彻底删除。</span>
+                  </div>
+                  <div class="recycle-summary-meta">
+                    <span class="recycle-summary-chip">当前 {{ filteredRecycleList.length }} 项</span>
+                    <span class="recycle-summary-chip">总计 {{ recycleTotal }} 项</span>
+                  </div>
+                </div>
+                <RecycleTableView
+                  :is-mobile="isMobileViewport"
+                  :rows="filteredRecycleList"
+                  :loading="recycleLoading && !manualRefresh"
+                  :on-row-click="handleRowClick"
+                  :format-recycle-full-path="formatRecycleFullPath"
+                  :format-recycle-location="formatRecycleLocation"
+                  :format-size="formatSize"
+                  :format-deleted-time="formatDeletedTime"
+                  :recover-file="recoverFile"
+                  :permanently-delete="permanentlyDelete"
+                />
+                <div v-if="recycleTotal > recyclePageSize" class="table-pagination recycle-pagination">
+                  <el-pagination
+                    v-model:current-page="recyclePage"
+                    :page-size="recyclePageSize"
+                    layout="prev, pager, next, total"
+                    :total="recycleTotal"
+                    small
+                    background
+                  />
+                </div>
+              </section>
+            </template>
             <ShareTableView
               v-else-if="showShare"
+              :is-mobile="isMobileViewport"
               :share-tab="shareTab"
               :share-list="filteredShareList"
               :direct-share-list="filteredDirectShareList"
@@ -4571,6 +5223,7 @@ onBeforeUnmount(() => {
             />
             <SharedWithMeTableView
               v-else-if="showSharedWithMe"
+              :is-mobile="isMobileViewport"
               :shared-active="sharedActive"
               :shared-with-me-list="filteredSharedWithMeList"
               :shared-entries="filteredSharedEntries"
@@ -4602,6 +5255,7 @@ onBeforeUnmount(() => {
             />
             <FileTableView
               v-else
+              :is-mobile="isMobileViewport"
               :rows="filteredFileList"
               :loading="loading && !manualRefresh"
               :on-row-click="handleRowClick"
@@ -4626,6 +5280,7 @@ onBeforeUnmount(() => {
               :open-access-key-dialog="openAccessKeyDialogFromDirectory"
               :rename-item="renameItem"
               :delete-file="deleteFile"
+              :selection-nonce="fileSelectionNonce"
             />
           </div>
         </section>
@@ -4842,6 +5497,47 @@ onBeforeUnmount(() => {
           <el-button v-if="!accessKeyScopeLocked" type="primary" :loading="accessKeySubmitting" @click="submitAccessKey">创建密钥</el-button>
         </template>
       </el-dialog>
+      <el-dialog
+        v-model="adminQuotaDialogVisible"
+        title="修改用户额度"
+        width="420px"
+        @closed="closeAdminQuotaDialog"
+      >
+        <div class="admin-quota-dialog">
+          <div v-if="adminQuotaEditTarget" class="admin-quota-target">
+            <div class="admin-quota-target-name">{{ adminQuotaEditTarget.username }}</div>
+            <div class="admin-quota-target-meta">
+              已使用 {{ formatSize(adminQuotaEditTarget.used_space) }}，当前上限
+              {{ adminQuotaEditTarget.quota > 0 ? formatSize(adminQuotaEditTarget.quota) : '无限' }}
+            </div>
+          </div>
+          <el-form label-position="top">
+            <el-form-item label="额度">
+              <div class="admin-quota-input-row">
+                <el-input v-model="adminQuotaEditValue" placeholder="输入 0 表示不限额" />
+                <el-select v-model="adminQuotaEditUnit" class="admin-quota-input-unit">
+                  <el-option label="B" value="B" />
+                  <el-option label="KB" value="KB" />
+                  <el-option label="MB" value="MB" />
+                  <el-option label="GB" value="GB" />
+                  <el-option label="TB" value="TB" />
+                </el-select>
+              </div>
+            </el-form-item>
+          </el-form>
+          <div v-if="adminQuotaPreviewBytes !== null" class="admin-quota-preview">
+            <span class="admin-quota-preview-label">换算预览</span>
+            <span class="admin-quota-preview-value">
+              {{ adminQuotaPreviewBytes === 0 ? '不限额（保存为 0 字节）' : `${adminQuotaPreviewBytes} 字节（约 ${formatSize(adminQuotaPreviewBytes)}）` }}
+            </span>
+          </div>
+          <div class="share-group-meta">请输入大于等于 0 的整数，`0` 表示不限额。保存时会自动换算为字节。</div>
+        </div>
+        <template #footer>
+          <el-button @click="closeAdminQuotaDialog">取消</el-button>
+          <el-button type="primary" :loading="adminQuotaSubmitting" @click="submitAdminQuotaUpdate">保存</el-button>
+        </template>
+      </el-dialog>
       <FilePreviewDialog
         v-model="previewVisible"
         v-model:content="previewContent"
@@ -4881,20 +5577,11 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="mobile-nav-item"
-          :class="{ active: showShare && shareTab === 'link' }"
+          :class="{ active: showShare || showSharedWithMe }"
           @click="enterShare('link')"
         >
-          <el-icon><DocumentCopy /></el-icon>
-          <span>下载</span>
-        </button>
-        <button
-          type="button"
-          class="mobile-nav-item"
-          :class="{ active: showShare && shareTab === 'direct' }"
-          @click="enterShare('direct')"
-        >
           <el-icon><Share /></el-icon>
-          <span>定向</span>
+          <span>分享</span>
         </button>
         <button
           type="button"
@@ -4904,6 +5591,15 @@ onBeforeUnmount(() => {
         >
           <el-icon><Delete /></el-icon>
           <span>回收</span>
+        </button>
+        <button
+          type="button"
+          class="mobile-nav-item"
+          :class="{ active: isManagementView }"
+          @click="enterQuotaManage('account')"
+        >
+          <el-icon><User /></el-icon>
+          <span>管理</span>
         </button>
       </nav>
     </div>
@@ -5470,6 +6166,38 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.view-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #f5f7fa;
+}
+
+.segment-button {
+  border: none;
+  background: transparent;
+  color: #606266;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.segment-button:hover {
+  color: #1f2d3d;
+  background: rgba(64, 158, 255, 0.1);
+}
+
+.segment-button.active {
+  background: #fff;
+  color: #1c4fb8;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.16);
+}
+
 .path-label {
   color: #909399;
 }
@@ -5549,6 +6277,10 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid #eef1f4;
 }
 
+.list-header-recycle {
+  align-items: center;
+}
+
 .list-header-left {
   flex: 1;
   min-width: 0;
@@ -5568,6 +6300,47 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.section-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
+  line-height: 1.2;
+}
+
+.section-subtitle {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.action-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f4;
+}
+
+.action-cluster-subtle {
+  background: #fff;
+}
+
+.action-cluster-label {
+  font-size: 12px;
+  color: #909399;
+  white-space: nowrap;
 }
 
 .card-head {
@@ -5606,6 +6379,142 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.recycle-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid #eef3f8;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfcfe 0%, #ffffff 88%);
+  overflow: hidden;
+}
+
+.recycle-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #eef3f8;
+  background: rgba(247, 249, 252, 0.8);
+}
+
+.recycle-summary-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.recycle-summary-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f2937;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.recycle-summary-text {
+  font-size: 12px;
+  color: #909399;
+  min-width: 0;
+}
+
+.recycle-summary-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.recycle-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #e6edf5;
+  background: #fff;
+  color: #606266;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.table-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 4px 0;
+}
+
+.recycle-pagination {
+  padding: 10px 14px 12px;
+  border-top: 1px solid #eef3f8;
+  margin-top: 0;
+  background: rgba(251, 252, 254, 0.9);
+}
+
+.selection-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  border: 1px solid #d9ecff;
+  background: #f5faff;
+}
+
+.selection-summary-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.selection-summary-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1c4fb8;
+}
+
+.selection-summary-text {
+  font-size: 12px;
+  color: #606266;
+}
+
+.selection-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.view-summary-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f4;
+}
+
+.view-summary-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.view-summary-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #606266;
+}
+
 .drop-mask {
   position: absolute;
   inset: 8px;
@@ -5633,6 +6542,11 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   padding: 8px;
+}
+
+.management-segment {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .user-card {
@@ -5722,6 +6636,14 @@ onBeforeUnmount(() => {
   gap: 16px;
   font-size: 12px;
   color: #909399;
+}
+
+.admin-quota-filter {
+  width: 140px;
+}
+
+.admin-quota-table {
+  width: 100%;
 }
 
 .key-list {
@@ -5970,6 +6892,68 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
+.admin-quota-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-quota-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-quota-input-row :deep(.el-input) {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-quota-input-unit {
+  width: 110px;
+  flex: 0 0 110px;
+}
+
+.admin-quota-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f4;
+}
+
+.admin-quota-preview-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.admin-quota-preview-value {
+  font-size: 12px;
+  color: #1f2d3d;
+  word-break: break-all;
+}
+
+.admin-quota-target {
+  padding: 12px;
+  border-radius: 12px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f4;
+}
+
+.admin-quota-target-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.admin-quota-target-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #606266;
+}
+
 .quota-value {
   display: flex;
   align-items: baseline;
@@ -5979,12 +6963,30 @@ onBeforeUnmount(() => {
   color: #1f2d3d;
 }
 
+.quota-card {
+  position: relative;
+}
+
+.quota-card-warning {
+  border-color: #f3d19e;
+  box-shadow: 0 10px 24px rgba(230, 162, 60, 0.12);
+}
+
+.quota-card-danger {
+  border-color: #f5c2c7;
+  box-shadow: 0 10px 24px rgba(245, 108, 108, 0.12);
+}
+
 .quota-sep {
   color: #c0c4cc;
   font-weight: 400;
 }
 
 .quota-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   font-size: 12px;
   color: #909399;
 }
@@ -6013,6 +7015,14 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   color: #1f2d3d;
+}
+
+.mobile-bottom-nav {
+  display: none;
+}
+
+.mobile-nav-hint {
+  display: none;
 }
 
 @media (max-width: 1200px) {
@@ -6061,8 +7071,18 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
+  .view-segment {
+    width: 100%;
+    overflow-x: auto;
+  }
+
   .key-item {
     flex-direction: column;
+  }
+
+  .selection-summary-bar {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .key-actions {
@@ -6096,6 +7116,55 @@ onBeforeUnmount(() => {
   .access-key-expiry :deep(.el-select) {
     width: 110px;
     flex-basis: 110px;
+  }
+
+  .mobile-bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    align-items: center;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid #eef1f4;
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(12px);
+  }
+
+  .mobile-nav-hint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    grid-column: 1 / -1;
+    font-size: 12px;
+    color: #909399;
+    padding: 0 4px 2px;
+  }
+
+  .mobile-nav-badge {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: #409eff;
+  }
+
+  .mobile-nav-item {
+    border: none;
+    background: transparent;
+    border-radius: 14px;
+    color: #606266;
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .mobile-nav-item.active {
+    color: #1c4fb8;
+    background: #edf6ff;
+    font-weight: 600;
   }
 }
 

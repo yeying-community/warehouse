@@ -218,6 +218,17 @@ func (r *stubUserRepo) UpdateUsedSpace(ctx context.Context, username string, use
 	return nil
 }
 
+func (r *stubUserRepo) UpdateUsedSpaceDelta(ctx context.Context, username string, delta int64) (int64, error) {
+	u, ok := r.byUsername[username]
+	if !ok {
+		return 0, user.ErrUserNotFound
+	}
+	if err := u.UpdateUsedSpace(u.UsedSpace + delta); err != nil {
+		return 0, err
+	}
+	return u.UsedSpace, nil
+}
+
 func (r *stubUserRepo) UpdateQuota(ctx context.Context, username string, quota int64) error {
 	u, ok := r.byUsername[username]
 	if !ok {

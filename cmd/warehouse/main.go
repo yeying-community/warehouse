@@ -31,6 +31,18 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "quota":
+			if err := runQuotaCommand(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to run quota command: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "recycle":
+			if err := runRecycleCommand(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to run recycle command: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "serve":
 			runServer(os.Args[2:])
 			return
@@ -103,6 +115,9 @@ func runServer(args []string) {
 	}
 	if c.ReplicationWorker != nil && c.ReplicationWorker.Enabled() {
 		startBackground(c.ReplicationWorker.Run)
+	}
+	if c.QuotaReconciler != nil && c.QuotaReconciler.Enabled() {
+		startBackground(c.QuotaReconciler.Run)
 	}
 	if c.InternalReplicationHandler != nil {
 		startBackground(c.InternalReplicationHandler.RunAutoReconcile)
@@ -240,6 +255,8 @@ func printHelp(flags *pflag.FlagSet) {
 	fmt.Println("  warehouse [flags]")
 	fmt.Println("  warehouse serve [flags]")
 	fmt.Println("  warehouse ha <subcommand> [flags]")
+	fmt.Println("  warehouse quota <subcommand> [flags]")
+	fmt.Println("  warehouse recycle <subcommand> [flags]")
 	fmt.Println()
 	fmt.Println("Flags:")
 	flags.PrintDefaults()
@@ -268,6 +285,12 @@ func printHelp(flags *pflag.FlagSet) {
 	fmt.Println()
 	fmt.Println("  # Show HA status")
 	fmt.Println("  warehouse ha status -c config.yaml")
+	fmt.Println()
+	fmt.Println("  # Check quota drift for one user")
+	fmt.Println("  warehouse quota check -c config.yaml --username alice")
+	fmt.Println()
+	fmt.Println("  # Backfill recycle is_dir for historical rows")
+	fmt.Println("  warehouse recycle backfill-is-dir -c config.yaml --dry-run")
 }
 
 func runReadinessCheck(cfg *config.Config) error {

@@ -58,9 +58,18 @@ type RecycleItemResponse struct {
 	IsDir     bool   `json:"isDir"`
 }
 
+type ListOptions struct {
+	Page     int
+	PageSize int
+	Search   string
+}
+
 // ListResponse 列表响应
 type ListResponse struct {
-	Items []*RecycleItemResponse `json:"items"`
+	Items    []*RecycleItemResponse `json:"items"`
+	Total    int                   `json:"total"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"pageSize"`
 }
 
 // AddToRecycle 将文件添加到回收站
@@ -85,7 +94,7 @@ func (s *RecycleService) AddToRecycle(
 	name := filepath.Base(filePath)
 
 	// 创建回收站项目
-	item := recycle.NewRecycleItem(u.ID, u.Username, directory, name, filePath, info.Size())
+	item := recycle.NewRecycleItem(u.ID, u.Username, directory, name, filePath, info.IsDir(), info.Size())
 
 	// 保存到数据库
 	if err := s.recycleRepo.Create(ctx, item); err != nil {
@@ -102,8 +111,20 @@ func (s *RecycleService) AddToRecycle(
 }
 
 // List 获取用户的回收站列表
-func (s *RecycleService) List(ctx context.Context, u *user.User) (*ListResponse, error) {
-	items, err := s.recycleRepo.GetByUserID(ctx, u.ID)
+func (s *RecycleService) List(ctx context.Context, u *user.User, opts ListOptions) (*ListResponse, error) {
+	page := opts.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := opts.PageSize
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	items, total, err := s.recycleRepo.GetByUserIDPaged(ctx, u.ID, page, pageSize, opts.Search)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list recycle items: %w", err)
 	}
@@ -113,18 +134,15 @@ func (s *RecycleService) List(ctx context.Context, u *user.User) (*ListResponse,
 	}
 
 	response := &ListResponse{
-		Items: make([]*RecycleItemResponse, 0, len(items)),
+		Items:    make([]*RecycleItemResponse, 0, len(items)),
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
 	}
 
 	for _, item := range items {
 		if scope.active && !scope.allowsAny(item.Path, "read") {
 			continue
-		}
-		isDir := false
-		if recyclePath, err := s.findRecyclePath(item); err == nil {
-			if info, err := os.Stat(recyclePath); err == nil {
-				isDir = info.IsDir()
-			}
 		}
 		response.Items = append(response.Items, &RecycleItemResponse{
 			Hash:      item.Hash,
@@ -133,7 +151,7 @@ func (s *RecycleService) List(ctx context.Context, u *user.User) (*ListResponse,
 			Size:      item.Size,
 			DeletedAt: item.DeletedAt.Format("2006-01-02T15:04:05Z07:00"),
 			Directory: item.Directory,
-			IsDir:     isDir,
+			IsDir:     item.IsDir,
 		})
 	}
 
@@ -249,6 +267,8 @@ func (s *RecycleService) Remove(ctx context.Context, u *user.User, hash string) 
 		zap.String("hash", hash),
 	)
 
+	s.applyUsedSpaceDelta(ctx, u, -item.Size)
+
 	return nil
 }
 
@@ -296,6 +316,7 @@ func (s *RecycleService) Clear(ctx context.Context, u *user.User) (int, error) {
 			}
 			continue
 		}
+		s.applyUsedSpaceDelta(ctx, u, -item.Size)
 		cleared += 1
 	}
 
@@ -304,6 +325,29 @@ func (s *RecycleService) Clear(ctx context.Context, u *user.User) (int, error) {
 	}
 
 	return cleared, nil
+}
+
+func (s *RecycleService) applyUsedSpaceDelta(ctx context.Context, u *user.User, delta int64) {
+	if s == nil || s.userRepo == nil || u == nil || delta == 0 {
+		return
+	}
+
+	used, err := s.userRepo.UpdateUsedSpaceDelta(ctx, u.Username, delta)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("failed to update recycle used space delta",
+				zap.String("username", u.Username),
+				zap.Int64("delta", delta),
+				zap.Error(err))
+		}
+		return
+	}
+	if err := u.UpdateUsedSpace(used); err != nil && s.logger != nil {
+		s.logger.Error("failed to update in-memory recycle used space",
+			zap.String("username", u.Username),
+			zap.Int64("used_space", used),
+			zap.Error(err))
+	}
 }
 
 // getUserRootDir 获取用户的根目录
