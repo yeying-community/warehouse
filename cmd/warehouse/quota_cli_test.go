@@ -51,7 +51,7 @@ func TestCalculateQuotaUsedSpaceIncludesRecycleItems(t *testing.T) {
 	quotaSvc := quota.NewService(&quotaCLIUserRepo{})
 	recycleRepo := &quotaCLIRecycleRepo{
 		items: []*recycle.RecycleItem{
-			recycle.NewRecycleItem(u.ID, u.Username, "alice", "old.txt", "/personal/old.txt", 7),
+			recycle.NewRecycleItem(u.ID, u.Username, "alice", "old.txt", "/personal/old.txt", false, 7),
 		},
 	}
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Delete, DocumentCopy, FolderOpened, View } from '@element-plus/icons-vue'
+import { Delete, DocumentCopy, FolderOpened, MoreFilled, View } from '@element-plus/icons-vue'
 import type { DirectShareItem, ShareItem } from '@/api'
 
 const props = defineProps<{
@@ -21,6 +21,8 @@ const props = defineProps<{
 
 const linkRows = computed<ShareItem[]>(() => props.shareList)
 const directRows = computed<DirectShareItem[]>(() => props.directShareList)
+const linkEmptyText = '还没有创建任何链接分享'
+const directEmptyText = '还没有任何指定对象分享'
 
 function getDirectRelationLabel(row: DirectShareItem): string {
   return props.isDirectShareOwner(row) ? '我分享的' : '分享我的'
@@ -28,6 +30,28 @@ function getDirectRelationLabel(row: DirectShareItem): string {
 
 function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
   return props.isDirectShareOwner(row) ? 'primary' : 'success'
+}
+
+function handleLinkCommand(row: ShareItem, command: string | number) {
+  const action = String(command)
+  if (action === 'copy') {
+    props.copyShareLink(row)
+    return
+  }
+  if (action === 'revoke') {
+    props.revokeShare(row)
+  }
+}
+
+function handleDirectCommand(row: DirectShareItem, command: string | number) {
+  const action = String(command)
+  if (action === 'detail') {
+    props.openDirectShareDetail(row)
+    return
+  }
+  if (action === 'revoke') {
+    props.revokeDirectShare(row)
+  }
 }
 </script>
 
@@ -39,6 +63,7 @@ function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
     v-loading="loading"
     style="width: 100%"
     height="100%"
+    :empty-text="linkEmptyText"
     @row-click="onRowClick"
   >
     <el-table-column label="名称" min-width="200">
@@ -64,18 +89,21 @@ function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
         <span class="time-cell">{{ row.createdAt ? formatTime(row.createdAt) : '-' }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="160" fixed="right">
+    <el-table-column label="操作" width="120" fixed="right" align="left" header-align="left">
       <template #default="{ row }">
         <div class="actions" @click.stop>
-          <el-tooltip content="跳转位置" placement="top">
+          <el-tooltip content="打开所在资产" placement="top">
             <el-button type="primary" link :icon="FolderOpened" @click="openShareLocation(row)" />
           </el-tooltip>
-          <el-tooltip content="复制链接" placement="top">
-            <el-button link :icon="DocumentCopy" @click="copyShareLink(row)" />
-          </el-tooltip>
-          <el-tooltip content="取消分享" placement="top">
-            <el-button type="danger" link :icon="Delete" @click="revokeShare(row)" />
-          </el-tooltip>
+          <el-dropdown @command="handleLinkCommand(row, $event)">
+            <el-button type="primary" link :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="copy">复制链接</el-dropdown-item>
+                <el-dropdown-item command="revoke">取消分享</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </template>
     </el-table-column>
@@ -88,6 +116,7 @@ function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
     v-loading="loading"
     style="width: 100%"
     height="100%"
+    :empty-text="directEmptyText"
     @row-click="onRowClick"
   >
     <el-table-column label="名称" min-width="200">
@@ -115,15 +144,21 @@ function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
         <span class="time-cell">{{ row.createdAt ? formatTime(row.createdAt) : '-' }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="140" fixed="right">
+    <el-table-column label="操作" width="120" fixed="right" align="left" header-align="left">
       <template #default="{ row }">
         <div class="actions" @click.stop>
           <el-tooltip content="详情" placement="top">
             <el-button type="primary" link :icon="View" @click="openDirectShareDetail(row)" />
           </el-tooltip>
-          <el-tooltip v-if="isDirectShareOwner(row)" content="取消分享" placement="top">
-            <el-button type="danger" link :icon="Delete" @click="revokeDirectShare(row)" />
-          </el-tooltip>
+          <el-dropdown @command="handleDirectCommand(row, $event)">
+            <el-button type="primary" link :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="detail">查看详情</el-dropdown-item>
+                <el-dropdown-item v-if="isDirectShareOwner(row)" command="revoke">取消分享</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </template>
     </el-table-column>
@@ -132,11 +167,11 @@ function getDirectRelationType(row: DirectShareItem): 'primary' | 'success' {
   <div class="mobile-only card-list" v-loading="loading">
     <el-empty
       v-if="!loading && shareTab === 'link' && !linkRows.length"
-      description="暂无数据"
+      :description="linkEmptyText"
     />
     <el-empty
       v-else-if="!loading && shareTab === 'direct' && !directRows.length"
-      description="暂无数据"
+      :description="directEmptyText"
     />
     <template v-if="shareTab === 'link'">
       <div

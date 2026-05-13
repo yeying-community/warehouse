@@ -33,7 +33,7 @@ func TestRecycleRemoveReleasesUsedSpace(t *testing.T) {
 	}
 
 	recycleRepo := &memoryRecycleRepo{items: map[string]*recycle.RecycleItem{}}
-	item := recycle.NewRecycleItem(u.ID, u.Username, "alice", "old.txt", "/personal/old.txt", 10)
+	item := recycle.NewRecycleItem(u.ID, u.Username, "alice", "old.txt", "/personal/old.txt", false, 10)
 	recycleRepo.items[item.Hash] = item
 
 	recycleDir := filepath.Join(rootDir, ".recycle")

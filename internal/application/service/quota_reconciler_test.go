@@ -49,7 +49,7 @@ func TestQuotaReconcilerRepairsDriftUsingActiveAndRecycleUsage(t *testing.T) {
 	}
 
 	recycleRepo := &memoryRecycleRepo{items: map[string]*recycle.RecycleItem{}}
-	item := recycle.NewRecycleItem(u.ID, u.Username, "alice", "old.txt", "/personal/old.txt", 7)
+	item := recycle.NewRecycleItem(u.ID, u.Username, "alice", "old.txt", "/personal/old.txt", false, 7)
 	recycleRepo.items[item.Hash] = item
 
 	reconciler := NewQuotaReconciler(

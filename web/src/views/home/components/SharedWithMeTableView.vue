@@ -37,6 +37,8 @@ const props = defineProps<{
 
 const sharedListRows = computed<DirectShareItem[]>(() => props.sharedWithMeList)
 const sharedEntryRows = computed<FileItem[]>(() => props.sharedEntries)
+const sharedRootEmptyText = '当前还没有收到任何共享'
+const sharedEntryEmptyText = '这个共享目录里还没有内容'
 
 function handleMobileCommand(row: FileItem, command: string | number) {
   const action = String(command)
@@ -70,6 +72,7 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
     v-loading="loading"
     style="width: 100%"
     height="100%"
+    :empty-text="sharedRootEmptyText"
     @row-click="onRowClick"
   >
     <el-table-column label="名称" min-width="200">
@@ -122,6 +125,7 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
     style="width: 100%"
     height="100%"
     :row-class-name="getSharedEntryRowClassName"
+    :empty-text="sharedEntryEmptyText"
     @row-click="onRowClick"
   >
     <el-table-column label="名称" min-width="280">
@@ -181,8 +185,8 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
   </el-table>
 
   <div class="mobile-only card-list" v-loading="loading">
-    <el-empty v-if="!loading && !sharedActive && !sharedListRows.length" description="暂无数据" />
-    <el-empty v-else-if="!loading && sharedActive && !sharedEntryRows.length" description="暂无数据" />
+    <el-empty v-if="!loading && !sharedActive && !sharedListRows.length" :description="sharedRootEmptyText" />
+    <el-empty v-else-if="!loading && sharedActive && !sharedEntryRows.length" :description="sharedEntryEmptyText" />
     <template v-if="!sharedActive">
       <div
         v-for="row in sharedListRows"

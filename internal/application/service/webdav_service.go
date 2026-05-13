@@ -354,7 +354,7 @@ func (s *WebDAVService) moveToRecycle(ctx context.Context, u *user.User, relativ
 	}
 
 	// 创建回收站记录（先生成 hash，便于文件命名）
-	item := recycle.NewRecycleItem(u.ID, u.Username, dirName, fileName, cleanRelative, fileSize)
+	item := recycle.NewRecycleItem(u.ID, u.Username, dirName, fileName, cleanRelative, isDir, fileSize)
 
 	// 生成唯一的回收站文件名：{hash}_{原文件名}
 	recycleFileName := fmt.Sprintf("%s_%s", item.Hash, fileName)

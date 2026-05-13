@@ -85,7 +85,7 @@ func (s *RecycleService) AddToRecycle(
 	name := filepath.Base(filePath)
 
 	// 创建回收站项目
-	item := recycle.NewRecycleItem(u.ID, u.Username, directory, name, filePath, info.Size())
+	item := recycle.NewRecycleItem(u.ID, u.Username, directory, name, filePath, info.IsDir(), info.Size())
 
 	// 保存到数据库
 	if err := s.recycleRepo.Create(ctx, item); err != nil {
@@ -120,12 +120,6 @@ func (s *RecycleService) List(ctx context.Context, u *user.User) (*ListResponse,
 		if scope.active && !scope.allowsAny(item.Path, "read") {
 			continue
 		}
-		isDir := false
-		if recyclePath, err := s.findRecyclePath(item); err == nil {
-			if info, err := os.Stat(recyclePath); err == nil {
-				isDir = info.IsDir()
-			}
-		}
 		response.Items = append(response.Items, &RecycleItemResponse{
 			Hash:      item.Hash,
 			Name:      item.Name,
@@ -133,7 +127,7 @@ func (s *RecycleService) List(ctx context.Context, u *user.User) (*ListResponse,
 			Size:      item.Size,
 			DeletedAt: item.DeletedAt.Format("2006-01-02T15:04:05Z07:00"),
 			Directory: item.Directory,
-			IsDir:     isDir,
+			IsDir:     item.IsDir,
 		})
 	}
 

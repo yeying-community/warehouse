@@ -43,8 +43,8 @@ func NewPostgresRecycleRepository(db *sql.DB) *PostgresRecycleRepository {
 // Create 创建回收站项目
 func (r *PostgresRecycleRepository) Create(ctx context.Context, item *recycle.RecycleItem) error {
 	query := `
-		INSERT INTO recycle_items (id, hash, user_id, username, directory, name, path, size, deleted_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO recycle_items (id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 	_, err := r.db.ExecContext(ctx, query,
 		item.ID,
@@ -54,6 +54,7 @@ func (r *PostgresRecycleRepository) Create(ctx context.Context, item *recycle.Re
 		item.Directory,
 		item.Name,
 		item.Path,
+		item.IsDir,
 		item.Size,
 		item.DeletedAt,
 		item.CreatedAt,
@@ -67,7 +68,7 @@ func (r *PostgresRecycleRepository) Create(ctx context.Context, item *recycle.Re
 // GetByHash 根据哈希获取项目
 func (r *PostgresRecycleRepository) GetByHash(ctx context.Context, hash string) (*recycle.RecycleItem, error) {
 	query := `
-		SELECT id, hash, user_id, username, directory, name, path, size, deleted_at, created_at
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
 		FROM recycle_items
 		WHERE hash = $1
 	`
@@ -80,6 +81,7 @@ func (r *PostgresRecycleRepository) GetByHash(ctx context.Context, hash string) 
 		&item.Directory,
 		&item.Name,
 		&item.Path,
+		&item.IsDir,
 		&item.Size,
 		&item.DeletedAt,
 		&item.CreatedAt,
@@ -96,7 +98,7 @@ func (r *PostgresRecycleRepository) GetByHash(ctx context.Context, hash string) 
 // GetByUserID 获取用户的所有回收站项目
 func (r *PostgresRecycleRepository) GetByUserID(ctx context.Context, userID string) ([]*recycle.RecycleItem, error) {
 	query := `
-		SELECT id, hash, user_id, username, directory, name, path, size, deleted_at, created_at
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
 		FROM recycle_items
 		WHERE user_id = $1
 		ORDER BY deleted_at DESC
@@ -118,6 +120,7 @@ func (r *PostgresRecycleRepository) GetByUserID(ctx context.Context, userID stri
 			&item.Directory,
 			&item.Name,
 			&item.Path,
+			&item.IsDir,
 			&item.Size,
 			&item.DeletedAt,
 			&item.CreatedAt,
@@ -164,7 +167,7 @@ func (r *PostgresRecycleRepository) DeleteByUserID(ctx context.Context, userID s
 // GetDeletedItemsOlderThan 获取指定时间之前删除的项目
 func (r *PostgresRecycleRepository) GetDeletedItemsOlderThan(ctx context.Context, before time.Time) ([]*recycle.RecycleItem, error) {
 	query := `
-		SELECT id, hash, user_id, username, directory, name, path, size, deleted_at, created_at
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
 		FROM recycle_items
 		WHERE deleted_at < $1
 		ORDER BY deleted_at ASC
@@ -186,6 +189,7 @@ func (r *PostgresRecycleRepository) GetDeletedItemsOlderThan(ctx context.Context
 			&item.Directory,
 			&item.Name,
 			&item.Path,
+			&item.IsDir,
 			&item.Size,
 			&item.DeletedAt,
 			&item.CreatedAt,
