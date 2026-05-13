@@ -4,6 +4,7 @@ import { Delete, DocumentCopy, FolderOpened, MoreFilled, View } from '@element-p
 import type { DirectShareItem, ShareItem } from '@/api'
 
 const props = defineProps<{
+  isMobile: boolean
   shareTab: 'link' | 'direct'
   shareList: ShareItem[]
   directShareList: DirectShareItem[]
@@ -57,8 +58,7 @@ function handleDirectCommand(row: DirectShareItem, command: string | number) {
 
 <template>
   <el-table
-    v-if="shareTab === 'link'"
-    class="desktop-only"
+    v-if="!isMobile && shareTab === 'link'"
     :data="linkRows"
     v-loading="loading"
     style="width: 100%"
@@ -110,8 +110,7 @@ function handleDirectCommand(row: DirectShareItem, command: string | number) {
   </el-table>
 
   <el-table
-    v-else
-    class="desktop-only"
+    v-else-if="!isMobile"
     :data="directRows"
     v-loading="loading"
     style="width: 100%"
@@ -164,7 +163,7 @@ function handleDirectCommand(row: DirectShareItem, command: string | number) {
     </el-table-column>
   </el-table>
 
-  <div class="mobile-only card-list" v-loading="loading">
+  <div v-else class="card-list" v-loading="loading">
     <el-empty
       v-if="!loading && shareTab === 'link' && !linkRows.length"
       :description="linkEmptyText"

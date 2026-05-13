@@ -187,10 +187,18 @@ export interface RecycleItem {
 // 回收站 API
 export const recycleApi = {
   // 获取回收站列表（全局）
-  list() {
+  list(params?: { page?: number; pageSize?: number; search?: string }) {
+    const query = new URLSearchParams()
+    if (params?.page && params.page > 0) query.set('page', String(params.page))
+    if (params?.pageSize && params.pageSize > 0) query.set('page_size', String(params.pageSize))
+    if (params?.search?.trim()) query.set('search', params.search.trim())
+    const suffix = query.toString() ? `?${query.toString()}` : ''
     return request<{
       items: RecycleItem[]
-    }>('/api/v1/public/webdav/recycle/list')
+      total: number
+      page: number
+      pageSize: number
+    }>(`/api/v1/public/webdav/recycle/list${suffix}`)
   },
 
   // 恢复文件到原始目录

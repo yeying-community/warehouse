@@ -58,9 +58,18 @@ type RecycleItemResponse struct {
 	IsDir     bool   `json:"isDir"`
 }
 
+type ListOptions struct {
+	Page     int
+	PageSize int
+	Search   string
+}
+
 // ListResponse 列表响应
 type ListResponse struct {
-	Items []*RecycleItemResponse `json:"items"`
+	Items    []*RecycleItemResponse `json:"items"`
+	Total    int                   `json:"total"`
+	Page     int                   `json:"page"`
+	PageSize int                   `json:"pageSize"`
 }
 
 // AddToRecycle 将文件添加到回收站
@@ -102,8 +111,20 @@ func (s *RecycleService) AddToRecycle(
 }
 
 // List 获取用户的回收站列表
-func (s *RecycleService) List(ctx context.Context, u *user.User) (*ListResponse, error) {
-	items, err := s.recycleRepo.GetByUserID(ctx, u.ID)
+func (s *RecycleService) List(ctx context.Context, u *user.User, opts ListOptions) (*ListResponse, error) {
+	page := opts.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := opts.PageSize
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	items, total, err := s.recycleRepo.GetByUserIDPaged(ctx, u.ID, page, pageSize, opts.Search)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list recycle items: %w", err)
 	}
@@ -113,7 +134,10 @@ func (s *RecycleService) List(ctx context.Context, u *user.User) (*ListResponse,
 	}
 
 	response := &ListResponse{
-		Items: make([]*RecycleItemResponse, 0, len(items)),
+		Items:    make([]*RecycleItemResponse, 0, len(items)),
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
 	}
 
 	for _, item := range items {

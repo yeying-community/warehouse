@@ -52,6 +52,7 @@ const emailCodeSending = ref(false)
 const emailLoginSubmitting = ref(false)
 const emailCodeCountdown = ref(0)
 let emailCodeTimer: number | null = null
+const isMobileViewport = ref(false)
 const walletHistory = ref<string[]>([])
 const selectedWalletAccount = ref('')
 const walletRowRef = ref<HTMLElement | null>(null)
@@ -62,6 +63,9 @@ const showRecycle = ref(false)
 const recycleList = ref<RecycleItem[]>([])
 const recycleLoading = ref(false)
 const recycleClearing = ref(false)
+const recyclePage = ref(1)
+const recyclePageSize = 50
+const recycleTotal = ref(0)
 const showShare = ref(false)
 const shareList = ref<ShareItem[]>([])
 const shareLoading = ref(false)
@@ -686,15 +690,7 @@ const filteredFileList = computed(() => {
   if (!token) return sortedFileList.value
   return sortedFileList.value.filter(item => item.name.toLowerCase().includes(token))
 })
-const filteredRecycleList = computed(() => {
-  const token = searchToken.value
-  if (!token) return recycleList.value
-  return recycleList.value.filter(item => {
-    const nameMatch = item.name.toLowerCase().includes(token)
-    if (nameMatch) return true
-    return item.path?.toLowerCase().includes(token) || false
-  })
-})
+const filteredRecycleList = computed(() => recycleList.value)
 const filteredShareList = computed(() => {
   const token = searchToken.value
   if (!token) return shareList.value
@@ -3257,10 +3253,17 @@ async function deleteSharedItem(item: FileItem) {
 async function fetchRecycle() {
   recycleLoading.value = true
   try {
-    const data = await recycleApi.list()
-    recycleList.value = data.items
+    const data = await recycleApi.list({
+      page: recyclePage.value,
+      pageSize: recyclePageSize,
+      search: recycleSearch.value
+    })
+    recycleList.value = Array.isArray(data.items) ? data.items : []
+    recycleTotal.value = Number(data.total || 0)
   } catch (error) {
     console.error('获取回收站失败:', error)
+    recycleList.value = []
+    recycleTotal.value = 0
   } finally {
     recycleLoading.value = false
   }
@@ -3269,6 +3272,7 @@ async function fetchRecycle() {
 // 进入回收站
 function enterRecycle() {
   detailDrawerVisible.value = false
+  recyclePage.value = 1
   showRecycle.value = true
   showShare.value = false
   showSharedWithMe.value = false
@@ -3318,6 +3322,11 @@ function toggleSidePanel() {
 
 function backToFiles() {
   enterFiles(resolveInitialFilePath(currentPath.value))
+}
+
+function syncViewportMode() {
+  if (typeof window === 'undefined') return
+  isMobileViewport.value = window.innerWidth <= 768
 }
 
 // 恢复文件
@@ -3959,6 +3968,22 @@ watch(filteredFileList, rows => {
   selectedFileRows.value = selectedFileRows.value.filter(item => visiblePaths.has(item.path))
 })
 
+watch(recyclePage, () => {
+  if (showRecycle.value) {
+    void fetchRecycle()
+  }
+})
+
+watch(recycleSearch, () => {
+  if (recyclePage.value !== 1) {
+    recyclePage.value = 1
+    return
+  }
+  if (showRecycle.value) {
+    void fetchRecycle()
+  }
+})
+
 watch(currentPath, () => {
   selectedFileRows.value = []
 })
@@ -4007,6 +4032,8 @@ onMounted(() => {
   } catch {
     sidePanelCollapsed.value = false
   }
+  syncViewportMode()
+  window.addEventListener('resize', syncViewportMode, { passive: true })
 })
 
 onMounted(() => {
@@ -4071,6 +4098,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncViewportMode)
   stopAccountWatch?.()
   clearEmailCodeTimer()
 })
@@ -5107,6 +5135,7 @@ onBeforeUnmount(() => {
                   <span>失败：{{ uploadTaskSummary.failed }}</span>
                 </div>
                 <UploadTaskListView
+                  :is-mobile="isMobileViewport"
                   :tasks="uploadTasks"
                   :format-size="formatSize"
                   :format-time="formatTime"
@@ -5121,6 +5150,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="showUploadTasks" class="content-body table-wrapper">
             <UploadTaskListView
+              :is-mobile="isMobileViewport"
               :tasks="uploadTasks"
               :format-size="formatSize"
               :format-time="formatTime"
@@ -5145,6 +5175,7 @@ onBeforeUnmount(() => {
             </div>
             <RecycleTableView
               v-if="showRecycle"
+              :is-mobile="isMobileViewport"
               :rows="filteredRecycleList"
               :loading="recycleLoading && !manualRefresh"
               :on-row-click="handleRowClick"
@@ -5155,8 +5186,19 @@ onBeforeUnmount(() => {
               :recover-file="recoverFile"
               :permanently-delete="permanentlyDelete"
             />
+            <div v-if="showRecycle && recycleTotal > recyclePageSize" class="table-pagination">
+              <el-pagination
+                v-model:current-page="recyclePage"
+                :page-size="recyclePageSize"
+                layout="prev, pager, next, total"
+                :total="recycleTotal"
+                small
+                background
+              />
+            </div>
             <ShareTableView
               v-else-if="showShare"
+              :is-mobile="isMobileViewport"
               :share-tab="shareTab"
               :share-list="filteredShareList"
               :direct-share-list="filteredDirectShareList"
@@ -5173,6 +5215,7 @@ onBeforeUnmount(() => {
             />
             <SharedWithMeTableView
               v-else-if="showSharedWithMe"
+              :is-mobile="isMobileViewport"
               :shared-active="sharedActive"
               :shared-with-me-list="filteredSharedWithMeList"
               :shared-entries="filteredSharedEntries"
@@ -5204,6 +5247,7 @@ onBeforeUnmount(() => {
             />
             <FileTableView
               v-else
+              :is-mobile="isMobileViewport"
               :rows="filteredFileList"
               :loading="loading && !manualRefresh"
               :on-row-click="handleRowClick"
@@ -6300,6 +6344,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+.table-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 4px 0;
 }
 
 .selection-summary-bar {

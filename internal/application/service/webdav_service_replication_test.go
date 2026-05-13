@@ -218,6 +218,9 @@ func (*testRecycleRepo) GetByHash(context.Context, string) (*recycle.RecycleItem
 func (*testRecycleRepo) GetByUserID(context.Context, string) ([]*recycle.RecycleItem, error) {
 	return nil, nil
 }
+func (*testRecycleRepo) GetByUserIDPaged(context.Context, string, int, int, string) ([]*recycle.RecycleItem, int, error) {
+	return nil, 0, nil
+}
 func (*testRecycleRepo) DeleteByHash(context.Context, string) error   { return nil }
 func (*testRecycleRepo) DeleteByUserID(context.Context, string) error { return nil }
 func (*testRecycleRepo) DeleteExpiredItems(context.Context, time.Duration) (int64, error) {

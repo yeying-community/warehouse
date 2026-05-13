@@ -104,6 +104,9 @@ func (*quotaCLIRecycleRepo) GetByHash(context.Context, string) (*recycle.Recycle
 func (r *quotaCLIRecycleRepo) GetByUserID(context.Context, string) ([]*recycle.RecycleItem, error) {
 	return r.items, nil
 }
+func (r *quotaCLIRecycleRepo) GetByUserIDPaged(context.Context, string, int, int, string) ([]*recycle.RecycleItem, int, error) {
+	return r.items, len(r.items), nil
+}
 func (*quotaCLIRecycleRepo) DeleteByHash(context.Context, string) error { return nil }
 func (*quotaCLIRecycleRepo) DeleteByUserID(context.Context, string) error {
 	return nil

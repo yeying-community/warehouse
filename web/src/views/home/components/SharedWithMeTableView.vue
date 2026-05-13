@@ -5,6 +5,7 @@ import type { DirectShareItem } from '@/api'
 import type { FileItem } from '../types'
 
 const props = defineProps<{
+  isMobile: boolean
   sharedActive: DirectShareItem | null
   sharedWithMeList: DirectShareItem[]
   sharedEntries: FileItem[]
@@ -66,8 +67,7 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
 
 <template>
   <el-table
-    v-if="!sharedActive"
-    class="desktop-only"
+    v-if="!isMobile && !sharedActive"
     :data="sharedListRows"
     v-loading="loading"
     style="width: 100%"
@@ -118,8 +118,7 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
   </el-table>
 
   <el-table
-    v-else
-    class="desktop-only"
+    v-else-if="!isMobile"
     :data="sharedEntryRows"
     v-loading="loading"
     style="width: 100%"
@@ -184,7 +183,7 @@ function getSharedEntryRowClassName({ row }: { row: FileItem }) {
     </el-table-column>
   </el-table>
 
-  <div class="mobile-only card-list" v-loading="loading">
+  <div v-else class="card-list" v-loading="loading">
     <el-empty v-if="!loading && !sharedActive && !sharedListRows.length" :description="sharedRootEmptyText" />
     <el-empty v-else-if="!loading && sharedActive && !sharedEntryRows.length" :description="sharedEntryEmptyText" />
     <template v-if="!sharedActive">

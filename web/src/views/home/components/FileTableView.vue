@@ -4,6 +4,7 @@ import { Download, MoreFilled, View } from '@element-plus/icons-vue'
 import type { FileItem } from '../types'
 
 const props = defineProps<{
+  isMobile: boolean
   rows: FileItem[]
   loading: boolean
   onRowClick: (...args: any[]) => void
@@ -95,8 +96,8 @@ watch(() => props.selectionNonce, () => {
 
 <template>
   <el-table
+    v-if="!isMobile"
     ref="tableRef"
-    class="desktop-only"
     :data="rows"
     v-loading="loading"
     style="width: 100%"
@@ -170,7 +171,7 @@ watch(() => props.selectionNonce, () => {
     </el-table-column>
   </el-table>
 
-  <div class="mobile-only card-list" v-loading="loading">
+  <div v-else class="card-list" v-loading="loading">
     <el-empty v-if="!loading && !rows.length" description="当前目录暂无资产" />
     <div
       v-for="row in rows"

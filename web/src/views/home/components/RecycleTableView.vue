@@ -3,6 +3,7 @@ import { Delete, FolderOpened } from '@element-plus/icons-vue'
 import type { RecycleItem } from '@/api'
 
 defineProps<{
+  isMobile: boolean
   rows: RecycleItem[]
   loading: boolean
   onRowClick: (...args: any[]) => void
@@ -17,7 +18,7 @@ defineProps<{
 
 <template>
   <el-table
-    class="desktop-only"
+    v-if="!isMobile"
     :data="rows"
     v-loading="loading"
     style="width: 100%"
@@ -67,7 +68,7 @@ defineProps<{
     </el-table-column>
   </el-table>
 
-  <div class="mobile-only card-list" v-loading="loading">
+  <div v-else class="card-list" v-loading="loading">
     <el-empty v-if="!loading && !rows.length" description="暂无数据" />
     <div
       v-for="row in rows"

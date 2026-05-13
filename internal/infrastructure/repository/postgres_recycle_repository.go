@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yeying-community/warehouse/internal/domain/recycle"
@@ -19,6 +20,9 @@ type RecycleRepository interface {
 
 	// GetByUserID 获取用户的所有回收站项目
 	GetByUserID(ctx context.Context, userID string) ([]*recycle.RecycleItem, error)
+
+	// GetByUserIDPaged 分页获取用户的回收站项目
+	GetByUserIDPaged(ctx context.Context, userID string, page, pageSize int, search string) ([]*recycle.RecycleItem, int, error)
 
 	// DeleteByHash 根据哈希删除项目
 	DeleteByHash(ctx context.Context, hash string) error
@@ -135,6 +139,70 @@ func (r *PostgresRecycleRepository) GetByUserID(ctx context.Context, userID stri
 	}
 
 	return items, nil
+}
+
+// GetByUserIDPaged 分页获取用户的回收站项目
+func (r *PostgresRecycleRepository) GetByUserIDPaged(ctx context.Context, userID string, page, pageSize int, search string) ([]*recycle.RecycleItem, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	offset := (page - 1) * pageSize
+
+	whereParts := []string{"user_id = $1"}
+	args := []any{userID}
+	if token := strings.TrimSpace(search); token != "" {
+		whereParts = append(whereParts, fmt.Sprintf("(name ILIKE $%d OR path ILIKE $%d)", len(args)+1, len(args)+1))
+		args = append(args, "%"+token+"%")
+	}
+	whereClause := strings.Join(whereParts, " AND ")
+
+	countQuery := fmt.Sprintf(`SELECT COUNT(1) FROM recycle_items WHERE %s`, whereClause)
+	var total int
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count recycle items: %w", err)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, hash, user_id, username, directory, name, path, is_dir, size, deleted_at, created_at
+		FROM recycle_items
+		WHERE %s
+		ORDER BY deleted_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, len(args)+1, len(args)+2)
+	rows, err := r.db.QueryContext(ctx, query, append(args, pageSize, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query recycle items: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]*recycle.RecycleItem, 0, pageSize)
+	for rows.Next() {
+		item := &recycle.RecycleItem{}
+		if err := rows.Scan(
+			&item.ID,
+			&item.Hash,
+			&item.UserID,
+			&item.Username,
+			&item.Directory,
+			&item.Name,
+			&item.Path,
+			&item.IsDir,
+			&item.Size,
+			&item.DeletedAt,
+			&item.CreatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan recycle item: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("failed to iterate recycle items: %w", err)
+	}
+
+	return items, total, nil
 }
 
 // DeleteByHash 根据哈希删除项目

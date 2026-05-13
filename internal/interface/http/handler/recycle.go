@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/auth"
@@ -46,7 +47,15 @@ func (h *RecycleHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.recycleService.List(r.Context(), u)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("page_size"))
+	search := r.URL.Query().Get("search")
+
+	response, err := h.recycleService.List(r.Context(), u, service.ListOptions{
+		Page:     page,
+		PageSize: pageSize,
+		Search:   search,
+	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAppScopeDenied) || errors.Is(err, auth.ErrAppScopeRequired) {
 			http.Error(w, "Forbidden", http.StatusForbidden)

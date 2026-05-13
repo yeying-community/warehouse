@@ -89,6 +89,14 @@ func (r *memoryRecycleRepo) GetByUserID(_ context.Context, userID string) ([]*re
 	return items, nil
 }
 
+func (r *memoryRecycleRepo) GetByUserIDPaged(ctx context.Context, userID string, page, pageSize int, search string) ([]*recycle.RecycleItem, int, error) {
+	items, err := r.GetByUserID(ctx, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, len(items), nil
+}
+
 func (r *memoryRecycleRepo) DeleteByHash(_ context.Context, hash string) error {
 	delete(r.items, hash)
 	return nil
