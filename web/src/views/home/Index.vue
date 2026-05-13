@@ -4410,7 +4410,7 @@ onBeforeUnmount(() => {
           <div v-if="dragActive && canUpload" class="drop-mask">
             <div class="drop-hint">拖拽文件或文件夹到此处上传（支持空目录）</div>
           </div>
-          <div v-if="showListHeader" class="list-header">
+          <div v-if="showListHeader" class="list-header" :class="{ 'list-header-recycle': showRecycle }">
             <div class="list-header-left">
               <div class="path-row">
               <template v-if="showSharedWithMe && sharedActive">
@@ -4452,14 +4452,9 @@ onBeforeUnmount(() => {
                 </el-tooltip>
               </template>
                 <template v-if="showRecycle">
-                  <div class="path-pill">
-                    <span class="path-label">当前位置</span>
-                    <span class="path-value">回收站</span>
-                    <el-tooltip content="复制路径" placement="top">
-                      <button type="button" class="copy-icon" @click="copyCurrentPath">
-                        <el-icon><DocumentCopy /></el-icon>
-                      </button>
-                    </el-tooltip>
+                  <div class="section-title-row">
+                    <span class="section-title">回收站</span>
+                    <span class="section-subtitle">已删除资产可在此恢复或彻底清理</span>
                   </div>
                 </template>
                 <template v-else-if="showShare">
@@ -5173,29 +5168,42 @@ onBeforeUnmount(() => {
                 <el-button size="small" type="danger" :disabled="loading" @click="deleteSelectedFiles">删除已选</el-button>
               </div>
             </div>
-            <RecycleTableView
-              v-if="showRecycle"
-              :is-mobile="isMobileViewport"
-              :rows="filteredRecycleList"
-              :loading="recycleLoading && !manualRefresh"
-              :on-row-click="handleRowClick"
-              :format-recycle-full-path="formatRecycleFullPath"
-              :format-recycle-location="formatRecycleLocation"
-              :format-size="formatSize"
-              :format-deleted-time="formatDeletedTime"
-              :recover-file="recoverFile"
-              :permanently-delete="permanentlyDelete"
-            />
-            <div v-if="showRecycle && recycleTotal > recyclePageSize" class="table-pagination">
-              <el-pagination
-                v-model:current-page="recyclePage"
-                :page-size="recyclePageSize"
-                layout="prev, pager, next, total"
-                :total="recycleTotal"
-                small
-                background
-              />
-            </div>
+            <template v-if="showRecycle">
+              <section class="recycle-panel">
+                <div class="recycle-summary-bar">
+                  <div class="recycle-summary-main">
+                    <span class="recycle-summary-title">删除记录</span>
+                    <span class="recycle-summary-text">按删除时间倒序展示，可恢复或彻底删除。</span>
+                  </div>
+                  <div class="recycle-summary-meta">
+                    <span class="recycle-summary-chip">当前 {{ filteredRecycleList.length }} 项</span>
+                    <span class="recycle-summary-chip">总计 {{ recycleTotal }} 项</span>
+                  </div>
+                </div>
+                <RecycleTableView
+                  :is-mobile="isMobileViewport"
+                  :rows="filteredRecycleList"
+                  :loading="recycleLoading && !manualRefresh"
+                  :on-row-click="handleRowClick"
+                  :format-recycle-full-path="formatRecycleFullPath"
+                  :format-recycle-location="formatRecycleLocation"
+                  :format-size="formatSize"
+                  :format-deleted-time="formatDeletedTime"
+                  :recover-file="recoverFile"
+                  :permanently-delete="permanentlyDelete"
+                />
+                <div v-if="recycleTotal > recyclePageSize" class="table-pagination recycle-pagination">
+                  <el-pagination
+                    v-model:current-page="recyclePage"
+                    :page-size="recyclePageSize"
+                    layout="prev, pager, next, total"
+                    :total="recycleTotal"
+                    small
+                    background
+                  />
+                </div>
+              </section>
+            </template>
             <ShareTableView
               v-else-if="showShare"
               :is-mobile="isMobileViewport"
@@ -6269,6 +6277,10 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid #eef1f4;
 }
 
+.list-header-recycle {
+  align-items: center;
+}
+
 .list-header-left {
   flex: 1;
   min-width: 0;
@@ -6288,6 +6300,27 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.section-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1f2937;
+  line-height: 1.2;
+}
+
+.section-subtitle {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
 }
 
 .action-cluster {
@@ -6346,10 +6379,80 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.recycle-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 1px solid #eef3f8;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfcfe 0%, #ffffff 88%);
+  overflow: hidden;
+}
+
+.recycle-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #eef3f8;
+  background: rgba(247, 249, 252, 0.8);
+}
+
+.recycle-summary-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.recycle-summary-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1f2937;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.recycle-summary-text {
+  font-size: 12px;
+  color: #909399;
+  min-width: 0;
+}
+
+.recycle-summary-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.recycle-summary-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #e6edf5;
+  background: #fff;
+  color: #606266;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .table-pagination {
   display: flex;
   justify-content: flex-end;
   padding: 12px 4px 0;
+}
+
+.recycle-pagination {
+  padding: 10px 14px 12px;
+  border-top: 1px solid #eef3f8;
+  margin-top: 0;
+  background: rgba(251, 252, 254, 0.9);
 }
 
 .selection-summary-bar {

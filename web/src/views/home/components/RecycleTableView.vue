@@ -19,8 +19,10 @@ defineProps<{
 <template>
   <el-table
     v-if="!isMobile"
+    class="recycle-table"
     :data="rows"
     v-loading="loading"
+    empty-text="回收站为空"
     style="width: 100%"
     height="100%"
     @row-click="onRowClick"
@@ -54,12 +56,12 @@ defineProps<{
       <template #default="{ row }">
         <div class="actions" @click.stop>
           <el-tooltip content="恢复" placement="top">
-            <el-button type="primary" link @click="recoverFile(row)">
+            <el-button class="recycle-action-button" type="primary" link @click="recoverFile(row)">
               <el-icon><FolderOpened /></el-icon>
             </el-button>
           </el-tooltip>
           <el-tooltip content="永久删除" placement="top">
-            <el-button type="danger" link @click="permanentlyDelete(row)">
+            <el-button class="recycle-action-button recycle-action-danger" type="danger" link @click="permanentlyDelete(row)">
               <el-icon><Delete /></el-icon>
             </el-button>
           </el-tooltip>
@@ -91,10 +93,10 @@ defineProps<{
           <span class="card-meta-value">{{ formatDeletedTime(row.deletedAt) }}</span>
         </div>
         <div class="card-actions card-actions-inline">
-          <el-button size="small" circle type="primary" @click="recoverFile(row)">
+          <el-button class="recycle-mobile-action" size="small" circle type="primary" @click="recoverFile(row)">
             <el-icon><FolderOpened /></el-icon>
           </el-button>
-          <el-button size="small" circle type="danger" @click="permanentlyDelete(row)">
+          <el-button class="recycle-mobile-action recycle-mobile-action-danger" size="small" circle type="danger" @click="permanentlyDelete(row)">
             <el-icon><Delete /></el-icon>
           </el-button>
         </div>

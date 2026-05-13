@@ -29,10 +29,31 @@
 .actions {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .actions .el-button {
-  padding: 0 4px;
+  padding: 0;
+}
+
+.recycle-action-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: #3b82f6;
+  background: transparent;
+}
+
+.recycle-action-button:hover {
+  background: #eff6ff;
+}
+
+.recycle-action-danger {
+  color: #f56c6c;
+}
+
+.recycle-action-danger:hover {
+  background: #fff1f0;
 }
 
 .card-list {
@@ -141,6 +162,15 @@
   padding: 6px 10px;
 }
 
+.recycle-mobile-action {
+  box-shadow: none;
+}
+
+.recycle-mobile-action-danger {
+  --el-button-hover-bg-color: #fff1f0;
+  --el-button-active-bg-color: #ffe3e0;
+}
+
 .card-actions .el-dropdown {
   margin-left: 4px;
 }
@@ -175,4 +205,17 @@
   white-space: nowrap;
   display: inline-block;
   font-variant-numeric: tabular-nums;
+}
+
+.recycle-table :deep(.el-table__header-wrapper th) {
+  background: #f8fafc;
+  color: #606266;
+}
+
+.recycle-table :deep(.el-table__row) {
+  cursor: pointer;
+}
+
+.recycle-table :deep(.el-table__row:hover > td) {
+  background: #fafcff;
 }
