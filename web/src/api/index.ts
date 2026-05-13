@@ -138,6 +138,12 @@ export interface AdminUserItem {
 export const adminUserApi = {
   list() {
     return request<{ items: AdminUserItem[] }>('/api/v1/admin/users/list')
+  },
+  updateQuota(username: string, quota: number) {
+    return request<AdminUserItem>('/api/v1/admin/users/update', {
+      method: 'POST',
+      body: { username, quota }
+    })
   }
 }
 

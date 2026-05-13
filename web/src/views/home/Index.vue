@@ -82,6 +82,11 @@ const adminQuotaAvailable = ref(false)
 const adminQuotaError = ref('')
 const adminUsers = ref<AdminUserItem[]>([])
 const adminQuotaFilter = ref<'all' | 'unlimited' | 'near_limit' | 'over_quota'>('all')
+const adminQuotaDialogVisible = ref(false)
+const adminQuotaSubmitting = ref(false)
+const adminQuotaEditTarget = ref<AdminUserItem | null>(null)
+const adminQuotaEditValue = ref('')
+const adminQuotaEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showAddressBook = ref(false)
 const showUploadTasks = ref(false)
 const managementSection = ref<'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks'>('account')
@@ -1392,6 +1397,98 @@ function adminUserQuotaStatus(item: AdminUserItem): { label: string; type: 'info
     return { label: '接近上限', type: 'warning' }
   }
   return { label: '正常', type: 'success' }
+}
+
+function quotaUnitMultiplier(unit: 'B' | 'KB' | 'MB' | 'GB' | 'TB'): number {
+  switch (unit) {
+    case 'KB':
+      return 1024
+    case 'MB':
+      return 1024 * 1024
+    case 'GB':
+      return 1024 * 1024 * 1024
+    case 'TB':
+      return 1024 * 1024 * 1024 * 1024
+    default:
+      return 1
+  }
+}
+
+function normalizeQuotaEditor(quota: number): { value: string; unit: 'B' | 'KB' | 'MB' | 'GB' | 'TB' } {
+  if (quota <= 0) {
+    return { value: '0', unit: 'GB' }
+  }
+  const units: Array<'TB' | 'GB' | 'MB' | 'KB' | 'B'> = ['TB', 'GB', 'MB', 'KB', 'B']
+  for (const unit of units) {
+    const multiplier = quotaUnitMultiplier(unit)
+    if (quota >= multiplier && quota % multiplier === 0) {
+      return { value: String(quota / multiplier), unit }
+    }
+  }
+  return { value: String(quota), unit: 'B' }
+}
+
+const adminQuotaPreviewBytes = computed(() => {
+  const raw = adminQuotaEditValue.value.trim()
+  if (raw === '' || !/^\d+$/.test(raw)) return null
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 0) return null
+  const bytes = value * quotaUnitMultiplier(adminQuotaEditUnit.value)
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return null
+  return bytes
+})
+
+function openAdminQuotaDialog(item: AdminUserItem) {
+  adminQuotaEditTarget.value = item
+  const normalized = normalizeQuotaEditor(item.quota)
+  adminQuotaEditValue.value = normalized.value
+  adminQuotaEditUnit.value = normalized.unit
+  adminQuotaDialogVisible.value = true
+}
+
+function closeAdminQuotaDialog() {
+  adminQuotaDialogVisible.value = false
+  adminQuotaSubmitting.value = false
+  adminQuotaEditTarget.value = null
+  adminQuotaEditValue.value = ''
+  adminQuotaEditUnit.value = 'GB'
+}
+
+async function submitAdminQuotaUpdate() {
+  const target = adminQuotaEditTarget.value
+  if (!target) return
+  const raw = adminQuotaEditValue.value.trim()
+  if (raw === '') {
+    showError('请输入额度值')
+    return
+  }
+  if (!/^\d+$/.test(raw)) {
+    showError('额度必须是大于等于 0 的整数')
+    return
+  }
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value < 0) {
+    showError('额度值无效，请输入安全整数')
+    return
+  }
+  const multiplier = quotaUnitMultiplier(adminQuotaEditUnit.value)
+  const quota = value * multiplier
+  if (!Number.isSafeInteger(quota) || quota < 0) {
+    showError('换算后的额度值过大，请调整后重试')
+    return
+  }
+
+  adminQuotaSubmitting.value = true
+  try {
+    await adminUserApi.updateQuota(target.username, quota)
+    showSuccess('用户额度已更新')
+    closeAdminQuotaDialog()
+    await fetchAdminUsers()
+  } catch (error) {
+    showError(extractApiErrorMessage(error) || '更新用户额度失败')
+  } finally {
+    adminQuotaSubmitting.value = false
+  }
 }
 
 async function submitAccessKey() {
@@ -4905,7 +5002,12 @@ onBeforeUnmount(() => {
                       </el-tag>
                     </template>
                   </el-table-column>
-                  </el-table>
+                  <el-table-column label="操作" width="120" align="left" header-align="left">
+                    <template #default="{ row }">
+                      <el-button size="small" @click="openAdminQuotaDialog(row)">修改额度</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
               </div>
               <div v-if="managementSection === 'keys'" class="user-card user-card-full" v-loading="accessKeyLoading">
                 <div class="card-head">
@@ -5341,6 +5443,47 @@ onBeforeUnmount(() => {
         <template #footer>
           <el-button @click="closeAccessKeyDialog">关闭</el-button>
           <el-button v-if="!accessKeyScopeLocked" type="primary" :loading="accessKeySubmitting" @click="submitAccessKey">创建密钥</el-button>
+        </template>
+      </el-dialog>
+      <el-dialog
+        v-model="adminQuotaDialogVisible"
+        title="修改用户额度"
+        width="420px"
+        @closed="closeAdminQuotaDialog"
+      >
+        <div class="admin-quota-dialog">
+          <div v-if="adminQuotaEditTarget" class="admin-quota-target">
+            <div class="admin-quota-target-name">{{ adminQuotaEditTarget.username }}</div>
+            <div class="admin-quota-target-meta">
+              已使用 {{ formatSize(adminQuotaEditTarget.used_space) }}，当前上限
+              {{ adminQuotaEditTarget.quota > 0 ? formatSize(adminQuotaEditTarget.quota) : '无限' }}
+            </div>
+          </div>
+          <el-form label-position="top">
+            <el-form-item label="额度">
+              <div class="admin-quota-input-row">
+                <el-input v-model="adminQuotaEditValue" placeholder="输入 0 表示不限额" />
+                <el-select v-model="adminQuotaEditUnit" class="admin-quota-input-unit">
+                  <el-option label="B" value="B" />
+                  <el-option label="KB" value="KB" />
+                  <el-option label="MB" value="MB" />
+                  <el-option label="GB" value="GB" />
+                  <el-option label="TB" value="TB" />
+                </el-select>
+              </div>
+            </el-form-item>
+          </el-form>
+          <div v-if="adminQuotaPreviewBytes !== null" class="admin-quota-preview">
+            <span class="admin-quota-preview-label">换算预览</span>
+            <span class="admin-quota-preview-value">
+              {{ adminQuotaPreviewBytes === 0 ? '不限额（保存为 0 字节）' : `${adminQuotaPreviewBytes} 字节（约 ${formatSize(adminQuotaPreviewBytes)}）` }}
+            </span>
+          </div>
+          <div class="share-group-meta">请输入大于等于 0 的整数，`0` 表示不限额。保存时会自动换算为字节。</div>
+        </div>
+        <template #footer>
+          <el-button @click="closeAdminQuotaDialog">取消</el-button>
+          <el-button type="primary" :loading="adminQuotaSubmitting" @click="submitAdminQuotaUpdate">保存</el-button>
         </template>
       </el-dialog>
       <FilePreviewDialog
@@ -6594,6 +6737,68 @@ onBeforeUnmount(() => {
 .access-key-created-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.admin-quota-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-quota-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-quota-input-row :deep(.el-input) {
+  flex: 1;
+  min-width: 0;
+}
+
+.admin-quota-input-unit {
+  width: 110px;
+  flex: 0 0 110px;
+}
+
+.admin-quota-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f4;
+}
+
+.admin-quota-preview-label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.admin-quota-preview-value {
+  font-size: 12px;
+  color: #1f2d3d;
+  word-break: break-all;
+}
+
+.admin-quota-target {
+  padding: 12px;
+  border-radius: 12px;
+  background: #f7f9fc;
+  border: 1px solid #eef1f4;
+}
+
+.admin-quota-target-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.admin-quota-target-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #606266;
 }
 
 .quota-value {
