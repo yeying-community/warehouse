@@ -50,7 +50,7 @@ defineProps<{
         <span class="time-cell">{{ formatDeletedTime(row.deletedAt) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="140" fixed="right">
+    <el-table-column label="操作" width="140">
       <template #default="{ row }">
         <div class="actions" @click.stop>
           <el-tooltip content="恢复" placement="top">

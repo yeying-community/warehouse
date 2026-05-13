@@ -286,6 +286,11 @@ func (s *WebDAVService) handleDeleteWithRecycle(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if shouldHardDeleteSyncArtifact(normalizedPath) {
+		s.handleDirectDelete(w, r, u, fullPath, info.IsDir(), calculateFileSizeOrZero(info), handler)
+		return
+	}
+
 	// 文件/目录移动到回收站目录
 	moved, err := s.moveToRecycle(r.Context(), u, filePath, fullPath, info.IsDir())
 	if err != nil {
@@ -319,6 +324,69 @@ func (s *WebDAVService) handleDeleteWithRecycle(w http.ResponseWriter, r *http.R
 
 	// 返回成功
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *WebDAVService) handleDirectDelete(
+	w http.ResponseWriter,
+	r *http.Request,
+	u *user.User,
+	fullPath string,
+	isDir bool,
+	sizeHint int64,
+	handler *webdav.Handler,
+) {
+	sizeDelta := sizeHint
+	if isDir {
+		totalSize, err := calculatePathSize(fullPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			s.logger.Error("failed to calculate path size before hard delete",
+				zap.String("path", fullPath),
+				zap.Error(err))
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		sizeDelta = totalSize
+	}
+
+	rec := newBufferedStatusRecorder()
+	handler.ServeHTTP(rec, r)
+	if rec.status >= 200 && rec.status < 300 {
+		if err := s.mutationRecorder.RemovePath(r.Context(), fullPath, isDir); err != nil {
+			if s.handleMutationRecordError("hard delete mutation skipped because no standby is currently available",
+				err,
+				zap.String("username", u.Username),
+				zap.String("path", r.URL.Path),
+				zap.Bool("is_dir", isDir),
+			) {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+		}
+		s.applyUsedSpaceDelta(r.Context(), u, -sizeDelta)
+	}
+	if err := rec.FlushTo(w); err != nil {
+		s.logger.Error("failed to flush hard delete response", zap.Error(err))
+	}
+}
+
+func shouldHardDeleteSyncArtifact(normalizedPath string) bool {
+	cleaned := path.Clean("/" + strings.TrimSpace(normalizedPath))
+	if cleaned == "/" || !strings.HasPrefix(cleaned, "/apps/") {
+		return false
+	}
+
+	base := path.Base(cleaned)
+	if strings.HasPrefix(base, "backup.__sync_txn_data_v1.") &&
+		strings.HasSuffix(base, ".json") {
+		return true
+	}
+
+	if base == "lock.json" {
+		parent := path.Base(path.Dir(cleaned))
+		return parent == "backup.__sync_mutex_v1.__sync_lock_v1"
+	}
+
+	return base == "backup.__sync_mutex_v1.__sync_lock_v1"
 }
 
 // moveToRecycle 将文件移动到回收站并保存记录
