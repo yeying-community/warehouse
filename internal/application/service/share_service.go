@@ -40,8 +40,13 @@ func NewShareService(
 	}
 }
 
+type ShareCreateInput struct {
+	Expiry ShareExpiryInput
+	Mode   string
+}
+
 // Create 创建分享链接
-func (s *ShareService) Create(ctx context.Context, u *user.User, rawPath string, expiry ShareExpiryInput) (*share.ShareItem, error) {
+func (s *ShareService) Create(ctx context.Context, u *user.User, rawPath string, input ShareCreateInput) (*share.ShareItem, error) {
 	cleanPath, err := normalizeSharePath(rawPath, s.webdavPrefix())
 	if err != nil {
 		return nil, err
@@ -60,12 +65,16 @@ func (s *ShareService) Create(ctx context.Context, u *user.User, rawPath string,
 	}
 
 	name := filepath.Base(fullPath)
-	expiresAt, err := expiry.Resolve(time.Now())
+	expiresAt, err := input.Expiry.Resolve(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	mode, err := share.NormalizeMode(input.Mode)
 	if err != nil {
 		return nil, err
 	}
 
-	item := share.NewShareItem(u.ID, u.Username, cleanPath, name, expiresAt)
+	item := share.NewShareItem(u.ID, u.Username, cleanPath, name, mode, expiresAt)
 	if err := s.shareRepo.Create(ctx, item); err != nil {
 		return nil, err
 	}
