@@ -44,6 +44,10 @@ function handleLinkCommand(row: ShareItem, command: string | number) {
   }
 }
 
+function getShareModeLabel(row: ShareItem): string {
+  return row.mode === 'preview' ? '浏览器打开' : '仅下载'
+}
+
 function handleDirectCommand(row: DirectShareItem, command: string | number) {
   const action = String(command)
   if (action === 'detail') {
@@ -77,6 +81,11 @@ function handleDirectCommand(row: DirectShareItem, command: string | number) {
     <el-table-column label="访问/下载" width="110">
       <template #default="{ row }">
         {{ row.viewCount ?? 0 }}/{{ row.downloadCount ?? 0 }}
+      </template>
+    </el-table-column>
+    <el-table-column label="打开方式" width="120">
+      <template #default="{ row }">
+        {{ getShareModeLabel(row) }}
       </template>
     </el-table-column>
     <el-table-column label="过期时间" width="180">
@@ -187,6 +196,8 @@ function handleDirectCommand(row: DirectShareItem, command: string | number) {
         </div>
         <div class="card-footer" @click.stop>
           <div class="card-meta card-meta-compact">
+            <span class="card-meta-value">{{ getShareModeLabel(row) }}</span>
+            <span class="card-meta-sep">·</span>
             <span class="card-meta-value">{{ row.viewCount ?? 0 }}/{{ row.downloadCount ?? 0 }}</span>
             <span class="card-meta-sep">·</span>
             <span class="card-meta-value">

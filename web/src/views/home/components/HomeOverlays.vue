@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { AddressContact, AddressGroup, DirectShareItem, RecycleItem, ShareExpiryUnit, ShareItem } from '@/api'
+import type { AddressContact, AddressGroup, DirectShareItem, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
 import type { FileItem } from '../types'
 import { shortenAddress } from '@/utils/address'
 
@@ -22,6 +22,7 @@ const props = defineProps<{
   formatDeletedTime: (time: string) => string
   formatSizeDetail: (size: number) => string
   formatSharePermission: (permission: string) => string
+  formatShareMode: (mode?: ShareMode | string) => string
   getShareLink: (item: ShareItem) => string
   copyShareLink: (item: ShareItem) => void
   revokeShare: (item: ShareItem) => void
@@ -39,10 +40,17 @@ const props = defineProps<{
   shareLinkForm: {
     expiresValue: string
     expiresUnit: ShareExpiryUnit
+    mode: ShareMode
   }
   shareExpiryUnits: Array<{
     label: string
     value: ShareExpiryUnit
+  }>
+  shareModeOptions: Array<{
+    label: string
+    value: ShareMode
+    description: string
+    hint: string
   }>
   submitShareLink: () => void
   shareUserDialogVisible: boolean
@@ -340,6 +348,10 @@ onBeforeUnmount(() => {
           <span class="detail-value mono">{{ getShareLink(detailShare) }}</span>
         </div>
         <div class="detail-row">
+          <span class="detail-label">打开方式</span>
+          <span class="detail-value">{{ formatShareMode(detailShare.mode) }}</span>
+        </div>
+        <div class="detail-row">
           <span class="detail-label">访问/下载</span>
           <span class="detail-value">{{ detailShare.viewCount ?? 0 }}/{{ detailShare.downloadCount ?? 0 }}</span>
         </div>
@@ -584,6 +596,27 @@ onBeforeUnmount(() => {
         </div>
         <div class="share-group-meta">输入 0 表示永不过期</div>
       </el-form-item>
+      <el-form-item label="打开方式">
+        <div class="share-mode-field">
+          <el-radio-group v-model="shareLinkForm.mode" size="small">
+            <el-radio-button
+              v-for="item in shareModeOptions"
+              :key="item.value"
+              :value="item.value"
+            >
+              {{ item.label }}
+            </el-radio-button>
+          </el-radio-group>
+          <div class="share-mode-note">
+            <div class="share-group-meta">
+              {{ shareModeOptions.find(item => item.value === shareLinkForm.mode)?.description || '' }}
+            </div>
+            <div class="share-group-meta share-mode-hint">
+              {{ shareModeOptions.find(item => item.value === shareLinkForm.mode)?.hint || '' }}
+            </div>
+          </div>
+        </div>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="shareLinkDialogModel = false">取消</el-button>
@@ -790,6 +823,21 @@ onBeforeUnmount(() => {
   flex: 0 0 112px;
 }
 
+.share-mode-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+}
+
+.share-mode-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+}
+
 .rename-field {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
@@ -814,6 +862,10 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   font-size: 12px;
   color: #909399;
+}
+
+.share-mode-hint {
+  margin-top: 2px;
 }
 
 .share-inline-meta {
