@@ -45,6 +45,7 @@ func (h *ShareHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Path         string `json:"path"`
+		Mode         string `json:"mode"`
 		ExpiresIn    int64  `json:"expiresIn"`
 		ExpiresValue int64  `json:"expiresValue"`
 		ExpiresUnit  string `json:"expiresUnit"`
@@ -59,10 +60,13 @@ func (h *ShareHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.shareService.Create(r.Context(), u, req.Path, service.ShareExpiryInput{
-		ExpiresIn:    req.ExpiresIn,
-		ExpiresValue: req.ExpiresValue,
-		ExpiresUnit:  req.ExpiresUnit,
+	item, err := h.shareService.Create(r.Context(), u, req.Path, service.ShareCreateInput{
+		Mode: req.Mode,
+		Expiry: service.ShareExpiryInput{
+			ExpiresIn:    req.ExpiresIn,
+			ExpiresValue: req.ExpiresValue,
+			ExpiresUnit:  req.ExpiresUnit,
+		},
 	})
 	if err != nil {
 		if errors.Is(err, auth.ErrAppScopeDenied) || errors.Is(err, auth.ErrAppScopeRequired) {
@@ -81,6 +85,7 @@ func (h *ShareHandler) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		"token":         item.Token,
 		"name":          item.Name,
 		"path":          item.Path,
+		"mode":          item.Mode,
 		"url":           h.buildShareURL(r, item.Token, item.Name),
 		"viewCount":     item.ViewCount,
 		"downloadCount": item.DownloadCount,
@@ -127,6 +132,7 @@ func (h *ShareHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 		Token         string `json:"token"`
 		Name          string `json:"name"`
 		Path          string `json:"path"`
+		Mode          string `json:"mode"`
 		URL           string `json:"url"`
 		ViewCount     int64  `json:"viewCount"`
 		DownloadCount int64  `json:"downloadCount"`
@@ -145,6 +151,7 @@ func (h *ShareHandler) HandleList(w http.ResponseWriter, r *http.Request) {
 			Token:         item.Token,
 			Name:          item.Name,
 			Path:          item.Path,
+			Mode:          item.Mode,
 			URL:           h.buildShareURL(r, item.Token, item.Name),
 			ViewCount:     item.ViewCount,
 			DownloadCount: item.DownloadCount,
@@ -249,12 +256,16 @@ func (h *ShareHandler) HandleAccess(w http.ResponseWriter, r *http.Request) {
 
 	if shouldCountAccess(r) {
 		_ = h.shareService.IncrementView(r.Context(), token)
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && !item.IsPreviewMode() {
 			_ = h.shareService.IncrementDownload(r.Context(), token)
 		}
 	}
 
-	setAttachmentContentDisposition(w, item.Name)
+	if item.IsPreviewMode() {
+		setInlineContentDisposition(w, item.Name)
+	} else {
+		setAttachmentContentDisposition(w, item.Name)
+	}
 
 	http.ServeContent(w, r, item.Name, info.ModTime(), file)
 }

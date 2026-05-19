@@ -134,6 +134,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			username VARCHAR(255) NOT NULL,
 			name TEXT NOT NULL,
 			path TEXT NOT NULL,
+			mode VARCHAR(20) NOT NULL DEFAULT 'download',
 			expires_at TIMESTAMP NULL,
 			view_count BIGINT NOT NULL DEFAULT 0,
 			download_count BIGINT NOT NULL DEFAULT 0,
@@ -288,6 +289,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`ALTER TABLE cluster_replication_assignments ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP NULL`,
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS view_count BIGINT NOT NULL DEFAULT 0`,
 		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS download_count BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE share_items ADD COLUMN IF NOT EXISTS mode VARCHAR(20) NOT NULL DEFAULT 'download'`,
 		`ALTER TABLE internal_share_items ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`,
 		`ALTER TABLE recycle_items ADD COLUMN IF NOT EXISTS is_dir BOOLEAN NOT NULL DEFAULT FALSE`,
 
