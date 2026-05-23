@@ -6,6 +6,8 @@ PROJECT_NAME="$(basename "${ROOT_DIR}")"
 OUTPUT_DIR="${ROOT_DIR}/output"
 ASSETS_DIR="${ROOT_DIR}/web/dist"
 REQUESTED_TAG="${1:-}"
+TARGET_GOOS="${TARGET_GOOS:-linux}"
+TARGET_GOARCH="${TARGET_GOARCH:-amd64}"
 TAG_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
 MAIN_BRANCH="main"
 ORIGINAL_REF="$(git -C "${ROOT_DIR}" symbolic-ref --quiet --short HEAD || git -C "${ROOT_DIR}" rev-parse --verify HEAD)"
@@ -143,14 +145,14 @@ build_artifacts() {
   fi
   (cd "${web_dir}" && npm run build)
 
-  echo "Building backend binary..."
+  echo "Building backend binary for ${TARGET_GOOS}/${TARGET_GOARCH}..."
   local version build_time git_commit ldflags
   version="$(git -C "${ROOT_DIR}" describe --tags --always --dirty)"
   build_time="$(date -u '+%Y-%m-%d_%H:%M:%S')"
   git_commit="$(git -C "${ROOT_DIR}" rev-parse --short HEAD)"
   ldflags="-X main.version=${version} -X main.buildTime=${build_time} -X main.gitCommit=${git_commit}"
   mkdir -p "${ROOT_DIR}/build"
-  (cd "${ROOT_DIR}" && go build -ldflags "${ldflags}" -o build/warehouse ./cmd/warehouse)
+  (cd "${ROOT_DIR}" && GOOS="${TARGET_GOOS}" GOARCH="${TARGET_GOARCH}" go build -ldflags "${ldflags}" -o build/warehouse ./cmd/warehouse)
 
   if [[ ! -x "${ROOT_DIR}/build/warehouse" ]]; then
     echo "warehouse binary not found: ${ROOT_DIR}/build/warehouse" >&2
