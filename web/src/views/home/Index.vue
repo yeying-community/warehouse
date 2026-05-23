@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent,
 import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
-import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
+import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
 import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
@@ -113,7 +113,7 @@ const movingSharedByDrag = ref(false)
 const shareLinkDialogVisible = ref(false)
 const shareLinkSubmitting = ref(false)
 const shareLinkTarget = ref<FileItem | null>(null)
-const shareLinkForm = ref(createDefaultShareExpiryForm())
+const shareLinkForm = ref(createDefaultShareLinkForm())
 const shareUserDialogVisible = ref(false)
 const shareUserSubmitting = ref(false)
 const shareUserTarget = ref<FileItem | null>(null)
@@ -186,6 +186,9 @@ type ShareExpiryForm = {
   expiresValue: string
   expiresUnit: ShareExpiryUnit
 }
+type ShareLinkForm = ShareExpiryForm & {
+  mode: ShareMode
+}
 type AccessKeyForm = ShareExpiryForm & {
   name: string
   permissions: AccessKeyPermission[]
@@ -199,6 +202,20 @@ const SHARE_EXPIRY_UNITS: Array<{ label: string; value: ShareExpiryUnit }> = [
   { label: '周', value: 'week' },
   { label: '月', value: 'month' },
   { label: '年', value: 'year' }
+]
+const SHARE_MODE_OPTIONS: Array<{ label: string; value: ShareMode; description: string; hint: string }> = [
+  {
+    label: '仅下载',
+    value: 'download',
+    description: '访问链接后直接下载文件',
+    hint: '适合压缩包、安装包、二进制文件，或希望避免浏览器内联打开的场景'
+  },
+  {
+    label: '浏览器打开',
+    value: 'preview',
+    description: '浏览器会尝试直接打开支持的文件类型，不支持时仍可能下载',
+    hint: '更适合图片、PDF、文本等浏览器原生支持或较易渲染的格式'
+  }
 ]
 const ACCESS_KEY_PERMISSIONS: Array<{ label: string; value: AccessKeyPermission }> = [
   { label: '读取', value: 'read' },
@@ -1027,6 +1044,13 @@ function createDefaultShareExpiryForm(): ShareExpiryForm {
   return {
     expiresValue: '0',
     expiresUnit: 'hour'
+  }
+}
+
+function createDefaultShareLinkForm(): ShareLinkForm {
+  return {
+    ...createDefaultShareExpiryForm(),
+    mode: 'download'
   }
 }
 
@@ -2241,7 +2265,7 @@ async function submitRename() {
 async function shareFile(item: FileItem) {
   if (item.isDir) return
   shareLinkTarget.value = item
-  shareLinkForm.value = createDefaultShareExpiryForm()
+  shareLinkForm.value = createDefaultShareLinkForm()
   shareLinkDialogVisible.value = true
 }
 
@@ -2252,7 +2276,10 @@ async function submitShareLink() {
 
   shareLinkSubmitting.value = true
   try {
-    const data = await shareApi.create(shareLinkTarget.value.path, expiryPayload)
+    const data = await shareApi.create(shareLinkTarget.value.path, {
+      ...expiryPayload,
+      mode: shareLinkForm.value.mode
+    })
     const url = data.url || `${window.location.origin}/api/v1/public/share/${data.token}`
     await copyText(url, '分享链接已复制')
     shareLinkDialogVisible.value = false
@@ -3545,6 +3572,10 @@ async function copyShareLink(item: ShareItem) {
 
 function getShareLink(item: ShareItem): string {
   return item.url || `${window.location.origin}/api/v1/public/share/${item.token}`
+}
+
+function formatShareMode(mode?: ShareMode | string): string {
+  return mode === 'preview' ? '浏览器打开' : '仅下载'
 }
 
 function openShareUserDialog(item: FileItem) {
@@ -5305,6 +5336,7 @@ onBeforeUnmount(() => {
         :format-deleted-time="formatDeletedTime"
         :format-size-detail="formatSizeDetail"
         :format-share-permission="formatSharePermission"
+        :format-share-mode="formatShareMode"
         :get-share-link="getShareLink"
         :copy-share-link="copyShareLink"
         :revoke-share="revokeShare"
@@ -5321,6 +5353,7 @@ onBeforeUnmount(() => {
         :share-link-target="shareLinkTarget"
         :share-link-form="shareLinkForm"
         :share-expiry-units="SHARE_EXPIRY_UNITS"
+        :share-mode-options="SHARE_MODE_OPTIONS"
         :submit-share-link="submitShareLink"
         v-model:share-user-dialog-visible="shareUserDialogVisible"
         :share-user-submitting="shareUserSubmitting"

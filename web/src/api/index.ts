@@ -229,12 +229,15 @@ export interface ShareItem {
   token: string
   name: string
   path: string
+  mode: ShareMode
   url: string
   viewCount: number
   downloadCount: number
   expiresAt?: string
   createdAt?: string
 }
+
+export type ShareMode = 'download' | 'preview'
 
 // 定向分享项目类型
 export interface DirectShareItem {
@@ -310,11 +313,13 @@ export const shareApi = {
     expiresIn?: number
     expiresValue?: number
     expiresUnit?: ShareExpiryUnit
+    mode?: ShareMode
   }) {
     return request<{
       token: string
       name: string
       path: string
+      mode: ShareMode
       url: string
       viewCount: number
       downloadCount: number

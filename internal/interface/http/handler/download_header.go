@@ -7,9 +7,17 @@ import (
 )
 
 func setAttachmentContentDisposition(w http.ResponseWriter, fileName string) {
+	setContentDisposition(w, "attachment", fileName)
+}
+
+func setInlineContentDisposition(w http.ResponseWriter, fileName string) {
+	setContentDisposition(w, "inline", fileName)
+}
+
+func setContentDisposition(w http.ResponseWriter, dispositionType, fileName string) {
 	encodedName := url.PathEscape(fileName)
 	fallbackName := asciiFilenameFallback(fileName)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+fallbackName+"\"; filename*=UTF-8''"+encodedName)
+	w.Header().Set("Content-Disposition", dispositionType+"; filename=\""+fallbackName+"\"; filename*=UTF-8''"+encodedName)
 }
 
 func asciiFilenameFallback(fileName string) string {
