@@ -541,6 +541,7 @@ func (h *ShareUserHandler) HandleDownload(w http.ResponseWriter, r *http.Request
 
 	shareID := r.URL.Query().Get("shareId")
 	relPath := r.URL.Query().Get("path")
+	disposition := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("disposition")))
 	if strings.TrimSpace(shareID) == "" {
 		http.Error(w, "shareId is required", http.StatusBadRequest)
 		return
@@ -585,7 +586,11 @@ func (h *ShareUserHandler) HandleDownload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	setAttachmentContentDisposition(w, info.Name())
+	if disposition == "inline" {
+		setInlineContentDisposition(w, info.Name())
+	} else {
+		setAttachmentContentDisposition(w, info.Name())
+	}
 
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }

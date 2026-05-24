@@ -28,7 +28,7 @@ const props = defineProps<{
   sharedCanDelete: boolean
   openShareDetail: (mode: 'share' | 'directShare' | 'receivedShare', item: DirectShareItem) => void
   downloadSharedRoot: (item: DirectShareItem) => void
-  getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | 'image' | null
+  getPreviewMode: (item: FileItem) => 'text' | 'pdf' | 'word' | 'image' | 'audio' | 'video' | null
   openFilePreview: (item: FileItem) => void
   openSharedEntryDetail: (item: FileItem) => void
   downloadSharedFile: (item: FileItem) => void
