@@ -164,7 +164,7 @@ const renameMode = ref<'file' | 'shared' | null>(null)
 const renameForm = ref({
   name: ''
 })
-type PreviewMode = 'text' | 'pdf' | 'word' | 'image'
+type PreviewMode = 'text' | 'pdf' | 'word' | 'image' | 'audio'
 const previewVisible = ref(false)
 const previewMode = ref<PreviewMode | null>(null)
 const previewLoading = ref(false)
@@ -173,6 +173,7 @@ const previewContent = ref('')
 const previewOrigin = ref('')
 const previewTarget = ref<FileItem | null>(null)
 const previewBlob = ref<Blob | null>(null)
+const previewSourceUrl = ref('')
 const previewReadOnly = ref(false)
 let previewRequestSeq = 0
 const VIEW_STORAGE_KEY = 'warehouse:lastView'
@@ -771,6 +772,7 @@ const TEXT_FILENAMES = new Set([
 const PDF_EXTENSIONS = new Set(['pdf'])
 const WORD_EXTENSIONS = new Set(['docx'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'])
+const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus', 'weba', 'oga'])
 
 function getFileExtension(name: string): string {
   if (!name) return ''
@@ -795,6 +797,7 @@ function getPreviewMode(item?: FileItem | null): PreviewMode | null {
   if (ext && PDF_EXTENSIONS.has(ext)) return 'pdf'
   if (ext && WORD_EXTENSIONS.has(ext)) return 'word'
   if (ext && IMAGE_EXTENSIONS.has(ext)) return 'image'
+  if (ext && AUDIO_EXTENSIONS.has(ext)) return 'audio'
   return null
 }
 
@@ -1741,19 +1744,21 @@ async function openFilePreview(item: FileItem) {
   previewContent.value = ''
   previewOrigin.value = ''
   previewBlob.value = null
+  previewSourceUrl.value = ''
   previewReadOnly.value = isSharedBrowse.value && mode === 'text' && !sharedCanUpdate.value
   previewVisible.value = true
   previewLoading.value = true
   try {
     const token = localStorage.getItem('authToken') || ''
+    const previewURL = isSharedBrowse.value && sharedActive.value
+      ? buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
+          shareId: sharedActive.value.id,
+          path: normalizeShareRelative(item.path)
+        }))
+      : buildDavPath(item.path)
     if (mode === 'text') {
       const response = await fetch(
-        isSharedBrowse.value && sharedActive.value
-          ? buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
-              shareId: sharedActive.value.id,
-              path: normalizeShareRelative(item.path)
-            }))
-          : buildDavPath(item.path),
+        previewURL,
         {
           method: 'GET',
           headers: {
@@ -1768,14 +1773,13 @@ async function openFilePreview(item: FileItem) {
       if (requestSeq !== previewRequestSeq) return
       previewContent.value = text
       previewOrigin.value = text
+    } else if (mode === 'audio') {
+      ensureAuthCookie(token)
+      if (requestSeq !== previewRequestSeq) return
+      previewSourceUrl.value = previewURL
     } else if (mode === 'pdf' || mode === 'word' || mode === 'image') {
       const response = await fetch(
-        isSharedBrowse.value && sharedActive.value
-          ? buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
-              shareId: sharedActive.value.id,
-              path: normalizeShareRelative(item.path)
-            }))
-          : buildDavPath(item.path),
+        previewURL,
         {
           method: 'GET',
           headers: {
@@ -1808,6 +1812,7 @@ function resetPreview() {
   previewContent.value = ''
   previewOrigin.value = ''
   previewBlob.value = null
+  previewSourceUrl.value = ''
   previewReadOnly.value = false
   previewLoading.value = false
   previewSaving.value = false
@@ -5577,6 +5582,7 @@ onBeforeUnmount(() => {
         :title="previewTitle"
         :mode="previewMode || 'text'"
         :blob="previewBlob"
+        :source-url="previewSourceUrl"
         :file-name="previewTarget?.name || ''"
         :loading="previewLoading"
         :saving="previewSaving"
