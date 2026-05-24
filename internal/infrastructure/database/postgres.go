@@ -156,6 +156,14 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
+		// 好友地址分组
+		`CREATE TABLE IF NOT EXISTS address_groups (
+			id VARCHAR(50) PRIMARY KEY,
+			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+
 		// 内部共享受众表：共享对象可以绑定多个受众（用户或全员）
 		`CREATE TABLE IF NOT EXISTS internal_share_audiences (
 			id VARCHAR(50) PRIMARY KEY,
@@ -164,14 +172,6 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			target_user_id VARCHAR(50) NULL REFERENCES users(id) ON DELETE CASCADE,
 			target_wallet_address VARCHAR(255) NULL,
 			source_group_id VARCHAR(50) NULL REFERENCES address_groups(id) ON DELETE SET NULL,
-			created_at TIMESTAMP NOT NULL DEFAULT NOW()
-		)`,
-
-		// 好友地址分组
-		`CREATE TABLE IF NOT EXISTS address_groups (
-			id VARCHAR(50) PRIMARY KEY,
-			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			name VARCHAR(255) NOT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
