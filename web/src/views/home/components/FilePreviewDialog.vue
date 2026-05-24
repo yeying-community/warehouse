@@ -3,7 +3,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick, shallowRef,
 import { renderAsync } from 'docx-preview'
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.min.mjs'
 
-type PreviewMode = 'text' | 'pdf' | 'word' | 'image' | 'audio'
+type PreviewMode = 'text' | 'pdf' | 'word' | 'image' | 'audio' | 'video'
 
 let pdfWorkerReady = false
 
@@ -306,7 +306,7 @@ watch(
       imageUrl.value = URL.createObjectURL(blob)
       return
     }
-    if (mode === 'audio') {
+    if (mode === 'audio' || mode === 'video') {
       resetPdf()
       revokeImageUrl()
       resetImageScale()
@@ -687,6 +687,20 @@ function handlePdfWheel(event: WheelEvent) {
           <div class="audio-preview-name" :title="fileName">{{ fileName }}</div>
         </div>
       </template>
+      <template v-else-if="mode === 'video'">
+        <div v-if="!sourceUrl" class="preview-placeholder">正在加载视频...</div>
+        <div v-else class="video-preview-panel">
+          <video
+            class="video-player"
+            :src="sourceUrl"
+            :aria-label="fileName || '视频预览'"
+            controls
+            preload="metadata"
+            playsinline
+          />
+          <div class="video-preview-name" :title="fileName">{{ fileName }}</div>
+        </div>
+      </template>
       <template v-else>
         <div v-if="isDocx && blob" class="preview-docx" ref="wordContainer"></div>
         <div v-if="isDocx && blob" ref="wordStyleContainer" class="docx-style-container"></div>
@@ -889,6 +903,33 @@ function handlePdfWheel(event: WheelEvent) {
 .audio-preview-name {
   font-size: 13px;
   color: #606266;
+  text-align: center;
+  word-break: break-all;
+}
+
+.video-preview-panel {
+  min-height: 320px;
+  border: 1px solid #eef1f4;
+  border-radius: 12px;
+  background: #0f172a;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 14px;
+  padding: 16px;
+}
+
+.video-player {
+  width: 100%;
+  max-height: 60vh;
+  border-radius: 8px;
+  background: #000;
+}
+
+.video-preview-name {
+  font-size: 13px;
+  color: #cbd5e1;
   text-align: center;
   word-break: break-all;
 }

@@ -164,7 +164,7 @@ const renameMode = ref<'file' | 'shared' | null>(null)
 const renameForm = ref({
   name: ''
 })
-type PreviewMode = 'text' | 'pdf' | 'word' | 'image' | 'audio'
+type PreviewMode = 'text' | 'pdf' | 'word' | 'image' | 'audio' | 'video'
 const previewVisible = ref(false)
 const previewMode = ref<PreviewMode | null>(null)
 const previewLoading = ref(false)
@@ -773,6 +773,7 @@ const PDF_EXTENSIONS = new Set(['pdf'])
 const WORD_EXTENSIONS = new Set(['docx'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'])
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus', 'weba', 'oga'])
+const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'ogv', 'mov', 'm4v', 'mkv'])
 
 function getFileExtension(name: string): string {
   if (!name) return ''
@@ -798,6 +799,7 @@ function getPreviewMode(item?: FileItem | null): PreviewMode | null {
   if (ext && WORD_EXTENSIONS.has(ext)) return 'word'
   if (ext && IMAGE_EXTENSIONS.has(ext)) return 'image'
   if (ext && AUDIO_EXTENSIONS.has(ext)) return 'audio'
+  if (ext && VIDEO_EXTENSIONS.has(ext)) return 'video'
   return null
 }
 
@@ -1751,10 +1753,12 @@ async function openFilePreview(item: FileItem) {
   try {
     const token = localStorage.getItem('authToken') || ''
     const previewURL = isSharedBrowse.value && sharedActive.value
-      ? buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
-          shareId: sharedActive.value.id,
-          path: normalizeShareRelative(item.path)
-        }))
+      ? ((mode === 'audio' || mode === 'video')
+          ? buildShareUserPreviewUrl(sharedActive.value.id, item.path)
+          : buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
+              shareId: sharedActive.value.id,
+              path: normalizeShareRelative(item.path)
+            })))
       : buildDavPath(item.path)
     if (mode === 'text') {
       const response = await fetch(
@@ -1773,7 +1777,7 @@ async function openFilePreview(item: FileItem) {
       if (requestSeq !== previewRequestSeq) return
       previewContent.value = text
       previewOrigin.value = text
-    } else if (mode === 'audio') {
+    } else if (mode === 'audio' || mode === 'video') {
       ensureAuthCookie(token)
       if (requestSeq !== previewRequestSeq) return
       previewSourceUrl.value = previewURL
@@ -2043,6 +2047,14 @@ function buildShareUserUrl(path: string, params?: URLSearchParams) {
   const base = API_BASE ? API_BASE.replace(/\/+$/, '') : ''
   const query = params ? `?${params.toString()}` : ''
   return `${base}${path}${query}`
+}
+
+function buildShareUserPreviewUrl(shareID: string, filePath: string) {
+  return buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
+    shareId: shareID,
+    path: normalizeShareRelative(filePath),
+    disposition: 'inline'
+  }))
 }
 
 function normalizeShareRelative(path: string) {
