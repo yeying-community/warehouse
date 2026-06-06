@@ -1,20 +1,23 @@
 <script lang="ts" setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { SwitchButton, Wallet } from '@element-plus/icons-vue'
-import { isLoggedIn, getCurrentAccount, logout, hasWallet, loginWithWallet, getWalletName, watchWalletAccounts, markAccountChanged } from '@/plugins/auth'
+import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
 
 const isAuth = ref(false)
 const account = ref<string | null>(null)
 const walletInfo = ref({ present: false, name: '' })
 let stopAccountWatch: (() => void) | null = null
+let stopWalletProviderWatch: (() => void) | null = null
 
 onMounted(() => {
   isAuth.value = isLoggedIn()
   account.value = getCurrentAccount()
-  walletInfo.value = {
-    present: hasWallet(),
-    name: getWalletName()
-  }
+  stopWalletProviderWatch = watchWalletProvider((present) => {
+    walletInfo.value = {
+      present,
+      name: present ? getWalletName() : ''
+    }
+  })
 })
 
 onMounted(() => {
@@ -52,6 +55,7 @@ function handleMenuCommand(command: string) {
 }
 
 onBeforeUnmount(() => {
+  stopWalletProviderWatch?.()
   stopAccountWatch?.()
 })
 </script>
