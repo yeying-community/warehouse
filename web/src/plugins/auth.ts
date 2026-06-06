@@ -66,6 +66,47 @@ export function hasWallet(): boolean {
   return getWalletProvider() !== null
 }
 
+export function watchWalletProvider(handler: (present: boolean) => void): () => void {
+  let stopped = false
+  let lastPresent: boolean | null = null
+  let pollCount = 0
+  let pollTimer: number | null = null
+
+  const emit = () => {
+    if (stopped) return
+    const present = hasWallet()
+    if (present === lastPresent) return
+    lastPresent = present
+    handler(present)
+  }
+
+  const poll = () => {
+    if (stopped) return
+    emit()
+    pollCount += 1
+    if (lastPresent || pollCount >= 20) return
+    pollTimer = window.setTimeout(poll, 100)
+  }
+
+  const handleProviderReady = () => {
+    emit()
+  }
+
+  window.addEventListener('ethereum#initialized', handleProviderReady)
+  window.addEventListener('eip6963:announceProvider', handleProviderReady)
+  window.dispatchEvent(new Event('eip6963:requestProvider'))
+  poll()
+
+  return () => {
+    stopped = true
+    if (pollTimer !== null) {
+      window.clearTimeout(pollTimer)
+    }
+    window.removeEventListener('ethereum#initialized', handleProviderReady)
+    window.removeEventListener('eip6963:announceProvider', handleProviderReady)
+  }
+}
+
 // 获取钱包名称
 export function getWalletName(): string {
   const provider = getWalletProvider()

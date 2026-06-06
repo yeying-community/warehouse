@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
-import { isLoggedIn, hasWallet, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, consumeAccountChanged } from '@/plugins/auth'
+import { isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider, consumeAccountChanged } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
@@ -56,7 +56,9 @@ const isMobileViewport = ref(false)
 const walletHistory = ref<string[]>([])
 const selectedWalletAccount = ref('')
 const walletRowRef = ref<HTMLElement | null>(null)
+const walletPresent = ref(false)
 let stopAccountWatch: (() => void) | null = null
+let stopWalletProviderWatch: (() => void) | null = null
 
 // 回收站相关状态
 const showRecycle = ref(false)
@@ -4133,6 +4135,9 @@ function syncWalletHistory(next?: string) {
 }
 
 onMounted(() => {
+  stopWalletProviderWatch = watchWalletProvider((present) => {
+    walletPresent.value = present
+  })
   const changed = consumeAccountChanged()
   if (changed) {
     showInfo('钱包账户已切换，请重新登录')
@@ -4147,6 +4152,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', syncViewportMode)
+  stopWalletProviderWatch?.()
   stopAccountWatch?.()
   clearEmailCodeTimer()
 })
@@ -4171,7 +4177,7 @@ onBeforeUnmount(() => {
         <div class="login-hero">
           <div class="login-card">
             <div class="login-section">
-              <div v-if="hasWallet() && walletHistory.length" ref="walletRowRef" class="login-wallet-row">
+              <div v-if="walletPresent && walletHistory.length" ref="walletRowRef" class="login-wallet-row">
                 <el-select
                   v-model="selectedWalletAccount"
                   placeholder="历史账户（可选）"
@@ -4197,7 +4203,7 @@ onBeforeUnmount(() => {
                 </el-button>
               </div>
               <el-button
-                v-else-if="hasWallet()"
+                v-else-if="walletPresent"
                 type="primary"
                 class="login-main-btn login-wallet-btn"
                 @click="handleWalletLogin"
