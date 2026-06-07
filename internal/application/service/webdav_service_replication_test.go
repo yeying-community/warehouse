@@ -315,11 +315,15 @@ type testMutationRecorder struct {
 	movePathErr     error
 	copyPathErr     error
 	removePathErr   error
+	ensureDirCalls  int
 	upsertFileCalls int
 	removePathCalls int
 }
 
-func (r *testMutationRecorder) EnsureDir(context.Context, string) error { return r.ensureDirErr }
+func (r *testMutationRecorder) EnsureDir(context.Context, string) error {
+	r.ensureDirCalls++
+	return r.ensureDirErr
+}
 
 func (r *testMutationRecorder) UpsertFile(context.Context, string) error {
 	r.upsertFileCalls++

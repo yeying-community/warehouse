@@ -369,7 +369,7 @@ func (s *WebDAVService) handleDirectDelete(
 	}
 }
 
-func shouldHardDeleteSyncArtifact(normalizedPath string) bool {
+func isEphemeralSyncArtifactPath(normalizedPath string) bool {
 	cleaned := path.Clean("/" + strings.TrimSpace(normalizedPath))
 	if cleaned == "/" || !strings.HasPrefix(cleaned, "/apps/") {
 		return false
@@ -387,6 +387,10 @@ func shouldHardDeleteSyncArtifact(normalizedPath string) bool {
 	}
 
 	return base == "backup.__sync_mutex_v1.__sync_lock_v1"
+}
+
+func shouldHardDeleteSyncArtifact(normalizedPath string) bool {
+	return isEphemeralSyncArtifactPath(normalizedPath)
 }
 
 // moveToRecycle 将文件移动到回收站并保存记录

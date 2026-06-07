@@ -82,6 +82,9 @@ func (r *OutboxMutationRecorder) EnsureDir(ctx context.Context, fullPath string)
 	if normalized == "/" {
 		return nil
 	}
+	if isEphemeralSyncArtifactPath(normalized) {
+		return nil
+	}
 	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
@@ -105,6 +108,9 @@ func (r *OutboxMutationRecorder) UpsertFile(ctx context.Context, fullPath string
 	}
 	if normalized == "/" {
 		return fmt.Errorf("cannot record upsert for root path")
+	}
+	if isEphemeralSyncArtifactPath(normalized) {
+		return nil
 	}
 
 	size, sha256Hex, err := fileDigest(fullPath)
@@ -141,6 +147,9 @@ func (r *OutboxMutationRecorder) MovePath(ctx context.Context, fromFullPath, toF
 	if fromPath == "/" || toPath == "/" {
 		return fmt.Errorf("cannot record move involving root path")
 	}
+	if isEphemeralSyncArtifactPath(fromPath) || isEphemeralSyncArtifactPath(toPath) {
+		return nil
+	}
 	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
@@ -169,6 +178,9 @@ func (r *OutboxMutationRecorder) CopyPath(ctx context.Context, fromFullPath, toF
 	}
 	if fromPath == "/" || toPath == "/" {
 		return fmt.Errorf("cannot record copy involving root path")
+	}
+	if isEphemeralSyncArtifactPath(fromPath) || isEphemeralSyncArtifactPath(toPath) {
+		return nil
 	}
 	targets, err := r.resolveTargets(ctx)
 	if err != nil {

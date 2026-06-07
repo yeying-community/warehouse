@@ -239,6 +239,55 @@ func TestMutationRecorderMoveCopyRemoveAndEnsureDir(t *testing.T) {
 	}
 }
 
+func TestMutationRecorderSkipsEphemeralSyncArtifacts(t *testing.T) {
+	root := t.TempDir()
+	lockDir := filepath.Join(root, "apps", "localhost-3020", "backup.__sync_mutex_v1.__sync_lock_v1")
+	lockFile := filepath.Join(lockDir, "lock.json")
+	txnFile := filepath.Join(root, "apps", "localhost-3020", "backup.__sync_txn_data_v1.123-abc.json")
+	if err := os.MkdirAll(lockDir, 0755); err != nil {
+		t.Fatalf("MkdirAll lockDir: %v", err)
+	}
+	if err := os.WriteFile(lockFile, []byte("lock"), 0644); err != nil {
+		t.Fatalf("WriteFile lockFile: %v", err)
+	}
+	if err := os.WriteFile(txnFile, []byte("txn"), 0644); err != nil {
+		t.Fatalf("WriteFile txnFile: %v", err)
+	}
+
+	repo := &fakeReplicationOutboxRepository{}
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Replication.Enabled = true
+	cfg.WebDAV.Directory = root
+	generation := int64(9)
+
+	recorder := NewMutationRecorder(cfg, repo, fakeMutationRecorderResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			AssignmentGeneration: &generation,
+		},
+	}, zap.NewNop())
+	if err := recorder.EnsureDir(context.Background(), lockDir); err != nil {
+		t.Fatalf("EnsureDir lockDir: %v", err)
+	}
+	if err := recorder.UpsertFile(context.Background(), lockFile); err != nil {
+		t.Fatalf("UpsertFile lockFile: %v", err)
+	}
+	if err := recorder.UpsertFile(context.Background(), txnFile); err != nil {
+		t.Fatalf("UpsertFile txnFile: %v", err)
+	}
+	if err := recorder.MovePath(context.Background(), lockFile, filepath.Join(root, "apps", "localhost-3020", "lock.json"), false); err != nil {
+		t.Fatalf("MovePath lockFile: %v", err)
+	}
+	if err := recorder.CopyPath(context.Background(), txnFile, filepath.Join(root, "apps", "localhost-3020", "copy.json"), false); err != nil {
+		t.Fatalf("CopyPath txnFile: %v", err)
+	}
+	if len(repo.events) != 0 {
+		t.Fatalf("expected no outbox events for ephemeral sync artifacts, got %d", len(repo.events))
+	}
+}
+
 func TestMutationRecorderRejectsPathOutsideRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.txt")
