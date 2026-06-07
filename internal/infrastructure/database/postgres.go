@@ -293,6 +293,15 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			expires_at TIMESTAMP NULL
 		)`,
 
+		// 消息偏好：控制未来是否生成某类用户消息
+		`CREATE TABLE IF NOT EXISTS notification_preferences (
+			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			type VARCHAR(40) NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (user_id, type)
+		)`,
+
 		// 补充分享表字段（兼容已存在表）
 		`ALTER TABLE replication_outbox ADD COLUMN IF NOT EXISTS assignment_generation BIGINT NULL`,
 		`ALTER TABLE replication_offsets ADD COLUMN IF NOT EXISTS assignment_generation BIGINT NULL`,
@@ -380,6 +389,8 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_key
 			ON notifications(dedupe_key)
 			WHERE dedupe_key IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_notification_preferences_user
+			ON notification_preferences(user_id)`,
 
 		// 兼容已有地址簿表
 		`ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,

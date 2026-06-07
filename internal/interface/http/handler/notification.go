@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/notification"
@@ -104,6 +107,56 @@ func (h *NotificationHandler) HandleMarkAllRead(w http.ResponseWriter, r *http.R
 	h.writeJSON(w, http.StatusOK, map[string]any{"message": "ok"})
 }
 
+func (h *NotificationHandler) HandlePreferences(w http.ResponseWriter, r *http.Request) {
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		items, err := h.service.GetPreferences(r.Context(), u)
+		if err != nil {
+			h.logger.Error("failed to get notification preferences", zap.String("username", u.Username), zap.Error(err))
+			h.writeError(w, http.StatusInternalServerError, "Failed to get notification preferences")
+			return
+		}
+		h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	case http.MethodPost:
+		var req struct {
+			Type    string `json:"type"`
+			Enabled bool   `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if err := h.service.SetPreference(r.Context(), u, req.Type, req.Enabled); err != nil {
+			h.writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.writeJSON(w, http.StatusOK, map[string]any{"message": "ok"})
+	default:
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+func (h *NotificationHandler) HandleStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	h.streamCounts(w, r, func(ctx context.Context) (map[string]int, error) {
+		count, err := h.service.UnreadCountForUser(ctx, u)
+		return map[string]int{"user": count}, err
+	})
+}
+
 func (h *NotificationHandler) HandleAdminList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
@@ -165,6 +218,49 @@ func (h *NotificationHandler) HandleAdminMarkAllRead(w http.ResponseWriter, r *h
 	h.writeJSON(w, http.StatusOK, map[string]any{"message": "ok"})
 }
 
+func (h *NotificationHandler) HandleAdminCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	var req struct {
+		RecipientRole   string   `json:"recipientRole"`
+		TargetUsernames []string `json:"targetUsernames"`
+		Title           string   `json:"title"`
+		Content         string   `json:"content"`
+		Severity        string   `json:"severity"`
+		ActionURL       string   `json:"actionUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	count, err := h.service.CreateAnnouncement(r.Context(), service.AnnouncementInput{
+		RecipientRole:   req.RecipientRole,
+		TargetUsernames: req.TargetUsernames,
+		Title:           req.Title,
+		Content:         req.Content,
+		Severity:        req.Severity,
+		ActionURL:       req.ActionURL,
+	})
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]any{"message": "ok", "count": count})
+}
+
+func (h *NotificationHandler) HandleAdminStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+	h.streamCounts(w, r, func(ctx context.Context) (map[string]int, error) {
+		count, err := h.service.UnreadCountForAdmin(ctx)
+		return map[string]int{"admin": count}, err
+	})
+}
+
 type notificationResponse struct {
 	ID        string `json:"id"`
 	Type      string `json:"type"`
@@ -209,6 +305,50 @@ func parseLimit(r *http.Request, fallback int) int {
 		return fallback
 	}
 	return limit
+}
+
+func (h *NotificationHandler) streamCounts(w http.ResponseWriter, r *http.Request, load func(context.Context) (map[string]int, error)) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		h.writeError(w, http.StatusInternalServerError, "Streaming is not supported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	write := func() bool {
+		counts, err := load(r.Context())
+		if err != nil {
+			h.logger.Warn("failed to load notification stream counts", zap.Error(err))
+			counts = map[string]int{}
+		}
+		payload, err := json.Marshal(counts)
+		if err != nil {
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: unread\ndata: %s\n\n", payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+
+	if !write() {
+		return
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !write() {
+				return
+			}
+		}
+	}
 }
 
 func (h *NotificationHandler) writeJSON(w http.ResponseWriter, code int, data interface{}) {

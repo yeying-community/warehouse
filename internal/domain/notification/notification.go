@@ -22,6 +22,13 @@ const (
 	TypeAdminNotice = "admin_notice"
 )
 
+var PreferenceTypes = []string{
+	TypeQuota,
+	TypeShare,
+	TypeSystem,
+	TypeAdminNotice,
+}
+
 type Notification struct {
 	ID              string
 	RecipientUserID string
@@ -35,6 +42,11 @@ type Notification struct {
 	ReadAt          *time.Time
 	CreatedAt       time.Time
 	ExpiresAt       *time.Time
+}
+
+type Preference struct {
+	Type    string
+	Enabled bool
 }
 
 type CreateInput struct {

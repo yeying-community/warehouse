@@ -1,7 +1,7 @@
 <script lang="ts" setup>
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { Bell, SwitchButton, Wallet } from '@element-plus/icons-vue'
-import { notificationApi, type NotificationItem } from '@/api'
+import { notificationApi, type AdminNotificationCreatePayload, type NotificationItem, type NotificationPreferenceItem } from '@/api'
 import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
 
 const isAuth = ref(false)
@@ -10,15 +10,29 @@ const walletInfo = ref({ present: false, name: '' })
 const notificationOpen = ref(false)
 const notificationLoading = ref(false)
 const notificationTab = ref<'user' | 'admin'>('user')
+const notificationView = ref<'messages' | 'preferences' | 'announce'>('messages')
 const userNotifications = ref<NotificationItem[]>([])
 const adminNotifications = ref<NotificationItem[]>([])
+const notificationPreferences = ref<Array<{ type: string; enabled: boolean }>>([])
 const userUnreadCount = ref(0)
 const adminUnreadCount = ref(0)
 const adminNotificationsAvailable = ref(false)
+const announcementSubmitting = ref(false)
+const announcementForm = ref<AdminNotificationCreatePayload>({
+  recipientRole: 'all',
+  targetUsernames: [],
+  title: '',
+  content: '',
+  severity: 'info',
+  actionUrl: ''
+})
+const announcementTargetsText = ref('')
 const totalUnreadCount = computed(() => userUnreadCount.value + adminUnreadCount.value)
 let stopAccountWatch: (() => void) | null = null
 let stopWalletProviderWatch: (() => void) | null = null
 let notificationTimer: number | null = null
+let userNotificationStream: EventSource | null = null
+let adminNotificationStream: EventSource | null = null
 
 onMounted(() => {
   isAuth.value = isLoggedIn()
@@ -31,6 +45,7 @@ onMounted(() => {
   })
   if (isAuth.value) {
     void refreshUnreadCounts()
+    startNotificationStreams()
     notificationTimer = window.setInterval(() => {
       void refreshUnreadCounts()
     }, 30000)
@@ -108,10 +123,21 @@ async function loadNotifications() {
   }
 }
 
+async function loadPreferences() {
+  try {
+    const result = await notificationApi.preferences()
+    notificationPreferences.value = normalizePreferences(result.items || [])
+  } catch (error) {
+    console.warn('获取消息偏好失败:', error)
+  }
+}
+
 async function handleNotificationOpenChange(open: boolean) {
   notificationOpen.value = open
   if (open) {
+    notificationView.value = 'messages'
     await loadNotifications()
+    await loadPreferences()
     await refreshUnreadCounts()
   }
 }
@@ -150,6 +176,44 @@ function currentNotifications() {
   return notificationTab.value === 'admin' ? adminNotifications.value : userNotifications.value
 }
 
+function normalizePreferences(items: NotificationPreferenceItem[]) {
+  const labels = ['quota', 'share', 'system', 'admin_notice']
+  const byType = new Map<string, boolean>()
+  items.forEach(item => {
+    const type = item.type || item.Type || ''
+    if (!type) return
+    byType.set(type, Boolean(item.enabled ?? item.Enabled ?? true))
+  })
+  return labels.map(type => ({
+    type,
+    enabled: byType.get(type) ?? true
+  }))
+}
+
+function preferenceLabel(type: string): string {
+  if (type === 'quota') return '额度提醒'
+  if (type === 'share') return '分享提醒'
+  if (type === 'system') return '系统提醒'
+  if (type === 'admin_notice') return '管理员公告'
+  return type
+}
+
+async function updatePreference(type: string, enabled: boolean) {
+  const target = notificationPreferences.value.find(item => item.type === type)
+  const previous = target?.enabled ?? true
+  if (target) target.enabled = enabled
+  try {
+    await notificationApi.setPreference(type, enabled)
+  } catch (error) {
+    if (target) target.enabled = previous
+    console.warn('更新消息偏好失败:', error)
+  }
+}
+
+function handlePreferenceChange(type: string, value: string | number | boolean) {
+  void updatePreference(type, Boolean(value))
+}
+
 function formatNotificationTime(value: string): string {
   if (!value) return ''
   const date = new Date(value)
@@ -185,10 +249,82 @@ async function handleNotificationClick(item: NotificationItem, scope: 'user' | '
   }
 }
 
+async function submitAnnouncement() {
+  const title = announcementForm.value.title.trim()
+  const content = announcementForm.value.content.trim()
+  if (!title || !content) return
+  announcementSubmitting.value = true
+  try {
+    const targetUsernames = announcementTargetsText.value
+      .split(/[,\n]/)
+      .map(item => item.trim())
+      .filter(Boolean)
+    await notificationApi.adminCreate({
+      ...announcementForm.value,
+      title,
+      content,
+      targetUsernames,
+      actionUrl: announcementForm.value.actionUrl?.trim() || undefined
+    })
+    announcementForm.value = {
+      recipientRole: 'all',
+      targetUsernames: [],
+      title: '',
+      content: '',
+      severity: 'info',
+      actionUrl: ''
+    }
+    announcementTargetsText.value = ''
+    notificationView.value = 'messages'
+    await loadNotifications()
+    await refreshUnreadCounts()
+  } catch (error) {
+    console.warn('发送公告失败:', error)
+  } finally {
+    announcementSubmitting.value = false
+  }
+}
+
+function startNotificationStreams() {
+  stopNotificationStreams()
+  try {
+    userNotificationStream = new EventSource(notificationApi.streamUrl(), { withCredentials: true })
+    userNotificationStream.addEventListener('unread', (event) => {
+      const data = JSON.parse((event as MessageEvent).data || '{}')
+      userUnreadCount.value = Number(data.user || 0)
+    })
+  } catch (error) {
+    console.warn('用户消息推送连接失败:', error)
+  }
+  try {
+    adminNotificationStream = new EventSource(notificationApi.adminStreamUrl(), { withCredentials: true })
+    adminNotificationStream.addEventListener('unread', (event) => {
+      const data = JSON.parse((event as MessageEvent).data || '{}')
+      adminUnreadCount.value = Number(data.admin || 0)
+      adminNotificationsAvailable.value = true
+    })
+    adminNotificationStream.onerror = () => {
+      adminNotificationsAvailable.value = false
+      adminNotificationStream?.close()
+      adminNotificationStream = null
+    }
+  } catch {
+    adminNotificationsAvailable.value = false
+  }
+}
+
+function stopNotificationStreams() {
+  userNotificationStream?.close()
+  adminNotificationStream?.close()
+  userNotificationStream = null
+  adminNotificationStream = null
+}
+
 onBeforeUnmount(() => {
   if (notificationTimer !== null) {
     window.clearInterval(notificationTimer)
   }
+  stopNotificationStreams()
   stopWalletProviderWatch?.()
   stopAccountWatch?.()
 })
@@ -240,35 +376,110 @@ onBeforeUnmount(() => {
         <div class="notification-panel" v-loading="notificationLoading">
           <div class="notification-head">
             <span>消息</span>
-            <el-button size="small" text :disabled="!currentNotifications().length" @click="markAllNotificationsRead">
-              全部已读
-            </el-button>
+            <div class="notification-head-actions">
+              <el-button size="small" text @click="notificationView = notificationView === 'preferences' ? 'messages' : 'preferences'">
+                偏好
+              </el-button>
+              <el-button
+                v-if="adminNotificationsAvailable"
+                size="small"
+                text
+                @click="notificationView = notificationView === 'announce' ? 'messages' : 'announce'"
+              >
+                发公告
+              </el-button>
+              <el-button
+                v-if="notificationView === 'messages'"
+                size="small"
+                text
+                :disabled="!currentNotifications().length"
+                @click="markAllNotificationsRead"
+              >
+                全部已读
+              </el-button>
+            </div>
           </div>
-          <el-tabs v-model="notificationTab" class="notification-tabs">
-            <el-tab-pane :label="`我的 ${userUnreadCount ? `(${userUnreadCount})` : ''}`" name="user" />
-            <el-tab-pane
-              v-if="adminNotificationsAvailable"
-              :label="`管理员 ${adminUnreadCount ? `(${adminUnreadCount})` : ''}`"
-              name="admin"
-            />
-          </el-tabs>
-          <div v-if="!currentNotifications().length" class="notification-empty">暂无消息</div>
-          <div v-else class="notification-list">
-            <button
-              v-for="item in currentNotifications()"
-              :key="item.id"
-              type="button"
-              class="notification-item"
-              :class="[{ unread: !item.readAt }, notificationSeverityClass(item.severity)]"
-              @click="handleNotificationClick(item, notificationTab)"
+          <template v-if="notificationView === 'messages'">
+            <el-tabs v-model="notificationTab" class="notification-tabs">
+              <el-tab-pane :label="`我的 ${userUnreadCount ? `(${userUnreadCount})` : ''}`" name="user" />
+              <el-tab-pane
+                v-if="adminNotificationsAvailable"
+                :label="`管理员 ${adminUnreadCount ? `(${adminUnreadCount})` : ''}`"
+                name="admin"
+              />
+            </el-tabs>
+            <div v-if="!currentNotifications().length" class="notification-empty">暂无消息</div>
+            <div v-else class="notification-list">
+              <button
+                v-for="item in currentNotifications()"
+                :key="item.id"
+                type="button"
+                class="notification-item"
+                :class="[{ unread: !item.readAt }, notificationSeverityClass(item.severity)]"
+                @click="handleNotificationClick(item, notificationTab)"
+              >
+                <span class="notification-dot" />
+                <span class="notification-main">
+                  <span class="notification-title">{{ item.title }}</span>
+                  <span class="notification-content">{{ item.content }}</span>
+                  <span class="notification-time">{{ formatNotificationTime(item.createdAt) }}</span>
+                </span>
+              </button>
+            </div>
+          </template>
+          <div v-else-if="notificationView === 'preferences'" class="notification-preferences">
+            <div
+              v-for="item in notificationPreferences"
+              :key="item.type"
+              class="notification-preference-row"
             >
-              <span class="notification-dot" />
-              <span class="notification-main">
-                <span class="notification-title">{{ item.title }}</span>
-                <span class="notification-content">{{ item.content }}</span>
-                <span class="notification-time">{{ formatNotificationTime(item.createdAt) }}</span>
-              </span>
-            </button>
+              <span>{{ preferenceLabel(item.type) }}</span>
+              <el-switch
+                v-model="item.enabled"
+                @change="handlePreferenceChange(item.type, $event)"
+              />
+            </div>
+          </div>
+          <div v-else class="notification-announce">
+            <el-select v-model="announcementForm.recipientRole" size="small" class="notification-field">
+              <el-option label="所有用户" value="all" />
+              <el-option label="指定用户" value="user" />
+              <el-option label="管理员" value="admin" />
+            </el-select>
+            <el-input
+              v-if="announcementForm.recipientRole === 'user'"
+              v-model="announcementTargetsText"
+              class="notification-field"
+              type="textarea"
+              :rows="2"
+              placeholder="用户名，多个用逗号或换行分隔"
+            />
+            <el-input v-model="announcementForm.title" class="notification-field" size="small" placeholder="标题" />
+            <el-input
+              v-model="announcementForm.content"
+              class="notification-field"
+              type="textarea"
+              :rows="3"
+              placeholder="内容"
+            />
+            <el-select v-model="announcementForm.severity" size="small" class="notification-field">
+              <el-option label="普通" value="info" />
+              <el-option label="警告" value="warning" />
+              <el-option label="重要" value="error" />
+            </el-select>
+            <el-input v-model="announcementForm.actionUrl" class="notification-field" size="small" placeholder="动作链接（可选）" />
+            <div class="notification-announce-actions">
+              <el-button size="small" @click="notificationView = 'messages'">取消</el-button>
+              <el-button
+                size="small"
+                type="primary"
+                :loading="announcementSubmitting"
+                :disabled="!announcementForm.title.trim() || !announcementForm.content.trim()"
+                @click="submitAnnouncement"
+              >
+                发送
+              </el-button>
+            </div>
           </div>
         </div>
       </el-popover>
@@ -357,6 +568,12 @@ onBeforeUnmount(() => {
   margin-bottom: 6px;
 }
 
+.notification-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .notification-tabs {
   margin-bottom: 4px;
 }
@@ -433,6 +650,41 @@ onBeforeUnmount(() => {
 .notification-time {
   color: #a8abb2;
   font-size: 12px;
+}
+
+.notification-preferences {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.notification-preference-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  color: #303133;
+  font-size: 13px;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.notification-announce {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.notification-field {
+  width: 100%;
+}
+
+.notification-announce-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
 }
 
 </style>

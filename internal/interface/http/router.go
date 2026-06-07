@@ -116,6 +116,8 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/public/notifications/unread-count", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleUnreadCount)))
 		mux.Handle("/api/v1/public/notifications/read", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleMarkRead)))
 		mux.Handle("/api/v1/public/notifications/read-all", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleMarkAllRead)))
+		mux.Handle("/api/v1/public/notifications/preferences", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandlePreferences)))
+		mux.Handle("/api/v1/public/notifications/stream", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleStream)))
 	}
 
 	// 管理员用户管理（需要认证 + 管理员权限）
@@ -129,6 +131,8 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/admin/notifications/unread-count", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminUnreadCount)))
 		mux.Handle("/api/v1/admin/notifications/read", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminMarkRead)))
 		mux.Handle("/api/v1/admin/notifications/read-all", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminMarkAllRead)))
+		mux.Handle("/api/v1/admin/notifications/create", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminCreate)))
+		mux.Handle("/api/v1/admin/notifications/stream", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminStream)))
 	}
 
 	// 回收站路由

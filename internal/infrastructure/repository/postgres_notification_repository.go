@@ -21,6 +21,8 @@ type NotificationRepository interface {
 	MarkAllReadForUser(ctx context.Context, userID string) error
 	MarkReadForRole(ctx context.Context, role string, ids []string) error
 	MarkAllReadForRole(ctx context.Context, role string) error
+	GetPreferences(ctx context.Context, userID string) ([]notification.Preference, error)
+	SetPreference(ctx context.Context, userID, notificationType string, enabled bool) error
 }
 
 type PostgresNotificationRepository struct {
@@ -168,7 +170,7 @@ func (r *PostgresNotificationRepository) MarkReadForUser(ctx context.Context, us
 	query := `
 		UPDATE notifications
 		SET read_at = COALESCE(read_at, NOW())
-		WHERE id = ANY($1) AND (recipient_user_id = $2 OR recipient_role = 'all')
+		WHERE id = ANY($1::text[]) AND (recipient_user_id = $2 OR recipient_role = 'all')
 	`
 	_, err := r.db.ExecContext(ctx, query, pqArray(ids), userID)
 	return err
@@ -192,7 +194,7 @@ func (r *PostgresNotificationRepository) MarkReadForRole(ctx context.Context, ro
 	query := `
 		UPDATE notifications
 		SET read_at = COALESCE(read_at, NOW())
-		WHERE id = ANY($1) AND recipient_role = $2
+		WHERE id = ANY($1::text[]) AND recipient_role = $2
 	`
 	_, err := r.db.ExecContext(ctx, query, pqArray(ids), role)
 	return err
@@ -206,6 +208,46 @@ func (r *PostgresNotificationRepository) MarkAllReadForRole(ctx context.Context,
 	`
 	_, err := r.db.ExecContext(ctx, query, role)
 	return err
+}
+
+func (r *PostgresNotificationRepository) GetPreferences(ctx context.Context, userID string) ([]notification.Preference, error) {
+	query := `
+		SELECT type, enabled
+		FROM notification_preferences
+		WHERE user_id = $1
+	`
+	rows, err := r.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query notification preferences: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]notification.Preference, 0)
+	for rows.Next() {
+		var item notification.Preference
+		if err := rows.Scan(&item.Type, &item.Enabled); err != nil {
+			return nil, fmt.Errorf("failed to scan notification preference: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate notification preferences: %w", err)
+	}
+	return items, nil
+}
+
+func (r *PostgresNotificationRepository) SetPreference(ctx context.Context, userID, notificationType string, enabled bool) error {
+	query := `
+		INSERT INTO notification_preferences (user_id, type, enabled, updated_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (user_id, type) DO UPDATE SET
+			enabled = EXCLUDED.enabled,
+			updated_at = NOW()
+	`
+	if _, err := r.db.ExecContext(ctx, query, userID, notificationType, enabled); err != nil {
+		return fmt.Errorf("failed to update notification preference: %w", err)
+	}
+	return nil
 }
 
 func scanNotifications(rows *sql.Rows) ([]*notification.Notification, error) {
