@@ -121,6 +121,50 @@ export const userApi = {
   }
 }
 
+export interface NotificationItem {
+  id: string
+  type: string
+  title: string
+  content: string
+  severity: 'info' | 'warning' | 'error'
+  actionUrl?: string
+  readAt?: string
+  createdAt: string
+}
+
+export const notificationApi = {
+  list(limit = 20) {
+    return request<{ items: NotificationItem[] }>(`/api/v1/public/notifications/list?limit=${limit}`)
+  },
+  unreadCount() {
+    return request<{ count: number }>('/api/v1/public/notifications/unread-count')
+  },
+  markRead(ids: string[]) {
+    return request('/api/v1/public/notifications/read', {
+      method: 'POST',
+      body: { ids }
+    })
+  },
+  markAllRead() {
+    return request('/api/v1/public/notifications/read-all', { method: 'POST' })
+  },
+  adminList(limit = 20) {
+    return request<{ items: NotificationItem[] }>(`/api/v1/admin/notifications/list?limit=${limit}`)
+  },
+  adminUnreadCount() {
+    return request<{ count: number }>('/api/v1/admin/notifications/unread-count')
+  },
+  adminMarkRead(ids: string[]) {
+    return request('/api/v1/admin/notifications/read', {
+      method: 'POST',
+      body: { ids }
+    })
+  },
+  adminMarkAllRead() {
+    return request('/api/v1/admin/notifications/read-all', { method: 'POST' })
+  }
+}
+
 export interface AdminUserItem {
   id: string
   username: string

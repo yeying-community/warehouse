@@ -29,6 +29,7 @@ type Router struct {
 	shareUserHandler           *handler.ShareUserHandler
 	webdavAccessKeyHandler     *handler.WebDAVAccessKeyHandler
 	addressBookHandler         *handler.AddressBookHandler
+	notificationHandler        *handler.NotificationHandler
 	logger                     *zap.Logger
 }
 
@@ -50,6 +51,7 @@ func NewRouter(
 	shareUserHandler *handler.ShareUserHandler,
 	webdavAccessKeyHandler *handler.WebDAVAccessKeyHandler,
 	addressBookHandler *handler.AddressBookHandler,
+	notificationHandler *handler.NotificationHandler,
 	logger *zap.Logger,
 ) *Router {
 	return &Router{
@@ -69,6 +71,7 @@ func NewRouter(
 		shareUserHandler:           shareUserHandler,
 		webdavAccessKeyHandler:     webdavAccessKeyHandler,
 		addressBookHandler:         addressBookHandler,
+		notificationHandler:        notificationHandler,
 		logger:                     logger,
 	}
 }
@@ -108,6 +111,12 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/webdav/user/info", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.GetUserInfo)))
 	mux.Handle("/api/v1/public/webdav/user/update", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.UpdateUsername)))
 	mux.Handle("/api/v1/public/webdav/user/password", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.UpdatePassword)))
+	if r.notificationHandler != nil {
+		mux.Handle("/api/v1/public/notifications/list", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleList)))
+		mux.Handle("/api/v1/public/notifications/unread-count", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleUnreadCount)))
+		mux.Handle("/api/v1/public/notifications/read", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleMarkRead)))
+		mux.Handle("/api/v1/public/notifications/read-all", r.createAuthenticatedHandler(http.HandlerFunc(r.notificationHandler.HandleMarkAllRead)))
+	}
 
 	// 管理员用户管理（需要认证 + 管理员权限）
 	mux.Handle("/api/v1/admin/users/list", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleList)))
@@ -115,6 +124,12 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/admin/users/update", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleUpdate)))
 	mux.Handle("/api/v1/admin/users/delete", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleDelete)))
 	mux.Handle("/api/v1/admin/users/reset-password", r.createAdminHandler(http.HandlerFunc(r.adminUserHandler.HandleResetPassword)))
+	if r.notificationHandler != nil {
+		mux.Handle("/api/v1/admin/notifications/list", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminList)))
+		mux.Handle("/api/v1/admin/notifications/unread-count", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminUnreadCount)))
+		mux.Handle("/api/v1/admin/notifications/read", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminMarkRead)))
+		mux.Handle("/api/v1/admin/notifications/read-all", r.createAdminHandler(http.HandlerFunc(r.notificationHandler.HandleAdminMarkAllRead)))
+	}
 
 	// 回收站路由
 	mux.Handle("/api/v1/public/webdav/recycle/list", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleList)))

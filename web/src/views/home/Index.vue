@@ -4098,11 +4098,15 @@ onMounted(() => {
 })
 
 function handleExternalNavigate(event: Event) {
-  const customEvent = event as CustomEvent<{ view?: ViewKey }>
+  const customEvent = event as CustomEvent<{ view?: ViewKey; section?: 'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks' }>
   const view = customEvent?.detail?.view
   if (!view) return
   if (view === 'quotaManage') {
-    enterQuotaManage()
+    enterQuotaManage(customEvent.detail?.section || 'account')
+    return
+  }
+  if (view === 'sharedWithMe') {
+    enterSharedWithMeList()
     return
   }
   if (view === 'addressBook') {

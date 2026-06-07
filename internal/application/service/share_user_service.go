@@ -22,6 +22,7 @@ type ShareUserService struct {
 	repo               repository.UserShareRepository
 	userRepo           user.Repository
 	addressBookService *AddressBookService
+	notification       *NotificationService
 	config             *config.Config
 	logger             *zap.Logger
 }
@@ -31,6 +32,7 @@ func NewShareUserService(
 	repo repository.UserShareRepository,
 	userRepo user.Repository,
 	addressBookService *AddressBookService,
+	notificationService *NotificationService,
 	cfg *config.Config,
 	logger *zap.Logger,
 ) *ShareUserService {
@@ -38,6 +40,7 @@ func NewShareUserService(
 		repo:               repo,
 		userRepo:           userRepo,
 		addressBookService: addressBookService,
+		notification:       notificationService,
 		config:             cfg,
 		logger:             logger,
 	}
@@ -141,6 +144,10 @@ func (s *ShareUserService) createWithAudiences(
 	if len(targetUsers) > 0 {
 		item.TargetUserID = targetUsers[0].TargetUserID
 		item.TargetWalletAddress = targetUsers[0].TargetWallet
+	}
+
+	if s.notification != nil {
+		s.notification.NotifyShareCreated(ctx, owner, item.ID, item.Name, item.Path, targetUsers, allUsers)
 	}
 
 	s.logger.Info("share user created",
