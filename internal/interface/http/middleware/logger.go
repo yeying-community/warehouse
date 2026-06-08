@@ -73,12 +73,26 @@ func (m *LoggerMiddleware) getRemoteAddr(r *http.Request) string {
 // responseWriter 包装 ResponseWriter
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode  int
+	wroteHeader bool
 }
 
 func (w *responseWriter) WriteHeader(statusCode int) {
+	if w.wroteHeader {
+		return
+	}
 	w.statusCode = statusCode
+	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *responseWriter) Flush() {
+	if !w.wroteHeader {
+		w.WriteHeader(w.statusCode)
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 func (w *responseWriter) Unwrap() http.ResponseWriter {
