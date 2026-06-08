@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/quota"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
@@ -11,8 +12,9 @@ import (
 
 // QuotaHandler 配额处理器
 type QuotaHandler struct {
-	quotaService quota.Service
-	logger       *zap.Logger
+	quotaService        quota.Service
+	notificationService *service.NotificationService
+	logger              *zap.Logger
 }
 
 // NewQuotaHandler 创建配额处理器
@@ -21,6 +23,10 @@ func NewQuotaHandler(quotaService quota.Service, logger *zap.Logger) *QuotaHandl
 		quotaService: quotaService,
 		logger:       logger,
 	}
+}
+
+func (h *QuotaHandler) SetNotificationService(notificationService *service.NotificationService) {
+	h.notificationService = notificationService
 }
 
 // QuotaResponse 配额响应
@@ -69,6 +75,14 @@ func (h *QuotaHandler) GetUserQuota(w http.ResponseWriter, r *http.Request) {
 	// 计算使用百分比
 	if quotaInfo.Quota > 0 {
 		response.Percentage = float64(quotaInfo.Used) / float64(quotaInfo.Quota) * 100
+	}
+
+	if h.notificationService != nil {
+		if err := h.notificationService.EnsureUserQuotaNotification(r.Context(), u, quotaInfo.Quota, quotaInfo.Used); err != nil {
+			h.logger.Warn("failed to ensure user quota notification",
+				zap.String("username", u.Username),
+				zap.Error(err))
+		}
 	}
 
 	// 返回 JSON 响应

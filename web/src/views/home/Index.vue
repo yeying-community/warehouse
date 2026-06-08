@@ -57,6 +57,7 @@ const walletHistory = ref<string[]>([])
 const selectedWalletAccount = ref('')
 const walletRowRef = ref<HTMLElement | null>(null)
 const walletPresent = ref(false)
+const walletLoginSubmitting = ref(false)
 let stopAccountWatch: (() => void) | null = null
 let stopWalletProviderWatch: (() => void) | null = null
 
@@ -1133,12 +1134,16 @@ async function fetchAccessKeys(withLoading = false) {
 }
 
 async function handleWalletLogin() {
+  if (walletLoginSubmitting.value) return
+  walletLoginSubmitting.value = true
   try {
     const preferred = selectedWalletAccount.value.trim()
     await loginWithWallet(preferred || undefined)
     window.location.reload()
   } catch (error: any) {
     showError(error?.message || '钱包登录失败')
+  } finally {
+    walletLoginSubmitting.value = false
   }
 }
 
@@ -4098,11 +4103,15 @@ onMounted(() => {
 })
 
 function handleExternalNavigate(event: Event) {
-  const customEvent = event as CustomEvent<{ view?: ViewKey }>
+  const customEvent = event as CustomEvent<{ view?: ViewKey; section?: 'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks' }>
   const view = customEvent?.detail?.view
   if (!view) return
   if (view === 'quotaManage') {
-    enterQuotaManage()
+    enterQuotaManage(customEvent.detail?.section || 'account')
+    return
+  }
+  if (view === 'sharedWithMe') {
+    enterSharedWithMeList()
     return
   }
   if (view === 'addressBook') {
@@ -4183,6 +4192,7 @@ onBeforeUnmount(() => {
                   placeholder="历史账户（可选）"
                   class="login-history-select"
                   popper-class="login-history-select-popper"
+                  :disabled="walletLoginSubmitting"
                   @visible-change="handleWalletHistoryVisibleChange"
                 >
                   <el-option
@@ -4197,6 +4207,7 @@ onBeforeUnmount(() => {
                 <el-button
                   type="primary"
                   class="login-main-btn login-wallet-btn login-wallet-action-btn"
+                  :loading="walletLoginSubmitting"
                   @click="handleWalletLogin"
                 >
                   钱包登陆
@@ -4206,6 +4217,7 @@ onBeforeUnmount(() => {
                 v-else-if="walletPresent"
                 type="primary"
                 class="login-main-btn login-wallet-btn"
+                :loading="walletLoginSubmitting"
                 @click="handleWalletLogin"
               >
                 钱包登陆

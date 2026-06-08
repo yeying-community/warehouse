@@ -121,6 +121,87 @@ export const userApi = {
   }
 }
 
+export interface NotificationItem {
+  id: string
+  type: string
+  title: string
+  content: string
+  severity: 'info' | 'warning' | 'error'
+  actionUrl?: string
+  readAt?: string
+  createdAt: string
+}
+
+export interface NotificationPreferenceItem {
+  Type?: string
+  type?: string
+  Enabled?: boolean
+  enabled?: boolean
+}
+
+export interface AdminNotificationCreatePayload {
+  recipientRole: 'all' | 'user' | 'admin'
+  targetUsernames?: string[]
+  title: string
+  content: string
+  severity: 'info' | 'warning' | 'error'
+  actionUrl?: string
+}
+
+export const notificationApi = {
+  list(limit = 20) {
+    return request<{ items: NotificationItem[] }>(`/api/v1/public/notifications/list?limit=${limit}`)
+  },
+  unreadCount() {
+    return request<{ count: number }>('/api/v1/public/notifications/unread-count')
+  },
+  markRead(ids: string[]) {
+    return request('/api/v1/public/notifications/read', {
+      method: 'POST',
+      body: { ids }
+    })
+  },
+  markAllRead() {
+    return request('/api/v1/public/notifications/read-all', { method: 'POST' })
+  },
+  preferences() {
+    return request<{ items: NotificationPreferenceItem[] }>('/api/v1/public/notifications/preferences')
+  },
+  setPreference(type: string, enabled: boolean) {
+    return request('/api/v1/public/notifications/preferences', {
+      method: 'POST',
+      body: { type, enabled }
+    })
+  },
+  streamUrl() {
+    return `${API_BASE}/api/v1/public/notifications/stream`
+  },
+  adminList(limit = 20) {
+    return request<{ items: NotificationItem[] }>(`/api/v1/admin/notifications/list?limit=${limit}`)
+  },
+  adminUnreadCount() {
+    return request<{ count: number }>('/api/v1/admin/notifications/unread-count')
+  },
+  adminMarkRead(ids: string[]) {
+    return request('/api/v1/admin/notifications/read', {
+      method: 'POST',
+      body: { ids }
+    })
+  },
+  adminMarkAllRead() {
+    return request('/api/v1/admin/notifications/read-all', { method: 'POST' })
+  },
+  adminCreate(payload: AdminNotificationCreatePayload) {
+    return request<{ message: string; count: number }>('/api/v1/admin/notifications/create', {
+      method: 'POST',
+      body: payload as unknown as Record<string, unknown>
+    })
+  },
+  adminStreamUrl() {
+    return `${API_BASE}/api/v1/admin/notifications/stream`
+  }
+}
+
 export interface AdminUserItem {
   id: string
   username: string

@@ -277,6 +277,31 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			UNIQUE(active_node_id, standby_node_id)
 		)`,
 
+		// 站内消息盒子：用户和管理员提醒
+		`CREATE TABLE IF NOT EXISTS notifications (
+			id VARCHAR(50) PRIMARY KEY,
+			recipient_user_id VARCHAR(50) NULL REFERENCES users(id) ON DELETE CASCADE,
+			recipient_role VARCHAR(20) NOT NULL DEFAULT 'user',
+			type VARCHAR(40) NOT NULL,
+			title TEXT NOT NULL,
+			content TEXT NOT NULL,
+			severity VARCHAR(20) NOT NULL DEFAULT 'info',
+			action_url TEXT NULL,
+			dedupe_key TEXT NULL,
+			read_at TIMESTAMP NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			expires_at TIMESTAMP NULL
+		)`,
+
+		// 消息偏好：控制未来是否生成某类用户消息
+		`CREATE TABLE IF NOT EXISTS notification_preferences (
+			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			type VARCHAR(40) NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (user_id, type)
+		)`,
+
 		// 补充分享表字段（兼容已存在表）
 		`ALTER TABLE replication_outbox ADD COLUMN IF NOT EXISTS assignment_generation BIGINT NULL`,
 		`ALTER TABLE replication_offsets ADD COLUMN IF NOT EXISTS assignment_generation BIGINT NULL`,
@@ -349,6 +374,23 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_cluster_replication_assignments_standby_effective
 			ON cluster_replication_assignments(standby_node_id)
 			WHERE state IN ('pending', 'reconciling', 'replicating', 'draining')`,
+
+		// 消息盒子索引
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user_created
+			ON notifications(recipient_user_id, created_at DESC)
+			WHERE recipient_user_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_role_created
+			ON notifications(recipient_role, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
+			ON notifications(recipient_user_id, read_at)
+			WHERE recipient_user_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_notifications_role_unread
+			ON notifications(recipient_role, read_at)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe_key
+			ON notifications(dedupe_key)
+			WHERE dedupe_key IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_notification_preferences_user
+			ON notification_preferences(user_id)`,
 
 		// 兼容已有地址簿表
 		`ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,

@@ -85,14 +85,13 @@ info "rebase 完成，本地分支 $CURRENT_BRANCH 已同步到 $UPSTREAM_BRANCH
 if [ "$AUTO_PUSH" = "true" ]; then
   blank
   info "准备将更新推送到 origin/$CURRENT_BRANCH..."
-  git push origin "$CURRENT_BRANCH"
+  git push --force-with-lease origin "$CURRENT_BRANCH"
   info "已推送到 origin/$CURRENT_BRANCH"
 else
   blank
   info "未自动推送到 origin。若需要，请手动执行："
-  info "  git push origin $CURRENT_BRANCH"
+  info "  git push --force-with-lease origin $CURRENT_BRANCH"
 fi
 
 blank
 info "同步完成。"
-
