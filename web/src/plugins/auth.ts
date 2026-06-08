@@ -1,4 +1,18 @@
-import { getProvider, requestAccounts, loginWithChallenge, logout as sdkLogout, clearAccessToken, getAccessToken, setAccessToken, watchAccounts } from '@yeying-community/web3-bs'
+import {
+  getProvider,
+  requestAccounts,
+  loginWithChallenge,
+  logout as sdkLogout,
+  clearAccessToken,
+  getAccessToken,
+  setAccessToken,
+  watchAccounts,
+  watchProvider,
+  getWalletErrorMessage,
+  isUserRejectedWalletAction,
+  classifyWalletError,
+  type Eip1193Provider
+} from '@yeying-community/web3-bs'
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 const AUTH_BASE = API_BASE ? `${API_BASE.replace(/\/+$/, '')}/api/v1/public/auth` : '/api/v1/public/auth'
@@ -6,110 +20,18 @@ const ACCOUNT_HISTORY_KEY = 'warehouse:accountHistory'
 const ACCOUNT_CHANGED_KEY = 'warehouse:accountChanged'
 export const AUTH_CHANGED_EVENT = 'warehouse:auth-changed'
 
-// 钱包 Provider 类型
-interface WalletProvider {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>
-  on(event: string, handler: (...args: unknown[]) => void): void
-  removeListener(event: string, handler: (...args: unknown[]) => void): void
-  isMetaMask?: boolean
-  isYeYing?: boolean
-  [key: string]: unknown
-}
-
-// 扩展 Window 类型
-declare global {
-  interface Window {
-    ethereum?: WalletProvider
-    yeeying?: WalletProvider
-    yeying?: WalletProvider
-    __YEYING_PROVIDER__?: WalletProvider
-  }
-}
-
-// 获取钱包 provider（支持多种钱包）
-export function getWalletProvider(): WalletProvider | null {
-  // 1. 检查常见的 provider 属性
-  const providerNames = ['ethereum', 'yeeying', 'yeying', 'coinbaseWallet', 'bitkeep', 'tokenpocket', '__YEYING_PROVIDER__']
-
-  for (const name of providerNames) {
-    const provider = (window as unknown as Record<string, WalletProvider | undefined>)[name]
-    if (provider && typeof provider.request === 'function') {
-      return provider
-    }
-  }
-
-  // 2. 检查 ethereum.providers（某些浏览器扩展会注入多个 provider）
-  if (window.ethereum && Array.isArray((window.ethereum as unknown as { providers?: WalletProvider[] }).providers)) {
-    const providers = (window.ethereum as unknown as { providers: WalletProvider[] }).providers
-    // 优先使用 MetaMask 或夜莺钱包
-    for (const provider of providers) {
-      if (provider.isMetaMask || (provider as unknown as { isYeYing?: boolean }).isYeYing) {
-        return provider
-      }
-    }
-    // 使用第一个可用的
-    if (providers.length > 0) {
-      return providers[0]
-    }
-  }
-
-  // 3. 直接使用 window.ethereum
-  if (window.ethereum) {
-    return window.ethereum
-  }
-
-  return null
-}
-
-// 检测是否有钱包注入
-export function hasWallet(): boolean {
-  return getWalletProvider() !== null
-}
+let currentWalletProvider: Eip1193Provider | null = null
 
 export function watchWalletProvider(handler: (present: boolean) => void): () => void {
-  let stopped = false
-  let lastPresent: boolean | null = null
-  let pollCount = 0
-  let pollTimer: number | null = null
-
-  const emit = () => {
-    if (stopped) return
-    const present = hasWallet()
-    if (present === lastPresent) return
-    lastPresent = present
+  return watchProvider(({ provider, present }) => {
+    currentWalletProvider = provider
     handler(present)
-  }
-
-  const poll = () => {
-    if (stopped) return
-    emit()
-    pollCount += 1
-    if (lastPresent || pollCount >= 20) return
-    pollTimer = window.setTimeout(poll, 100)
-  }
-
-  const handleProviderReady = () => {
-    emit()
-  }
-
-  window.addEventListener('ethereum#initialized', handleProviderReady)
-  window.addEventListener('eip6963:announceProvider', handleProviderReady)
-  window.dispatchEvent(new Event('eip6963:requestProvider'))
-  poll()
-
-  return () => {
-    stopped = true
-    if (pollTimer !== null) {
-      window.clearTimeout(pollTimer)
-    }
-    window.removeEventListener('ethereum#initialized', handleProviderReady)
-    window.removeEventListener('eip6963:announceProvider', handleProviderReady)
-  }
+  })
 }
 
 // 获取钱包名称
 export function getWalletName(): string {
-  const provider = getWalletProvider()
+  const provider = currentWalletProvider
   if (!provider) return '未知钱包'
 
   if ((provider as unknown as { isYeYing?: boolean }).isYeYing) return '夜莺钱包'
@@ -117,41 +39,13 @@ export function getWalletName(): string {
   return 'Web3 钱包'
 }
 
-function getWalletErrorMessage(error: unknown): string {
-  if (!error) return ''
-  if (typeof error === 'string') return error
-  if (error instanceof Error) return error.message || String(error)
-  const message = (error as { message?: unknown }).message
-  if (typeof message === 'string') return message
-  return String(error)
-}
-
-function getWalletErrorCode(error: unknown): number | null {
-  const code = Number((error as { code?: unknown }).code)
-  if (!Number.isNaN(code)) return code
-  const causeCode = Number((error as { cause?: { code?: unknown } }).cause?.code)
-  if (!Number.isNaN(causeCode)) return causeCode
-  return null
-}
-
-function isUserRejectedWalletAction(error: unknown): boolean {
-  if (getWalletErrorCode(error) === 4001) return true
-  const message = getWalletErrorMessage(error).toLowerCase()
-  return (
-    message.includes('user rejected') ||
-    message.includes('user denied') ||
-    message.includes('rejected the signature') ||
-    message.includes('denied message signature') ||
-    message.includes('denied transaction signature') ||
-    message.includes('request rejected') ||
-    message.includes('cancelled') ||
-    message.includes('canceled')
-  )
-}
-
 function formatWalletLoginError(error: unknown): string {
   if (isUserRejectedWalletAction(error)) {
     return '你已取消钱包签名，请在钱包弹窗中确认后再试。'
+  }
+  const errorInfo = classifyWalletError(error)
+  if (errorInfo.type === 'disconnected' || errorInfo.type === 'timeout') {
+    return '钱包连接正在恢复，请稍后重试。'
   }
   const message = getWalletErrorMessage(error).replace(/^ProviderRpcError:\s*/i, '').trim()
   if (!message) return '钱包登录失败，请稍后重试。'
