@@ -371,7 +371,21 @@ func (s *WebDAVService) handleDirectDelete(
 
 func isEphemeralSyncArtifactPath(normalizedPath string) bool {
 	cleaned := path.Clean("/" + strings.TrimSpace(normalizedPath))
-	if cleaned == "/" || !strings.HasPrefix(cleaned, "/apps/") {
+	if cleaned == "/" {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
+	if len(parts) < 2 {
+		return false
+	}
+	appsIndex := -1
+	for i, part := range parts {
+		if part == "apps" {
+			appsIndex = i
+			break
+		}
+	}
+	if appsIndex < 0 || len(parts) <= appsIndex+1 {
 		return false
 	}
 
