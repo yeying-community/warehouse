@@ -143,6 +143,8 @@ build_artifacts() {
       (cd "${web_dir}" && env -u NODE_ENV npm install)
     fi
   fi
+  echo "Refreshing frontend dependencies..."
+  (cd "${web_dir}" && env -u NODE_ENV npm install)
   (cd "${web_dir}" && npm run build)
 
   echo "Building backend binary for ${TARGET_GOOS}/${TARGET_GOARCH}..."
