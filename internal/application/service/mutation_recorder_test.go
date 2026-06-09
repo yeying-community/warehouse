@@ -241,9 +241,9 @@ func TestMutationRecorderMoveCopyRemoveAndEnsureDir(t *testing.T) {
 
 func TestMutationRecorderSkipsEphemeralSyncArtifacts(t *testing.T) {
 	root := t.TempDir()
-	lockDir := filepath.Join(root, "apps", "localhost-3020", "backup.__sync_mutex_v1.__sync_lock_v1")
+	lockDir := filepath.Join(root, "alice", "apps", "localhost-3020", "backup.__sync_mutex_v1.__sync_lock_v1")
 	lockFile := filepath.Join(lockDir, "lock.json")
-	txnFile := filepath.Join(root, "apps", "localhost-3020", "backup.__sync_txn_data_v1.123-abc.json")
+	txnFile := filepath.Join(root, "alice", "apps", "localhost-3020", "backup.__sync_txn_data_v1.123-abc.json")
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
 		t.Fatalf("MkdirAll lockDir: %v", err)
 	}
@@ -282,6 +282,12 @@ func TestMutationRecorderSkipsEphemeralSyncArtifacts(t *testing.T) {
 	}
 	if err := recorder.CopyPath(context.Background(), txnFile, filepath.Join(root, "apps", "localhost-3020", "copy.json"), false); err != nil {
 		t.Fatalf("CopyPath txnFile: %v", err)
+	}
+	if err := recorder.RemovePath(context.Background(), lockFile, false); err != nil {
+		t.Fatalf("RemovePath lockFile: %v", err)
+	}
+	if err := recorder.RemovePath(context.Background(), lockDir, true); err != nil {
+		t.Fatalf("RemovePath lockDir: %v", err)
 	}
 	if len(repo.events) != 0 {
 		t.Fatalf("expected no outbox events for ephemeral sync artifacts, got %d", len(repo.events))

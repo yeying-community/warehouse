@@ -291,8 +291,12 @@ func TestShouldHardDeleteSyncArtifact(t *testing.T) {
 		{path: "/apps/localhost-3020/backup.__sync_mutex_v1.__sync_lock_v1", want: true},
 		{path: "/apps/localhost-3020/backup.__sync_mutex_v1.__sync_lock_v1/lock.json", want: true},
 		{path: "/apps/localhost-3020/backup.__sync_txn_data_v1.123-abc.json", want: true},
+		{path: "/alice/apps/localhost-3020/backup.__sync_mutex_v1.__sync_lock_v1", want: true},
+		{path: "/alice/apps/localhost-3020/backup.__sync_mutex_v1.__sync_lock_v1/lock.json", want: true},
+		{path: "/alice/apps/localhost-3020/backup.__sync_txn_data_v1.123-abc.json", want: true},
 		{path: "/apps/localhost-3020/backup.json", want: false},
 		{path: "/personal/backup.__sync_txn_data_v1.123-abc.json", want: false},
+		{path: "/alice/personal/backup.__sync_txn_data_v1.123-abc.json", want: false},
 		{path: "/apps/localhost-3020/notes/lock.json", want: false},
 	}
 

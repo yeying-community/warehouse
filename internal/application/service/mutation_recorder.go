@@ -207,6 +207,9 @@ func (r *OutboxMutationRecorder) RemovePath(ctx context.Context, fullPath string
 	if normalized == "/" {
 		return fmt.Errorf("cannot record removal of root path")
 	}
+	if isEphemeralSyncArtifactPath(normalized) {
+		return nil
+	}
 	targets, err := r.resolveTargets(ctx)
 	if err != nil {
 		return err
