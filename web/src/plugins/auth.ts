@@ -8,6 +8,7 @@ import {
   setAccessToken,
   watchAccounts,
   watchProvider,
+  focusPendingApproval,
   getWalletErrorMessage,
   isUserRejectedWalletAction,
   classifyWalletError,
@@ -136,6 +137,19 @@ export async function watchWalletAccounts(handler: (payload: { account: string |
     }
     handler({ account: account || null, accounts })
   })
+}
+
+export async function focusPendingWalletApproval(): Promise<boolean> {
+  const provider = currentWalletProvider || await getProvider()
+  if (!provider) return false
+
+  try {
+    const result = await focusPendingApproval(provider)
+    return result.focused
+  } catch (error) {
+    console.warn('聚焦钱包待确认窗口失败:', error)
+    return false
+  }
 }
 
 // 钱包登录流程

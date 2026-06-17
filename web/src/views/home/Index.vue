@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
-import { isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider, consumeAccountChanged } from '@/plugins/auth'
+import { isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider, consumeAccountChanged } from '@/plugins/auth'
 import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
@@ -1134,7 +1134,10 @@ async function fetchAccessKeys(withLoading = false) {
 }
 
 async function handleWalletLogin() {
-  if (walletLoginSubmitting.value) return
+  if (walletLoginSubmitting.value) {
+    await focusPendingWalletApproval()
+    return
+  }
   walletLoginSubmitting.value = true
   try {
     const preferred = selectedWalletAccount.value.trim()
@@ -4207,20 +4210,18 @@ onBeforeUnmount(() => {
                 <el-button
                   type="primary"
                   class="login-main-btn login-wallet-btn login-wallet-action-btn"
-                  :loading="walletLoginSubmitting"
                   @click="handleWalletLogin"
                 >
-                  钱包登陆
+                  {{ walletLoginSubmitting ? '查看钱包弹窗' : '钱包登陆' }}
                 </el-button>
               </div>
               <el-button
                 v-else-if="walletPresent"
                 type="primary"
                 class="login-main-btn login-wallet-btn"
-                :loading="walletLoginSubmitting"
                 @click="handleWalletLogin"
               >
-                钱包登陆
+                {{ walletLoginSubmitting ? '查看钱包弹窗' : '钱包登陆' }}
               </el-button>
               <div v-else class="login-warning">未检测到钱包插件</div>
             </div>
