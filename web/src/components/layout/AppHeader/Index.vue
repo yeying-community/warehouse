@@ -2,11 +2,12 @@
 import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
 import { Bell, SwitchButton, Wallet } from '@element-plus/icons-vue'
 import { notificationApi, type AdminNotificationCreatePayload, type NotificationItem, type NotificationPreferenceItem } from '@/api'
-import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
+import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, focusPendingWalletApproval, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
 
 const isAuth = ref(false)
 const account = ref<string | null>(null)
 const walletInfo = ref({ present: false, name: '' })
+const walletConnectSubmitting = ref(false)
 const notificationOpen = ref(false)
 const notificationLoading = ref(false)
 const notificationTab = ref<'user' | 'admin'>('user')
@@ -68,11 +69,18 @@ onMounted(() => {
 })
 
 async function handleConnect() {
+  if (walletConnectSubmitting.value) {
+    await focusPendingWalletApproval()
+    return
+  }
+  walletConnectSubmitting.value = true
   try {
     await loginWithWallet()
     window.location.reload()
   } catch (error) {
     console.error('连接失败:', error)
+  } finally {
+    walletConnectSubmitting.value = false
   }
 }
 
@@ -351,7 +359,7 @@ onBeforeUnmount(() => {
           @click="handleConnect"
         >
           <el-icon><Wallet /></el-icon>
-          连接钱包
+          {{ walletConnectSubmitting ? '查看钱包弹窗' : '连接钱包' }}
         </el-button>
         <span v-else class="no-wallet">未检测到钱包</span>
       </template>
