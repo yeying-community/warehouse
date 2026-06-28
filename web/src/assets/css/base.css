@@ -41,6 +41,8 @@ body {
   min-height: 100vh;
   line-height: 1.4;
   font-size: 16px;
+  font-family: "Noto Sans", "SF Pro SC", "SF Pro Text", "SF Pro Icons",
+    "PingFang SC", "Helvetica Neue", "Helvetica", "Arial", sans-serif;
   font-weight: 400;
   color: var(--text-color);
   background-color: var(--bg-color);

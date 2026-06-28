@@ -55,7 +55,7 @@ let emailCodeTimer: number | null = null
 const isMobileViewport = ref(false)
 const walletHistory = ref<string[]>([])
 const selectedWalletAccount = ref('')
-const walletRowRef = ref<HTMLElement | null>(null)
+const walletHistorySelectRef = ref<any>(null)
 const walletPresent = ref(false)
 const walletLoginSubmitting = ref(false)
 let stopAccountWatch: (() => void) | null = null
@@ -1150,16 +1150,24 @@ async function handleWalletLogin() {
   }
 }
 
+function formatLoginHistoryAddress(address?: string): string {
+  const trimmed = String(address || '').trim()
+  if (!trimmed) return '-'
+  if (trimmed.length <= 15) return trimmed
+  return `${trimmed.slice(0, 6)}...${trimmed.slice(-6)}`
+}
+
 async function handleWalletHistoryVisibleChange(visible: boolean) {
   if (!visible) return
   await nextTick()
-  const rowWidth = walletRowRef.value?.offsetWidth
-  if (!rowWidth) return
+  const selectEl = walletHistorySelectRef.value?.$el as HTMLElement | undefined
+  const selectWidth = selectEl?.offsetWidth
+  if (!selectWidth) return
   const poppers = Array.from(document.querySelectorAll<HTMLElement>('.login-history-select-popper'))
   const popper = poppers.find((item) => item.offsetParent !== null) ?? poppers[poppers.length - 1]
   if (!popper) return
-  popper.style.width = `${rowWidth}px`
-  popper.style.minWidth = `${rowWidth}px`
+  popper.style.width = `${selectWidth}px`
+  popper.style.minWidth = `${selectWidth}px`
 }
 
 async function handlePasswordLogin() {
@@ -4189,8 +4197,9 @@ onBeforeUnmount(() => {
         <div class="login-hero">
           <div class="login-card">
             <div class="login-section">
-              <div v-if="walletPresent && walletHistory.length" ref="walletRowRef" class="login-wallet-row">
+              <div v-if="walletPresent && walletHistory.length" class="login-wallet-row">
                 <el-select
+                  ref="walletHistorySelectRef"
                   v-model="selectedWalletAccount"
                   placeholder="历史账户（可选）"
                   class="login-history-select"
@@ -4202,9 +4211,9 @@ onBeforeUnmount(() => {
                     v-for="accountItem in walletHistory"
                     :key="accountItem"
                     :value="accountItem"
-                    :label="shortenAddress(accountItem)"
+                    :label="formatLoginHistoryAddress(accountItem)"
                   >
-                    <span class="mono">{{ accountItem }}</span>
+                    <span class="login-history-option mono">{{ formatLoginHistoryAddress(accountItem) }}</span>
                   </el-option>
                 </el-select>
                 <el-button
@@ -5817,6 +5826,14 @@ onBeforeUnmount(() => {
 .login-wallet-action-btn {
   width: 132px;
   flex: none;
+}
+
+.login-history-option {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :deep(.login-history-select .el-select__wrapper) {
