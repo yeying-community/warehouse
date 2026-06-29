@@ -72,6 +72,9 @@ const props = defineProps<{
   createFolderSubmitting: boolean
   createFolderForm: {
     name: string
+    encrypted: boolean
+    password: string
+    confirmPassword: string
   }
   submitCreateFolder: () => void
   renameDialogVisible: boolean
@@ -278,6 +281,10 @@ onBeforeUnmount(() => {
         <div class="detail-row">
           <span class="detail-label">大小</span>
           <span class="detail-value">{{ detailFile.isDir ? '-' : formatSizeDetail(detailFile.size) }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">加密</span>
+          <span class="detail-value">{{ detailFile.encrypted ? '已启用' : '未启用' }}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label">修改时间</span>
@@ -734,6 +741,28 @@ onBeforeUnmount(() => {
           @keydown.enter.prevent="submitCreateFolder"
         />
       </el-form-item>
+      <el-form-item label="目录选项">
+        <el-checkbox v-model="createFolderForm.encrypted">创建为加密目录</el-checkbox>
+        <div class="share-group-meta">加密目录内的文件会在浏览器端加密后再上传到服务端。</div>
+      </el-form-item>
+      <template v-if="createFolderForm.encrypted">
+        <el-form-item label="目录密码">
+          <el-input
+            v-model="createFolderForm.password"
+            type="password"
+            show-password
+            placeholder="请输入目录密码"
+          />
+        </el-form-item>
+        <el-form-item label="确认目录密码">
+          <el-input
+            v-model="createFolderForm.confirmPassword"
+            type="password"
+            show-password
+            placeholder="请再次输入目录密码"
+          />
+        </el-form-item>
+      </template>
     </el-form>
     <template #footer>
       <el-button @click="createFolderDialogModel = false">取消</el-button>

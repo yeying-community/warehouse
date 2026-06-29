@@ -128,6 +128,7 @@ watch(() => props.selectionNonce, () => {
         >
           <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
           <span class="name" :title="row.name">{{ row.name }}</span>
+          <el-tag v-if="row.encrypted" size="small" type="warning" effect="plain">加密</el-tag>
           <span v-if="isMoveTarget(row)" class="drop-tip">移动到此目录</span>
         </div>
       </template>
@@ -183,6 +184,7 @@ watch(() => props.selectionNonce, () => {
         <div class="file-name">
           <span class="iconfont" :class="row.isDir ? 'icon-wenjianjia' : 'icon-wenjian1'"></span>
           <span class="name" :title="row.name">{{ row.name }}</span>
+          <el-tag v-if="row.encrypted" size="small" type="warning" effect="plain">加密</el-tag>
         </div>
       </div>
       <div class="card-footer" @click.stop>

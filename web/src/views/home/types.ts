@@ -4,6 +4,8 @@ export interface FileItem {
   isDir: boolean
   size: number
   modified: string
+  encrypted?: boolean
+  encryptedRoot?: string
 }
 
 export interface UploadItem {
@@ -28,6 +30,7 @@ export type UploadTask = {
   isShared: boolean
   shareId?: string
   sharePath?: string
+  encryptedRoot?: string
 }
 
 export type DropEntry = {

@@ -4,6 +4,8 @@ export interface FileItem {
   isDir: boolean
   size: number
   modified: string
+  encrypted?: boolean
+  encryptedRoot?: string
 }
 
 function normalizePrefix(prefix: string): string {

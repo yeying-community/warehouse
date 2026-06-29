@@ -17,7 +17,8 @@ export default defineConfig(({ command, mode }) => {
     }),],
     resolve: {
       alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url))
+        '@': fileURLToPath(new URL('./src', import.meta.url)),
+        '@yeying-community/web3-bs': fileURLToPath(new URL('./node_modules/@yeying-community/web3-bs/dist/web3-bs.esm.js', import.meta.url))
       }
     },
     css: {
