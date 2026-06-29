@@ -30,6 +30,10 @@ const props = defineProps<{
   isDirectShareOwner: (item: DirectShareItem) => boolean
   enterDirectory: (item: FileItem) => void
   openAccessKeyDialog: (item: FileItem) => void
+  getEncryptedDirectoryRoot: (item: FileItem) => string | null
+  isEncryptedDirectoryPasswordCached: (rootPath: string | null) => boolean
+  unlockEncryptedDirectory: (rootPath: string, forceReset?: boolean) => void | Promise<void>
+  clearEncryptedDirectoryPasswordCache: (rootPath: string) => void
   enterSharedRoot: (item: DirectShareItem) => void
   enterSharedDirectory: (item: FileItem) => void
   downloadSharedRoot: (item: DirectShareItem) => void
@@ -223,6 +227,27 @@ function handleOpenAccessKeyDialog(item: FileItem) {
   emit('update:detailDrawerVisible', false)
 }
 
+function getDetailEncryptedRoot(item: FileItem | null): string | null {
+  if (!item) return null
+  return props.getEncryptedDirectoryRoot(item)
+}
+
+function isDetailEncryptedPasswordCached(item: FileItem | null): boolean {
+  return props.isEncryptedDirectoryPasswordCached(getDetailEncryptedRoot(item))
+}
+
+async function handleUnlockEncryptedDirectory(item: FileItem | null, forceReset = false) {
+  const root = getDetailEncryptedRoot(item)
+  if (!root) return
+  await props.unlockEncryptedDirectory(root, forceReset)
+}
+
+function handleClearEncryptedDirectoryPasswordCache(item: FileItem | null) {
+  const root = getDetailEncryptedRoot(item)
+  if (!root) return
+  props.clearEncryptedDirectoryPasswordCache(root)
+}
+
 function formatTargetScope(item: DirectShareItem | null): string {
   if (!item) return '-'
   if (item.allUsers || item.targetType === 'all_users') return '所有用户'
@@ -286,6 +311,14 @@ onBeforeUnmount(() => {
           <span class="detail-label">加密</span>
           <span class="detail-value">{{ detailFile.encrypted ? '已启用' : '未启用' }}</span>
         </div>
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-row">
+          <span class="detail-label">加密根</span>
+          <span class="detail-value mono">{{ getDetailEncryptedRoot(detailFile) }}</span>
+        </div>
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-row">
+          <span class="detail-label">目录密码</span>
+          <span class="detail-value">{{ isDetailEncryptedPasswordCached(detailFile) ? '已缓存' : '未缓存' }}</span>
+        </div>
         <div class="detail-row">
           <span class="detail-label">修改时间</span>
           <span class="detail-value time-cell">{{ formatTime(detailFile.modified) }}</span>
@@ -298,6 +331,18 @@ onBeforeUnmount(() => {
         <el-button size="small" @click="handleOpenAccessKeyDialog(detailFile)">
           授权密钥
         </el-button>
+        <template v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)">
+          <el-button size="small" @click="handleUnlockEncryptedDirectory(detailFile, isDetailEncryptedPasswordCached(detailFile))">
+            {{ isDetailEncryptedPasswordCached(detailFile) ? '更换目录密码' : '解锁目录' }}
+          </el-button>
+          <el-button
+            v-if="isDetailEncryptedPasswordCached(detailFile)"
+            size="small"
+            @click="handleClearEncryptedDirectoryPasswordCache(detailFile)"
+          >
+            清除密码缓存
+          </el-button>
+        </template>
       </div>
       <div class="detail-actions" v-else-if="getPreviewMode(detailFile) === 'text'">
         <el-button type="primary" size="small" @click="openFilePreview(detailFile)">

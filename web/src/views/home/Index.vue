@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
-import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User, Lock, Unlock } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
 import { isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider, consumeAccountChanged } from '@/plugins/auth'
@@ -192,6 +192,33 @@ const previewSourceUrl = ref('')
 const previewReadOnly = ref(false)
 let previewRequestSeq = 0
 const encryptedDirectoryRoots = ref<string[]>([])
+const currentEncryptedRoot = computed(() => {
+  if (showRecycle.value || showShare.value || showSharedWithMe.value || showUploadTasks.value) return null
+  return resolveEncryptedRootForPath(currentPath.value)
+})
+const currentEncryptedDirectoryPasswordCached = computed(() => {
+  const root = currentEncryptedRoot.value
+  return root ? Boolean(getEncryptedDirectoryPassword(root)) : false
+})
+const currentEncryptedDirectoryStatusText = computed(() => {
+  const root = currentEncryptedRoot.value
+  if (!root) return ''
+  const normalizedCurrent = normalizeEncryptedRootPath(currentPath.value)
+  const scope = root === normalizedCurrent ? '当前目录' : `继承自 ${root}`
+  return currentEncryptedDirectoryPasswordCached.value ? `${scope}，已解锁` : `${scope}，未解锁`
+})
+
+function getEncryptedDirectoryRootForItem(item: FileItem | null | undefined): string | null {
+  if (!item) return null
+  if (item.encryptedRoot) return normalizeEncryptedRootPath(item.encryptedRoot)
+  if (item.isDir && item.encrypted) return normalizeEncryptedRootPath(item.path)
+  return resolveEncryptedRootForPath(item.path)
+}
+
+function isEncryptedDirectoryPasswordCachedForRoot(rootPath: string | null): boolean {
+  if (!rootPath) return false
+  return Boolean(getEncryptedDirectoryPassword(normalizeEncryptedRootPath(rootPath)))
+}
 const VIEW_STORAGE_KEY = 'warehouse:lastView'
 const FILE_PATH_STORAGE_KEY = 'warehouse:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'warehouse:sharedActiveId'
@@ -912,6 +939,33 @@ function isEncryptedItem(item: FileItem | null | undefined): boolean {
   return !!item.encryptedRoot || !!item.encrypted
 }
 
+function getEffectiveEncryptedRoot(path: string): string | null {
+  return resolveEncryptedRootForPath(path)
+}
+
+function isEncryptedRootDirectory(item: FileItem | null | undefined): boolean {
+  if (!item?.isDir) return false
+  const itemPath = normalizeEncryptedRootPath(item.path)
+  const root = getEffectiveEncryptedRoot(itemPath)
+  return !!root && root === itemPath
+}
+
+function canTransferAcrossEncryptedBoundary(source: FileItem | null, targetPath: string): { allowed: boolean; message?: string } {
+  if (!source) return { allowed: false, message: '无效的移动对象' }
+  const sourceRoot = source.encryptedRoot ? normalizeEncryptedRootPath(source.encryptedRoot) : null
+  const targetRoot = getEffectiveEncryptedRoot(targetPath)
+  if (sourceRoot === targetRoot) {
+    return { allowed: true }
+  }
+  if (!sourceRoot && targetRoot) {
+    return { allowed: false, message: '暂不支持将普通文件或目录直接移动到加密目录' }
+  }
+  if (sourceRoot && !targetRoot) {
+    return { allowed: false, message: '暂不支持将加密目录中的文件或目录移出到普通目录' }
+  }
+  return { allowed: false, message: '暂不支持在不同加密目录之间移动文件或目录' }
+}
+
 async function ensureEncryptedDirectoryPassword(rootPath: string): Promise<string> {
   const normalizedRoot = normalizeEncryptedRootPath(rootPath)
   const cached = getEncryptedDirectoryPassword(normalizedRoot)
@@ -932,6 +986,56 @@ async function ensureEncryptedDirectoryPassword(rootPath: string): Promise<strin
   const password = String(value || '')
   setEncryptedDirectoryPassword(normalizedRoot, password)
   return password
+}
+
+async function promptEncryptedDirectoryPassword(rootPath: string, forceReset = false): Promise<string> {
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  if (forceReset) {
+    setEncryptedDirectoryPassword(normalizedRoot, '')
+  }
+  return ensureEncryptedDirectoryPassword(normalizedRoot)
+}
+
+function isPromptCanceled(error: unknown): boolean {
+  return error === 'cancel'
+    || error === 'close'
+    || (error instanceof Error && /cancel|close/i.test(error.message))
+}
+
+async function unlockCurrentEncryptedDirectory(forceReset = false) {
+  const root = currentEncryptedRoot.value
+  if (!root) return
+  try {
+    await promptEncryptedDirectoryPassword(root, forceReset)
+    showSuccess(forceReset ? '目录密码已更新' : '加密目录已解锁')
+  } catch (error) {
+    if (isPromptCanceled(error)) return
+    throw error
+  }
+}
+
+async function unlockEncryptedDirectoryByRoot(rootPath: string, forceReset = false) {
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  try {
+    await promptEncryptedDirectoryPassword(normalizedRoot, forceReset)
+    showSuccess(forceReset ? '目录密码已更新' : '加密目录已解锁')
+  } catch (error) {
+    if (isPromptCanceled(error)) return
+    throw error
+  }
+}
+
+function clearCurrentEncryptedDirectoryPassword() {
+  const root = currentEncryptedRoot.value
+  if (!root) return
+  setEncryptedDirectoryPassword(root, '')
+  showSuccess('已清除目录密码缓存')
+}
+
+function clearEncryptedDirectoryPasswordByRoot(rootPath: string) {
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  setEncryptedDirectoryPassword(normalizedRoot, '')
+  showSuccess('已清除目录密码缓存')
 }
 
 function collectAncestorDirectories(path: string): string[] {
@@ -977,8 +1081,18 @@ async function readEncryptedFileBytes(item: FileItem, rootPath: string): Promise
   if (!response.ok) {
     throw new Error(`读取失败: ${response.status}`)
   }
-  const password = await ensureEncryptedDirectoryPassword(rootPath)
-  return decryptBlobContent(await response.blob(), password)
+  const blob = await response.blob()
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  const cachedPassword = getEncryptedDirectoryPassword(normalizedRoot)
+  if (cachedPassword) {
+    try {
+      return await decryptBlobContent(blob, cachedPassword)
+    } catch {
+      setEncryptedDirectoryPassword(normalizedRoot, '')
+    }
+  }
+  const password = await ensureEncryptedDirectoryPassword(normalizedRoot)
+  return decryptBlobContent(blob, password)
 }
 
 function inferFileMimeType(fileName: string, fallbackType = 'application/octet-stream'): string {
@@ -2427,11 +2541,19 @@ function renameItem(item: FileItem) {
     renameSharedItem(item)
     return
   }
+  if (isEncryptedRootDirectory(item)) {
+    showError('暂不支持直接重命名加密目录根，请新建目录后迁移内容')
+    return
+  }
   openRenameDialog(item, 'file')
 }
 
 function renameSharedItem(item: FileItem) {
   if (!sharedActive.value || !sharedCanUpdate.value) return
+  if (isEncryptedRootDirectory(item)) {
+    showError('暂不支持直接重命名加密目录根，请新建目录后迁移内容')
+    return
+  }
   openRenameDialog(item, 'shared')
 }
 
@@ -3053,6 +3175,7 @@ function canMoveItemToDirectoryPath(source: FileItem | null, targetPath: string)
   const normalizedTargetPath = normalizeDirectoryPath(targetPath)
   if (sourcePath === normalizedTargetPath) return false
   if (source.isDir && normalizedTargetPath.startsWith(sourcePath)) return false
+  if (!canTransferAcrossEncryptedBoundary(source, normalizedTargetPath).allowed) return false
   const destinationPath = `${normalizedTargetPath}${source.name}${source.isDir ? '/' : ''}`
   return destinationPath !== sourcePath
 }
@@ -3108,6 +3231,11 @@ async function moveFileByDrag(source: FileItem, targetDir: FileItem) {
 async function moveFileToDirectoryPath(source: FileItem, targetPath: string) {
   const sourcePath = normalizeItemPath(source)
   const targetDirPath = normalizeDirectoryPath(targetPath)
+  const transferCheck = canTransferAcrossEncryptedBoundary(source, targetDirPath)
+  if (!transferCheck.allowed) {
+    showError(transferCheck.message || '移动失败')
+    return
+  }
   const destinationPath = `${targetDirPath}${source.name}${source.isDir ? '/' : ''}`
   if (destinationPath === sourcePath) {
     return
@@ -3223,6 +3351,7 @@ function canMoveSharedItemToDirectoryPath(source: FileItem | null, targetPath: s
   const normalizedTargetPath = normalizeDirectoryPath(targetPath)
   if (sourcePath === normalizedTargetPath) return false
   if (source.isDir && normalizedTargetPath.startsWith(sourcePath)) return false
+  if (!canTransferAcrossEncryptedBoundary(source, normalizedTargetPath).allowed) return false
   const destinationPath = `${normalizedTargetPath}${source.name}${source.isDir ? '/' : ''}`
   return destinationPath !== sourcePath
 }
@@ -3275,6 +3404,11 @@ async function moveSharedItemToDirectoryPath(source: FileItem, targetPath: strin
   if (!sharedActive.value || !sharedCanUpdate.value) return
   const sourcePath = normalizeSharedItemPath(source)
   const targetDirPath = normalizeDirectoryPath(targetPath)
+  const transferCheck = canTransferAcrossEncryptedBoundary(source, targetDirPath)
+  if (!transferCheck.allowed) {
+    showError(transferCheck.message || '移动失败')
+    return
+  }
   const destinationPath = `${targetDirPath}${source.name}${source.isDir ? '/' : ''}`
   if (destinationPath === sourcePath) return
 
@@ -4905,6 +5039,31 @@ onBeforeUnmount(() => {
                       </button>
                     </el-tooltip>
                   </div>
+                  <div v-if="currentEncryptedRoot" class="crypto-pill">
+                    <el-icon class="crypto-pill-icon">
+                      <component :is="currentEncryptedDirectoryPasswordCached ? Unlock : Lock" />
+                    </el-icon>
+                    <span class="crypto-pill-label">加密目录</span>
+                    <span class="crypto-pill-text">{{ currentEncryptedDirectoryStatusText }}</span>
+                    <div class="crypto-pill-actions">
+                      <el-button
+                        size="small"
+                        text
+                        type="primary"
+                        @click="unlockCurrentEncryptedDirectory(currentEncryptedDirectoryPasswordCached)"
+                      >
+                        {{ currentEncryptedDirectoryPasswordCached ? '更换密码' : '解锁' }}
+                      </el-button>
+                      <el-button
+                        v-if="currentEncryptedDirectoryPasswordCached"
+                        size="small"
+                        text
+                        @click="clearCurrentEncryptedDirectoryPassword"
+                      >
+                        清除缓存
+                      </el-button>
+                    </div>
+                  </div>
                 </template>
               </div>
             </div>
@@ -5646,6 +5805,10 @@ onBeforeUnmount(() => {
         :is-direct-share-owner="isDirectShareOwner"
         :enter-directory="enterDirectory"
         :open-access-key-dialog="openAccessKeyDialogFromDirectory"
+        :get-encrypted-directory-root="getEncryptedDirectoryRootForItem"
+        :is-encrypted-directory-password-cached="isEncryptedDirectoryPasswordCachedForRoot"
+        :unlock-encrypted-directory="unlockEncryptedDirectoryByRoot"
+        :clear-encrypted-directory-password-cache="clearEncryptedDirectoryPasswordByRoot"
         :enter-shared-root="enterSharedRoot"
         :enter-shared-directory="enterSharedDirectory"
         :download-shared-root="downloadSharedRoot"
@@ -6556,6 +6719,44 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.crypto-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(230, 162, 60, 0.1);
+  color: #8a5200;
+  font-size: 12px;
+  min-height: 32px;
+  max-width: 100%;
+}
+
+.crypto-pill-icon {
+  color: #e6a23c;
+  flex-shrink: 0;
+}
+
+.crypto-pill-label {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.crypto-pill-text {
+  color: #7a4b00;
+  white-space: nowrap;
+}
+
+.crypto-pill-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.crypto-pill-actions :deep(.el-button) {
+  padding-inline: 4px;
+}
+
 .breadcrumb-link {
   border: none;
   background: transparent;
@@ -7418,6 +7619,17 @@ onBeforeUnmount(() => {
   .view-segment {
     width: 100%;
     overflow-x: auto;
+  }
+
+  .crypto-pill {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    border-radius: 14px;
+  }
+
+  .crypto-pill-text {
+    white-space: normal;
   }
 
   .key-item {
