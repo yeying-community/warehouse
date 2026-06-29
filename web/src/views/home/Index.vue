@@ -1011,7 +1011,7 @@ async function unlockCurrentEncryptedDirectory(forceReset = false) {
   if (!root) return
   try {
     await promptEncryptedDirectoryPassword(root, forceReset)
-    showSuccess(forceReset ? '目录密码已更新' : '加密目录已解锁')
+    showSuccess(forceReset ? '目录密码已重新输入' : '加密目录已解锁')
   } catch (error) {
     if (isPromptCanceled(error)) return
     throw error
@@ -1022,7 +1022,7 @@ async function unlockEncryptedDirectoryByRoot(rootPath: string, forceReset = fal
   const normalizedRoot = normalizeEncryptedRootPath(rootPath)
   try {
     await promptEncryptedDirectoryPassword(normalizedRoot, forceReset)
-    showSuccess(forceReset ? '目录密码已更新' : '加密目录已解锁')
+    showSuccess(forceReset ? '目录密码已重新输入' : '加密目录已解锁')
   } catch (error) {
     if (isPromptCanceled(error)) return
     throw error
@@ -5056,7 +5056,7 @@ onBeforeUnmount(() => {
                         type="primary"
                         @click="unlockCurrentEncryptedDirectory(currentEncryptedDirectoryPasswordCached)"
                       >
-                        {{ currentEncryptedDirectoryPasswordCached ? '更换密码' : '解锁' }}
+                        {{ currentEncryptedDirectoryPasswordCached ? '重新输入密码' : '解锁' }}
                       </el-button>
                       <el-button
                         v-if="currentEncryptedDirectoryPasswordCached"

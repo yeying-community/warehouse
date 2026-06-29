@@ -319,6 +319,9 @@ onBeforeUnmount(() => {
           <span class="detail-label">目录密码</span>
           <span class="detail-value">{{ isDetailEncryptedPasswordCached(detailFile) ? '已缓存' : '未缓存' }}</span>
         </div>
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-note">
+          目录密码仅缓存在当前浏览器会话中，重新输入不会重加密已有文件。
+        </div>
         <div class="detail-row">
           <span class="detail-label">修改时间</span>
           <span class="detail-value time-cell">{{ formatTime(detailFile.modified) }}</span>
@@ -333,7 +336,7 @@ onBeforeUnmount(() => {
         </el-button>
         <template v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)">
           <el-button size="small" @click="handleUnlockEncryptedDirectory(detailFile, isDetailEncryptedPasswordCached(detailFile))">
-            {{ isDetailEncryptedPasswordCached(detailFile) ? '更换目录密码' : '解锁目录' }}
+            {{ isDetailEncryptedPasswordCached(detailFile) ? '重新输入密码' : '解锁目录' }}
           </el-button>
           <el-button
             v-if="isDetailEncryptedPasswordCached(detailFile)"
@@ -1016,9 +1019,19 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.detail-note {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .detail-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .detail-empty {
