@@ -24,6 +24,7 @@ const props = defineProps<{
   openFilePreview: (item: FileItem) => void
   openDetailDrawer: (mode: 'file' | 'recycle', item: FileItem) => void
   downloadFile: (item: FileItem) => void
+  canShareItem: (item: FileItem) => boolean
   shareFile: (item: FileItem) => void
   openShareUserDialog: (item: FileItem) => void
   openAccessKeyDialog: (item: FileItem) => void
@@ -38,6 +39,10 @@ function canPreview(row: FileItem): boolean {
   return !row.isDir && !!props.getPreviewMode(row)
 }
 
+function canShare(row: FileItem): boolean {
+  return props.canShareItem(row)
+}
+
 function handleCommand(row: FileItem, command: string) {
   switch (command) {
     case 'detail':
@@ -50,9 +55,11 @@ function handleCommand(row: FileItem, command: string) {
       props.downloadFile(row)
       break
     case 'share':
+      if (!canShare(row)) return
       props.shareFile(row)
       break
     case 'shareUser':
+      if (!canShare(row)) return
       props.openShareUserDialog(row)
       break
     case 'accessKey':
@@ -160,8 +167,9 @@ watch(() => props.selectionNonce, () => {
                 <el-dropdown-item v-if="row.isDir" command="accessKey">授权密钥</el-dropdown-item>
                 <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
-                <el-dropdown-item v-if="!row.isDir" command="share">创建链接</el-dropdown-item>
-                <el-dropdown-item command="shareUser">指定对象</el-dropdown-item>
+                <el-dropdown-item v-if="!row.isDir && canShare(row)" command="share">创建链接</el-dropdown-item>
+                <el-dropdown-item v-if="canShare(row)" command="shareUser">指定对象</el-dropdown-item>
+                <el-dropdown-item v-if="row.encrypted" disabled>加密项暂不支持分享</el-dropdown-item>
                 <el-dropdown-item command="rename">重命名</el-dropdown-item>
                 <el-dropdown-item command="delete">删除</el-dropdown-item>
               </el-dropdown-menu>
@@ -204,8 +212,9 @@ watch(() => props.selectionNonce, () => {
                 <el-dropdown-item v-if="row.isDir" command="accessKey">授权密钥</el-dropdown-item>
                 <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
-                <el-dropdown-item v-if="!row.isDir" command="share">创建链接</el-dropdown-item>
-                <el-dropdown-item command="shareUser">指定对象</el-dropdown-item>
+                <el-dropdown-item v-if="!row.isDir && canShare(row)" command="share">创建链接</el-dropdown-item>
+                <el-dropdown-item v-if="canShare(row)" command="shareUser">指定对象</el-dropdown-item>
+                <el-dropdown-item v-if="row.encrypted" disabled>加密项暂不支持分享</el-dropdown-item>
                 <el-dropdown-item command="rename">重命名</el-dropdown-item>
                 <el-dropdown-item command="delete">删除</el-dropdown-item>
               </el-dropdown-menu>

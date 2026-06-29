@@ -939,6 +939,10 @@ function isEncryptedItem(item: FileItem | null | undefined): boolean {
   return !!item.encryptedRoot || !!item.encrypted
 }
 
+function canShareFileItem(item: FileItem): boolean {
+  return !isEncryptedItem(item)
+}
+
 function getEffectiveEncryptedRoot(path: string): string | null {
   return resolveEncryptedRootForPath(path)
 }
@@ -5767,6 +5771,7 @@ onBeforeUnmount(() => {
               :open-file-preview="openFilePreview"
               :open-detail-drawer="openDetailDrawer"
               :download-file="downloadFile"
+              :can-share-item="canShareFileItem"
               :share-file="shareFile"
               :open-share-user-dialog="openShareUserDialog"
               :open-access-key-dialog="openAccessKeyDialogFromDirectory"
