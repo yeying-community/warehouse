@@ -30,6 +30,10 @@ const props = defineProps<{
   isDirectShareOwner: (item: DirectShareItem) => boolean
   enterDirectory: (item: FileItem) => void
   openAccessKeyDialog: (item: FileItem) => void
+  getEncryptedDirectoryRoot: (item: FileItem) => string | null
+  isEncryptedDirectoryPasswordCached: (rootPath: string | null) => boolean
+  unlockEncryptedDirectory: (rootPath: string, forceReset?: boolean) => void | Promise<void>
+  clearEncryptedDirectoryPasswordCache: (rootPath: string) => void
   enterSharedRoot: (item: DirectShareItem) => void
   enterSharedDirectory: (item: FileItem) => void
   downloadSharedRoot: (item: DirectShareItem) => void
@@ -72,6 +76,9 @@ const props = defineProps<{
   createFolderSubmitting: boolean
   createFolderForm: {
     name: string
+    encrypted: boolean
+    password: string
+    confirmPassword: string
   }
   submitCreateFolder: () => void
   renameDialogVisible: boolean
@@ -220,6 +227,27 @@ function handleOpenAccessKeyDialog(item: FileItem) {
   emit('update:detailDrawerVisible', false)
 }
 
+function getDetailEncryptedRoot(item: FileItem | null): string | null {
+  if (!item) return null
+  return props.getEncryptedDirectoryRoot(item)
+}
+
+function isDetailEncryptedPasswordCached(item: FileItem | null): boolean {
+  return props.isEncryptedDirectoryPasswordCached(getDetailEncryptedRoot(item))
+}
+
+async function handleUnlockEncryptedDirectory(item: FileItem | null, forceReset = false) {
+  const root = getDetailEncryptedRoot(item)
+  if (!root) return
+  await props.unlockEncryptedDirectory(root, forceReset)
+}
+
+function handleClearEncryptedDirectoryPasswordCache(item: FileItem | null) {
+  const root = getDetailEncryptedRoot(item)
+  if (!root) return
+  props.clearEncryptedDirectoryPasswordCache(root)
+}
+
 function formatTargetScope(item: DirectShareItem | null): string {
   if (!item) return '-'
   if (item.allUsers || item.targetType === 'all_users') return '所有用户'
@@ -280,6 +308,21 @@ onBeforeUnmount(() => {
           <span class="detail-value">{{ detailFile.isDir ? '-' : formatSizeDetail(detailFile.size) }}</span>
         </div>
         <div class="detail-row">
+          <span class="detail-label">加密</span>
+          <span class="detail-value">{{ detailFile.encrypted ? '已启用' : '未启用' }}</span>
+        </div>
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-row">
+          <span class="detail-label">加密根</span>
+          <span class="detail-value mono">{{ getDetailEncryptedRoot(detailFile) }}</span>
+        </div>
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-row">
+          <span class="detail-label">目录密码</span>
+          <span class="detail-value">{{ isDetailEncryptedPasswordCached(detailFile) ? '已缓存' : '未缓存' }}</span>
+        </div>
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-note">
+          目录密码仅缓存在当前浏览器会话中，重新输入不会重加密已有文件。
+        </div>
+        <div class="detail-row">
           <span class="detail-label">修改时间</span>
           <span class="detail-value time-cell">{{ formatTime(detailFile.modified) }}</span>
         </div>
@@ -291,6 +334,18 @@ onBeforeUnmount(() => {
         <el-button size="small" @click="handleOpenAccessKeyDialog(detailFile)">
           授权密钥
         </el-button>
+        <template v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)">
+          <el-button size="small" @click="handleUnlockEncryptedDirectory(detailFile, isDetailEncryptedPasswordCached(detailFile))">
+            {{ isDetailEncryptedPasswordCached(detailFile) ? '重新输入密码' : '解锁目录' }}
+          </el-button>
+          <el-button
+            v-if="isDetailEncryptedPasswordCached(detailFile)"
+            size="small"
+            @click="handleClearEncryptedDirectoryPasswordCache(detailFile)"
+          >
+            清除密码缓存
+          </el-button>
+        </template>
       </div>
       <div class="detail-actions" v-else-if="getPreviewMode(detailFile) === 'text'">
         <el-button type="primary" size="small" @click="openFilePreview(detailFile)">
@@ -734,6 +789,28 @@ onBeforeUnmount(() => {
           @keydown.enter.prevent="submitCreateFolder"
         />
       </el-form-item>
+      <el-form-item label="目录选项">
+        <el-checkbox v-model="createFolderForm.encrypted">创建为加密目录</el-checkbox>
+        <div class="share-group-meta">加密目录内的文件会在浏览器端加密后再上传到服务端。</div>
+      </el-form-item>
+      <template v-if="createFolderForm.encrypted">
+        <el-form-item label="目录密码">
+          <el-input
+            v-model="createFolderForm.password"
+            type="password"
+            show-password
+            placeholder="请输入目录密码"
+          />
+        </el-form-item>
+        <el-form-item label="确认目录密码">
+          <el-input
+            v-model="createFolderForm.confirmPassword"
+            type="password"
+            show-password
+            placeholder="请再次输入目录密码"
+          />
+        </el-form-item>
+      </template>
     </el-form>
     <template #footer>
       <el-button @click="createFolderDialogModel = false">取消</el-button>
@@ -942,9 +1019,19 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.detail-note {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f5f7fa;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .detail-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .detail-empty {
