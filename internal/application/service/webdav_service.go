@@ -390,6 +390,10 @@ func isEphemeralSyncArtifactPath(normalizedPath string) bool {
 	}
 
 	base := path.Base(cleaned)
+	if base == "backup.__sync_txn_head_v1.json" ||
+		base == "backup.__sync_txn_head_v1_bak.json" {
+		return true
+	}
 	if strings.HasPrefix(base, "backup.__sync_txn_data_v1.") &&
 		strings.HasSuffix(base, ".json") {
 		return true
