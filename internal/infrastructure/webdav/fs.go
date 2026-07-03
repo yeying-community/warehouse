@@ -2,6 +2,7 @@ package webdavfs
 
 import (
 	"context"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,6 +42,9 @@ func (fsys *UnicodeFileSystem) OpenFile(ctx context.Context, name string, flag i
 		return nil, os.ErrNotExist
 	}
 	fullPath := filepath.Join(fsys.dir, name)
+	if shouldAtomicWrite(flag) {
+		return fsys.openAtomicWriteFile(fullPath, name, perm)
+	}
 	f, err := os.OpenFile(fullPath, flag, perm)
 	if err != nil {
 		return nil, err
@@ -125,6 +129,85 @@ type file struct {
 
 func (f *file) Name() string {
 	return f.name
+}
+
+type atomicWriteFile struct {
+	*os.File
+	name       string
+	tempPath   string
+	targetPath string
+	closed     bool
+}
+
+func (f *atomicWriteFile) Name() string {
+	return f.name
+}
+
+func (f *atomicWriteFile) Close() error {
+	if f.closed {
+		return nil
+	}
+	f.closed = true
+
+	if _, err := f.Seek(0, io.SeekCurrent); err != nil {
+		_ = f.File.Close()
+		_ = os.Remove(f.tempPath)
+		return err
+	}
+	if err := f.File.Sync(); err != nil {
+		_ = f.File.Close()
+		_ = os.Remove(f.tempPath)
+		return err
+	}
+	if err := f.File.Close(); err != nil {
+		_ = os.Remove(f.tempPath)
+		return err
+	}
+	if err := os.Rename(f.tempPath, f.targetPath); err != nil {
+		_ = os.Remove(f.tempPath)
+		return err
+	}
+	return syncDirectory(filepath.Dir(f.targetPath))
+}
+
+func shouldAtomicWrite(flag int) bool {
+	writeFlags := os.O_WRONLY | os.O_RDWR
+	requiredFlags := os.O_CREATE | os.O_TRUNC
+	return flag&writeFlags != 0 && flag&requiredFlags == requiredFlags
+}
+
+func (fsys *UnicodeFileSystem) openAtomicWriteFile(fullPath, name string, perm os.FileMode) (webdav.File, error) {
+	tempFile, err := os.CreateTemp(filepath.Dir(fullPath), "._upload-*")
+	if err != nil {
+		return nil, err
+	}
+	if err := tempFile.Chmod(perm); err != nil {
+		_ = tempFile.Close()
+		_ = os.Remove(tempFile.Name())
+		return nil, err
+	}
+	return &atomicWriteFile{
+		File:       tempFile,
+		name:       filepath.ToSlash(name),
+		tempPath:   tempFile.Name(),
+		targetPath: fullPath,
+	}, nil
+}
+
+func syncDirectory(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil && !isDirSyncUnsupported(err) {
+		return err
+	}
+	return nil
+}
+
+func isDirSyncUnsupported(err error) bool {
+	return err == os.ErrInvalid
 }
 
 // ResolvePath 解析并规范化路径
