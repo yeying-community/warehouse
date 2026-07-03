@@ -27,6 +27,20 @@ type ShareUserService struct {
 	logger             *zap.Logger
 }
 
+func (s *ShareUserService) Repository() repository.UserShareRepository {
+	if s == nil {
+		return nil
+	}
+	return s.repo
+}
+
+func (s *ShareUserService) Config() *config.Config {
+	if s == nil {
+		return nil
+	}
+	return s.config
+}
+
 // NewShareUserService 创建定向分享服务
 func NewShareUserService(
 	repo repository.UserShareRepository,

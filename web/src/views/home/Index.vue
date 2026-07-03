@@ -2670,7 +2670,11 @@ async function triggerDirectoryUpload() {
       const directories = new Set<string>()
       await walkDirectoryHandle(handle, '', files, directories)
       if (files.length || directories.size) {
-        await uploadFilesWithDirectories(files, directories)
+        if (isSharedBrowse.value) {
+          await uploadSharedFilesWithDirectories(files, directories)
+        } else {
+          await uploadFilesWithDirectories(files, directories)
+        }
       }
       return
     } catch (error: any) {

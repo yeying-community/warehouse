@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -650,13 +652,9 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		http.Error(w, "Invalid upload body", http.StatusBadRequest)
-		return
-	}
-	file, _, err := r.FormFile("file")
+	file, err := openSharedUploadBody(r)
 	if err != nil {
-		http.Error(w, "file is required", http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
@@ -685,6 +683,34 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 	if _, err := w.Write([]byte(`{"message":"uploaded successfully"}`)); err != nil {
 		h.logger.Error("failed to write response", zap.Error(err))
 	}
+}
+
+func openSharedUploadBody(r *http.Request) (io.ReadCloser, error) {
+	if r == nil || r.Body == nil {
+		return nil, fmt.Errorf("Invalid upload body")
+	}
+
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if contentType == "" {
+		return r.Body, nil
+	}
+
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid upload body")
+	}
+	if strings.EqualFold(mediaType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			return nil, fmt.Errorf("Invalid upload body")
+		}
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			return nil, fmt.Errorf("file is required")
+		}
+		return file, nil
+	}
+
+	return r.Body, nil
 }
 
 // HandleCreateFolder 创建目录
@@ -816,6 +842,11 @@ func (h *ShareUserHandler) HandleRename(w http.ResponseWriter, r *http.Request) 
 
 	if err := os.Rename(fromPath, toPath); err != nil {
 		http.Error(w, "Failed to rename", http.StatusInternalServerError)
+		return
+	}
+	if err := service.SyncUserSharePathsForOwnerMove(r.Context(), h.shareUserService.Repository(), h.shareUserService.Config(), owner, fromPath, toPath); err != nil {
+		h.logger.Error("failed to sync share paths after share rename", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	if err := h.mutationRecorder.EnsureDir(r.Context(), filepath.Dir(toPath)); err != nil {

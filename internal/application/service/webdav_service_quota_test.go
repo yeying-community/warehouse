@@ -166,6 +166,7 @@ func newQuotaTestService(t *testing.T, quotaBytes, usedBytes int64) (*WebDAVServ
 		userRepo,
 		&testRecycleRepo{},
 		nil,
+		nil,
 		zap.NewNop(),
 	)
 	return svc, u

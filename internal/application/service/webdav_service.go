@@ -35,6 +35,7 @@ type WebDAVService struct {
 	quotaService     quota.Service
 	userRepo         user.Repository
 	recycleRepo      repository.RecycleRepository
+	userShareRepo    repository.UserShareRepository
 	mutationRecorder MutationRecorder
 	assetSpace       *assetspace.Manager
 	logger           *zap.Logger
@@ -67,6 +68,7 @@ func NewWebDAVService(
 	quotaService quota.Service,
 	userRepo user.Repository,
 	recycleRepo repository.RecycleRepository,
+	userShareRepo repository.UserShareRepository,
 	mutationRecorder MutationRecorder,
 	logger *zap.Logger,
 ) *WebDAVService {
@@ -80,6 +82,7 @@ func NewWebDAVService(
 		quotaService:     quotaService,
 		userRepo:         userRepo,
 		recycleRepo:      recycleRepo,
+		userShareRepo:    userShareRepo,
 		mutationRecorder: mutationRecorder,
 		assetSpace:       assetspace.NewManager(cfg, logger),
 		logger:           logger,
@@ -215,6 +218,16 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handler.ServeHTTP(rec, r)
 
 		if rec.status >= 200 && rec.status < 300 {
+			if err := s.syncUserSharePathsForMove(r.Context(), u, userDir, r); err != nil {
+				s.logger.Error("failed to sync share paths after move",
+					zap.String("username", u.Username),
+					zap.String("method", r.Method),
+					zap.String("path", r.URL.Path),
+					zap.String("destination", r.Header.Get("Destination")),
+					zap.Error(err))
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
 			if err := s.recordMutation(r.Context(), userDir, r); err != nil {
 				if s.handleMutationRecordError("write mutation skipped because no standby is currently available",
 					err,
@@ -238,6 +251,19 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 	handler.ServeHTTP(rec, r)
 
+}
+
+func (s *WebDAVService) syncUserSharePathsForMove(ctx context.Context, u *user.User, userDir string, r *http.Request) error {
+	if s.userShareRepo == nil || u == nil || r == nil || strings.ToUpper(strings.TrimSpace(r.Method)) != "MOVE" {
+		return nil
+	}
+	destination := strings.TrimSpace(r.Header.Get("Destination"))
+	if destination == "" {
+		return nil
+	}
+	fromPath := s.resolveUserFullPath(userDir, r.URL.Path)
+	toPath := s.resolveUserFullPath(userDir, destination)
+	return SyncUserSharePathsForOwnerMove(ctx, s.userShareRepo, s.config, u, fromPath, toPath)
 }
 
 func (s *WebDAVService) clearWebDAVDeadlines(w http.ResponseWriter) {

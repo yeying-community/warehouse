@@ -243,6 +243,7 @@ func (c *Container) initServices() error {
 		c.QuotaService,
 		c.UserRepository,
 		c.RecycleRepository,
+		c.UserShareRepository,
 		c.MutationRecorder,
 		c.Logger,
 	)
