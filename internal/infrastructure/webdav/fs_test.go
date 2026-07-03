@@ -119,14 +119,15 @@ func TestAtomicWriteFileRemovesTempOnCloseWithoutCommit(t *testing.T) {
 		t.Fatalf("write temp file: %v", err)
 	}
 
-	if err := af.File.Close(); err != nil {
+	tempPath := af.File.TempPath()
+	if err := af.File.File.Close(); err != nil {
 		t.Fatalf("close underlying file: %v", err)
 	}
 	if err := af.Close(); err == nil {
 		t.Fatal("expected close to fail after underlying file was closed")
 	}
 
-	if _, err := os.Stat(af.tempPath); !os.IsNotExist(err) {
+	if _, err := os.Stat(tempPath); !os.IsNotExist(err) {
 		t.Fatalf("expected temp file removed after failure, got err=%v", err)
 	}
 	if _, err := fsys.Stat(context.Background(), "/docs/abort.txt"); !os.IsNotExist(err) {

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path"
@@ -15,6 +14,7 @@ import (
 	"github.com/yeying-community/warehouse/internal/domain/auth"
 	"github.com/yeying-community/warehouse/internal/domain/shareuser"
 	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/atomicfile"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
@@ -654,7 +654,7 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := writeFileAtomically(fullPath, file, 0o666); err != nil {
+	if err := atomicfile.WriteAll(fullPath, file, 0o666); err != nil {
 		http.Error(w, "Failed to write file", http.StatusInternalServerError)
 		return
 	}
@@ -673,52 +673,6 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 	if _, err := w.Write([]byte(`{"message":"uploaded successfully"}`)); err != nil {
 		h.logger.Error("failed to write response", zap.Error(err))
 	}
-}
-
-func writeFileAtomically(targetPath string, src io.Reader, perm os.FileMode) error {
-	tempFile, err := os.CreateTemp(filepath.Dir(targetPath), "._upload-*")
-	if err != nil {
-		return err
-	}
-	tempPath := tempFile.Name()
-	cleanup := func() {
-		_ = tempFile.Close()
-		_ = os.Remove(tempPath)
-	}
-
-	if err := tempFile.Chmod(perm); err != nil {
-		cleanup()
-		return err
-	}
-	if _, err := io.Copy(tempFile, src); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tempFile.Sync(); err != nil {
-		cleanup()
-		return err
-	}
-	if err := tempFile.Close(); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-	if err := os.Rename(tempPath, targetPath); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-	return syncDir(filepath.Dir(targetPath))
-}
-
-func syncDir(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil && err != os.ErrInvalid {
-		return err
-	}
-	return nil
 }
 
 // HandleCreateFolder 创建目录

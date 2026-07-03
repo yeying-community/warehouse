@@ -2,12 +2,12 @@ package webdavfs
 
 import (
 	"context"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/yeying-community/warehouse/internal/infrastructure/atomicfile"
 	"golang.org/x/net/webdav"
 )
 
@@ -132,42 +132,12 @@ func (f *file) Name() string {
 }
 
 type atomicWriteFile struct {
-	*os.File
-	name       string
-	tempPath   string
-	targetPath string
-	closed     bool
+	*atomicfile.File
+	name string
 }
 
 func (f *atomicWriteFile) Name() string {
 	return f.name
-}
-
-func (f *atomicWriteFile) Close() error {
-	if f.closed {
-		return nil
-	}
-	f.closed = true
-
-	if _, err := f.Seek(0, io.SeekCurrent); err != nil {
-		_ = f.File.Close()
-		_ = os.Remove(f.tempPath)
-		return err
-	}
-	if err := f.File.Sync(); err != nil {
-		_ = f.File.Close()
-		_ = os.Remove(f.tempPath)
-		return err
-	}
-	if err := f.File.Close(); err != nil {
-		_ = os.Remove(f.tempPath)
-		return err
-	}
-	if err := os.Rename(f.tempPath, f.targetPath); err != nil {
-		_ = os.Remove(f.tempPath)
-		return err
-	}
-	return syncDirectory(filepath.Dir(f.targetPath))
 }
 
 func shouldAtomicWrite(flag int) bool {
@@ -177,37 +147,14 @@ func shouldAtomicWrite(flag int) bool {
 }
 
 func (fsys *UnicodeFileSystem) openAtomicWriteFile(fullPath, name string, perm os.FileMode) (webdav.File, error) {
-	tempFile, err := os.CreateTemp(filepath.Dir(fullPath), "._upload-*")
+	tempFile, err := atomicfile.Open(fullPath, perm)
 	if err != nil {
-		return nil, err
-	}
-	if err := tempFile.Chmod(perm); err != nil {
-		_ = tempFile.Close()
-		_ = os.Remove(tempFile.Name())
 		return nil, err
 	}
 	return &atomicWriteFile{
-		File:       tempFile,
-		name:       filepath.ToSlash(name),
-		tempPath:   tempFile.Name(),
-		targetPath: fullPath,
+		File: tempFile,
+		name: filepath.ToSlash(name),
 	}, nil
-}
-
-func syncDirectory(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := f.Sync(); err != nil && !isDirSyncUnsupported(err) {
-		return err
-	}
-	return nil
-}
-
-func isDirSyncUnsupported(err error) bool {
-	return err == os.ErrInvalid
 }
 
 // ResolvePath 解析并规范化路径
