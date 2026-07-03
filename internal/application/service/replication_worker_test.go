@@ -380,6 +380,75 @@ func TestReplicationWorkerDispatchOnceContinuesAcrossTargets(t *testing.T) {
 	}
 }
 
+func TestReplicationWorkerRejectsChangedFileSnapshot(t *testing.T) {
+	activeRoot := t.TempDir()
+	activeFile := filepath.Join(activeRoot, "alice", "docs", "hello.txt")
+	if err := os.MkdirAll(filepath.Dir(activeFile), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	originalPayload := []byte("old payload")
+	if err := os.WriteFile(activeFile, originalPayload, 0644); err != nil {
+		t.Fatalf("WriteFile original: %v", err)
+	}
+	digest := sha256.Sum256(originalPayload)
+	hashHex := hex.EncodeToString(digest[:])
+	changedPayload := []byte("old payload\n")
+	if err := os.WriteFile(activeFile, changedPayload, 0644); err != nil {
+		t.Fatalf("WriteFile changed: %v", err)
+	}
+
+	generation := int64(3)
+	outbox := &fakeWorkerOutboxRepository{
+		events: []*replication.OutboxEvent{
+			{
+				ID:                   2,
+				SourceNodeID:         "node-a",
+				TargetNodeID:         "node-b",
+				AssignmentGeneration: &generation,
+				Op:                   replication.OpUpsertFile,
+				Path:                 stringPointer("/alice/docs/hello.txt"),
+				ContentSHA256:        stringPointer(hashHex),
+				FileSize:             int64Pointer(int64(len(originalPayload))),
+				IsDir:                false,
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Replication.Enabled = true
+	cfg.Replication.SharedSecret = "shared-secret"
+	cfg.Replication.AllowedClockSkew = time.Minute
+	cfg.Replication.DispatchInterval = time.Second
+	cfg.Replication.RequestTimeout = 5 * time.Second
+	cfg.Replication.BatchSize = 10
+	cfg.Replication.RetryBackoffBase = time.Second
+	cfg.Replication.MaxRetryBackoff = time.Minute
+	cfg.WebDAV.Directory = activeRoot
+
+	worker := NewReplicationWorker(cfg, outbox, fakeWorkerResolver{
+		peer: &ResolvedReplicationPeer{
+			NodeID:               "node-b",
+			BaseURL:              "http://127.0.0.1:1",
+			AssignmentGeneration: &generation,
+		},
+	}, zap.NewNop())
+
+	if err := worker.DispatchOnce(context.Background()); err != nil {
+		t.Fatalf("expected changed snapshot to be retried without bubbling error, got %v", err)
+	}
+	if len(outbox.failed) != 1 {
+		t.Fatalf("expected one failed event, got %#v", outbox.failed)
+	}
+	if outbox.failed[0].id != 2 {
+		t.Fatalf("expected event 2 to fail, got %#v", outbox.failed[0])
+	}
+	if !strings.Contains(outbox.failed[0].lastError, "expected size 11, current size 12") {
+		t.Fatalf("expected snapshot mismatch failure, got %q", outbox.failed[0].lastError)
+	}
+}
+
 func TestReplicationWorkerRetryDelayCapsAtMax(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Node.ID = "node-a"
