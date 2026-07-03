@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path"
@@ -15,6 +14,8 @@ import (
 	"github.com/yeying-community/warehouse/internal/domain/auth"
 	"github.com/yeying-community/warehouse/internal/domain/shareuser"
 	"github.com/yeying-community/warehouse/internal/domain/user"
+	"github.com/yeying-community/warehouse/internal/infrastructure/atomicfile"
+	webdavfs "github.com/yeying-community/warehouse/internal/infrastructure/webdav"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
@@ -495,6 +496,9 @@ func (h *ShareUserHandler) HandleEntries(w http.ResponseWriter, r *http.Request)
 
 		prefix := normalizeRelPath(relPath)
 		for _, entry := range entries {
+			if isIgnoredShareName(entry.Name()) {
+				continue
+			}
 			entryInfo, err := entry.Info()
 			if err != nil {
 				continue
@@ -509,6 +513,10 @@ func (h *ShareUserHandler) HandleEntries(w http.ResponseWriter, r *http.Request)
 			})
 		}
 	} else {
+		if isIgnoredShareName(info.Name()) {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
 		resp.Items = append(resp.Items, entryResp{
 			Name:     info.Name(),
 			Path:     "/" + info.Name(),
@@ -562,6 +570,10 @@ func (h *ShareUserHandler) HandleDownload(w http.ResponseWriter, r *http.Request
 	_, fullPath, err := h.shareUserService.ResolveSharePath(owner, item, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if isIgnoredSharePath(fullPath) {
+		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
 
@@ -654,14 +666,7 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	dst, err := os.OpenFile(fullPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-	if err != nil {
-		http.Error(w, "Failed to write file", http.StatusInternalServerError)
-		return
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, file); err != nil {
+	if err := atomicfile.WriteAll(fullPath, file, 0o666); err != nil {
 		http.Error(w, "Failed to write file", http.StatusInternalServerError)
 		return
 	}
@@ -970,6 +975,14 @@ func looksLikePermissionString(s string) bool {
 		}
 	}
 	return s != ""
+}
+
+func isIgnoredSharePath(fullPath string) bool {
+	return isIgnoredShareName(path.Base(strings.TrimSuffix(filepath.ToSlash(fullPath), "/")))
+}
+
+func isIgnoredShareName(name string) bool {
+	return webdavfs.IsIgnoredName(strings.TrimSpace(name))
 }
 
 func normalizeRelPath(raw string) string {

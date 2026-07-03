@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/yeying-community/warehouse/internal/infrastructure/atomicfile"
 	"golang.org/x/net/webdav"
 )
 
@@ -41,6 +42,9 @@ func (fsys *UnicodeFileSystem) OpenFile(ctx context.Context, name string, flag i
 		return nil, os.ErrNotExist
 	}
 	fullPath := filepath.Join(fsys.dir, name)
+	if shouldAtomicWrite(flag) {
+		return fsys.openAtomicWriteFile(fullPath, name, perm)
+	}
 	f, err := os.OpenFile(fullPath, flag, perm)
 	if err != nil {
 		return nil, err
@@ -125,6 +129,32 @@ type file struct {
 
 func (f *file) Name() string {
 	return f.name
+}
+
+type atomicWriteFile struct {
+	*atomicfile.File
+	name string
+}
+
+func (f *atomicWriteFile) Name() string {
+	return f.name
+}
+
+func shouldAtomicWrite(flag int) bool {
+	writeFlags := os.O_WRONLY | os.O_RDWR
+	requiredFlags := os.O_CREATE | os.O_TRUNC
+	return flag&writeFlags != 0 && flag&requiredFlags == requiredFlags
+}
+
+func (fsys *UnicodeFileSystem) openAtomicWriteFile(fullPath, name string, perm os.FileMode) (webdav.File, error) {
+	tempFile, err := atomicfile.Open(fullPath, perm)
+	if err != nil {
+		return nil, err
+	}
+	return &atomicWriteFile{
+		File: tempFile,
+		name: filepath.ToSlash(name),
+	}, nil
 }
 
 // ResolvePath 解析并规范化路径
