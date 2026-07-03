@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -652,9 +650,27 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	file, err := openSharedUploadBody(r)
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		h.logger.Warn("invalid shared upload multipart body",
+			zap.String("share_id", shareID),
+			zap.String("path", relPath),
+			zap.String("content_type", r.Header.Get("Content-Type")),
+			zap.Int64("content_length", r.ContentLength),
+			zap.Error(err),
+		)
+		http.Error(w, "Invalid upload body", http.StatusBadRequest)
+		return
+	}
+	file, _, err := r.FormFile("file")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		h.logger.Warn("shared upload multipart missing file field",
+			zap.String("share_id", shareID),
+			zap.String("path", relPath),
+			zap.String("content_type", r.Header.Get("Content-Type")),
+			zap.Int64("content_length", r.ContentLength),
+			zap.Error(err),
+		)
+		http.Error(w, "file is required", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
@@ -683,34 +699,6 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 	if _, err := w.Write([]byte(`{"message":"uploaded successfully"}`)); err != nil {
 		h.logger.Error("failed to write response", zap.Error(err))
 	}
-}
-
-func openSharedUploadBody(r *http.Request) (io.ReadCloser, error) {
-	if r == nil || r.Body == nil {
-		return nil, fmt.Errorf("Invalid upload body")
-	}
-
-	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
-	if contentType == "" {
-		return r.Body, nil
-	}
-
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return nil, fmt.Errorf("Invalid upload body")
-	}
-	if strings.EqualFold(mediaType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(64 << 20); err != nil {
-			return nil, fmt.Errorf("Invalid upload body")
-		}
-		file, _, err := r.FormFile("file")
-		if err != nil {
-			return nil, fmt.Errorf("file is required")
-		}
-		return file, nil
-	}
-
-	return r.Body, nil
 }
 
 // HandleCreateFolder 创建目录
