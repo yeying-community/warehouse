@@ -20,7 +20,7 @@ function statusLabel(status: UploadTaskStatus): string {
     case 'queued':
       return '等待中'
     case 'uploading':
-      return '上传中'
+      return '进行中'
     case 'success':
       return '已完成'
     case 'failed':
@@ -74,14 +74,14 @@ function handleOpenTaskLocation(task: UploadTask) {
   <el-table
     v-if="!isMobile"
     :data="tasks"
-    empty-text="暂无上传任务"
+    empty-text="暂无任务"
     height="100%"
   >
     <el-table-column label="文件" min-width="240">
       <template #default="{ row }">
         <div class="task-name">
           <span class="task-title" :title="getTaskName(row)">{{ getTaskName(row) }}</span>
-          <span v-if="row.isShared" class="task-meta">共享上传</span>
+          <span class="task-meta">{{ row.isShared ? '共享任务' : '任务' }}</span>
           <span v-if="row.error" class="task-error">{{ row.error }}</span>
         </div>
       </template>
@@ -143,12 +143,13 @@ function handleOpenTaskLocation(task: UploadTask) {
   </el-table>
 
   <div v-else class="card-list">
-    <el-empty v-if="!tasks.length" description="暂无上传任务" />
+    <el-empty v-if="!tasks.length" description="暂无任务" />
     <div v-for="row in tasks" :key="row.id" class="card-item">
       <div class="card-header">
         <div class="card-title" :title="getTaskName(row)">{{ getTaskName(row) }}</div>
         <el-tag size="small" :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
       </div>
+      <div class="task-meta">{{ row.isShared ? '共享任务' : '任务' }}</div>
       <div class="card-meta-compact">
         <span class="card-meta-value">{{ formatTime(row.updatedAt) }}</span>
         <span class="card-meta-sep">·</span>

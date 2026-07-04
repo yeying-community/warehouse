@@ -1,8 +1,10 @@
 <script lang="ts" setup>
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
-import { Bell, SwitchButton, Wallet } from '@element-plus/icons-vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { Bell, Notebook, SwitchButton, Wallet } from '@element-plus/icons-vue'
+import { storeToRefs } from 'pinia'
 import { notificationApi, type AdminNotificationCreatePayload, type NotificationItem, type NotificationPreferenceItem } from '@/api'
 import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, focusPendingWalletApproval, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
+import { useUploadTaskStore } from '@/stores/uploadTaskStore'
 
 const isAuth = ref(false)
 const account = ref<string | null>(null)
@@ -14,6 +16,9 @@ const notificationView = ref<'messages' | 'preferences' | 'announce'>('messages'
 const notifications = ref<NotificationItem[]>([])
 const notificationPreferences = ref<Array<{ type: string; enabled: boolean }>>([])
 const unreadCount = ref(0)
+const uploadTaskStore = useUploadTaskStore()
+const { addSignal: uploadTaskAddSignal, summary: uploadTaskSummary } = storeToRefs(uploadTaskStore)
+const taskPulse = ref(false)
 const canAnnounce = ref(false)
 const announcementSubmitting = ref(false)
 const announcementForm = ref<AdminNotificationCreatePayload>({
@@ -30,6 +35,22 @@ let stopAccountWatch: (() => void) | null = null
 let stopWalletProviderWatch: (() => void) | null = null
 let notificationTimer: number | null = null
 let userNotificationStream: EventSource | null = null
+let taskPulseTimer: number | null = null
+
+watch(uploadTaskAddSignal, (value, oldValue) => {
+  if (!isAuth.value || value === oldValue) return
+  taskPulse.value = false
+  if (taskPulseTimer !== null) {
+    window.clearTimeout(taskPulseTimer)
+  }
+  requestAnimationFrame(() => {
+    taskPulse.value = true
+    taskPulseTimer = window.setTimeout(() => {
+      taskPulse.value = false
+      taskPulseTimer = null
+    }, 900)
+  })
+})
 
 onMounted(() => {
   isAuth.value = isLoggedIn()
@@ -287,6 +308,9 @@ onBeforeUnmount(() => {
   if (notificationTimer !== null) {
     window.clearInterval(notificationTimer)
   }
+  if (taskPulseTimer !== null) {
+    window.clearTimeout(taskPulseTimer)
+  }
   stopNotificationStreams()
   stopWalletProviderWatch?.()
   stopAccountWatch?.()
@@ -320,6 +344,18 @@ onBeforeUnmount(() => {
       </template>
 
       <!-- 已登录 -->
+      <el-tooltip v-if="isAuth" content="任务" placement="bottom">
+        <el-button class="task-button" :class="{ 'is-task-pulse': taskPulse }" circle @click="uploadTaskStore.openDialog()">
+          <el-badge
+            :value="uploadTaskSummary.uploading + uploadTaskSummary.failed"
+            :hidden="uploadTaskSummary.uploading + uploadTaskSummary.failed === 0"
+            :max="99"
+            class="task-badge"
+          >
+            <el-icon><Notebook /></el-icon>
+          </el-badge>
+        </el-button>
+      </el-tooltip>
       <el-popover
         v-if="isAuth"
         :visible="notificationOpen"
@@ -508,6 +544,41 @@ onBeforeUnmount(() => {
       height: 34px;
       padding: 0;
     }
+
+    .task-button {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+
+    .task-button.is-task-pulse {
+      animation: task-added-pulse 0.9s ease;
+    }
+
+    .task-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+    }
+  }
+}
+
+@keyframes task-added-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.32);
+  }
+  35% {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 8px rgba(64, 158, 255, 0.16);
+    border-color: #409eff;
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0);
   }
 }
 

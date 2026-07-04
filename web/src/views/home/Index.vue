@@ -19,6 +19,7 @@ import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
 import { showInfo, showSuccess } from '@/utils/toast'
 import { useAddressBookStore } from '@/stores/addressBookStore'
+import { useUploadTaskStore } from '@/stores/uploadTaskStore'
 import AddressBookView from './components/AddressBookView.vue'
 import HomeOverlays from './components/HomeOverlays.vue'
 import FileTableView from './components/FileTableView.vue'
@@ -48,7 +49,6 @@ const userInfo = ref<{
   updated_at?: string
   has_password?: boolean
 } | null>(null)
-const uploadTasks = ref<UploadTask[]>([])
 const loginSubmitting = ref(false)
 const showPasswordLoginForm = ref(false)
 const passwordLoginForm = ref({
@@ -109,8 +109,6 @@ const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showAddressBook = ref(false)
 const showUploadTasks = ref(false)
 const managementSection = ref<'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks'>('account')
-const uploadTasksReturnView = ref<ViewKey | null>(null)
-const uploadTasksReturnPath = ref('/')
 const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
@@ -151,6 +149,12 @@ const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const addressBookStore = useAddressBookStore()
 const { addressBookLoading, addressGroups, addressContacts } = storeToRefs(addressBookStore)
+const uploadTaskStore = useUploadTaskStore()
+const {
+  tasks: uploadTasks,
+  dialogVisible: uploadTasksDialogVisible,
+  summary: uploadTaskSummary
+} = storeToRefs(uploadTaskStore)
 const editingUsername = ref(false)
 const usernameDraft = ref('')
 const usernameSaving = ref(false)
@@ -438,7 +442,7 @@ const searchKeyword = computed({
   }
 })
 const searchPlaceholder = computed(() => {
-  if (showUploadTasks.value) return '搜索上传任务'
+  if (showUploadTasks.value) return '搜索任务'
   if (showRecycle.value) return '搜索回收站'
   if (showShare.value) return shareTab.value === 'link' ? '搜索链接分享' : '搜索指定对象分享'
   if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索分享给我'
@@ -480,11 +484,11 @@ const fileBreadcrumbRoot = computed(() => {
   return { name: '根目录', path: '/' }
 })
 const managementSectionLabel = computed(() => {
-  if (managementSection.value === 'keys') return '访问密钥'
+  if (managementSection.value === 'keys') return '密钥管理'
   if (managementSection.value === 'adminUsers') return '用户管理'
-  if (managementSection.value === 'addressBook') return '联系人'
-  if (managementSection.value === 'uploadTasks') return '上传记录'
-  return '个人资料'
+  if (managementSection.value === 'addressBook') return '好友管理'
+  if (managementSection.value === 'uploadTasks') return '任务'
+  return '我的资料'
 })
 const isManagementView = computed(() => showQuotaManage.value || showAddressBook.value || showUploadTasks.value)
 const mobileLocationLabel = computed(() => {
@@ -492,8 +496,8 @@ const mobileLocationLabel = computed(() => {
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
   if (showQuotaManage.value) return managementSectionLabel.value
-  if (showAddressBook.value) return '联系人'
-  if (showUploadTasks.value) return '上传记录'
+  if (showAddressBook.value) return '好友管理'
+  if (showUploadTasks.value) return '任务'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
     return currentAssetSpace.value.name
@@ -504,13 +508,6 @@ const mobileLocationLabel = computed(() => {
   return defaultSpace?.name || '根目录'
 })
 const mobileLocationText = computed(() => `当前位置：${mobileLocationLabel.value}`)
-const uploadTaskSummary = computed(() => ({
-  total: uploadTasks.value.length,
-  queued: uploadTasks.value.filter(task => task.status === 'queued').length,
-  uploading: uploadTasks.value.filter(task => task.status === 'uploading').length,
-  success: uploadTasks.value.filter(task => task.status === 'success').length,
-  failed: uploadTasks.value.filter(task => task.status === 'failed').length
-}))
 const detailTitle = computed(() => {
   if (detailMode.value === 'recycle') return '回收站详情'
   if (detailMode.value === 'share') return '分享详情'
@@ -2367,13 +2364,7 @@ async function downloadFile(item: FileItem) {
     try {
       const bytes = await readEncryptedFileBytes(item, item.encryptedRoot)
       const url = createEncryptedDownloadURL(bytes, item.name)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = item.name
-      a.rel = 'noopener'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      triggerBrowserDownload(url, item.name)
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (error) {
       showError(`下载失败: ${String(error)}`)
@@ -2386,13 +2377,7 @@ async function downloadFile(item: FileItem) {
   try {
     const token = localStorage.getItem('authToken') || ''
     ensureAuthCookie(token)
-    const a = document.createElement('a')
-    a.href = apiPath
-    a.download = item.name
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    triggerBrowserDownload(apiPath, item.name)
   } catch (error) {
     showError(`下载失败: ${String(error)}`)
   }
@@ -2499,13 +2484,7 @@ async function downloadSharedRoot(item: DirectShareItem) {
   try {
     const token = localStorage.getItem('authToken') || ''
     ensureAuthCookie(token)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = item.name
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    triggerBrowserDownload(url, item.name)
   } catch (error) {
     showError(`下载失败: ${String(error)}`)
   }
@@ -2523,13 +2502,7 @@ async function downloadSharedFile(item: FileItem) {
   try {
     const token = localStorage.getItem('authToken') || ''
     ensureAuthCookie(token)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = item.name
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    triggerBrowserDownload(url, item.name)
   } catch (error) {
     showError(`下载失败: ${String(error)}`)
   }
@@ -2842,24 +2815,22 @@ function createUploadTask(item: UploadItem, options: { basePath: string; isShare
   }
 }
 
+function triggerBrowserDownload(url: string, filename: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
 function addUploadTasks(tasks: UploadTask[]) {
-  if (!tasks.length) return
-  uploadTasks.value = [...tasks, ...uploadTasks.value]
+  uploadTaskStore.addTasks(tasks)
 }
 
 function updateUploadTask(task: UploadTask, patch: Partial<UploadTask>) {
-  const index = uploadTasks.value.findIndex(item => item.id === task.id)
-  const updatedAt = Date.now()
-  if (index === -1) {
-    Object.assign(task, patch, { updatedAt })
-    return
-  }
-  const current = uploadTasks.value[index]
-  uploadTasks.value[index] = {
-    ...current,
-    ...patch,
-    updatedAt
-  }
+  uploadTaskStore.updateTask(task, patch)
 }
 
 function getUploadUrlForTask(task: UploadTask): string | null {
@@ -2963,9 +2934,6 @@ async function uploadFilesWithDirectories(files: UploadItem[], extraDirectories?
 
   const tasks = files.map(item => createUploadTask(item, { basePath: cleanPath, isShared: false, encryptedRoot }))
   addUploadTasks(tasks)
-  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showAddressBook.value && !showUploadTasks.value) {
-    enterUploadTasks('files')
-  }
 
   const dirsToCreate = Array.from(directories).filter(Boolean).sort((a, b) => a.split('/').length - b.split('/').length)
   for (const dir of dirsToCreate) {
@@ -3036,9 +3004,6 @@ async function uploadSharedFilesWithDirectories(files: UploadItem[], extraDirect
 
   const tasks = files.map(item => createUploadTask(item, { basePath: '', isShared: true, shareId }))
   addUploadTasks(tasks)
-  if (!showUploadTasks.value) {
-    enterUploadTasks('shared')
-  }
 
   const dirsToCreate = Array.from(directories).filter(Boolean).sort((a, b) => a.split('/').length - b.split('/').length)
   for (const dir of dirsToCreate) {
@@ -4155,46 +4120,15 @@ function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'addressB
     return
   }
   if (section === 'uploadTasks') {
+    uploadTaskStore.openDialog()
+    managementSection.value = 'account'
     return
   }
   fetchUserCenter()
 }
 
-function enterUploadTasks(source?: 'files' | 'shared') {
-  const resolved = source || (showSharedWithMe.value ? 'shared' : 'files')
-  if (resolved === 'shared') {
-    uploadTasksReturnView.value = 'sharedWithMe'
-    if (sharedActive.value) {
-      persistSharedState()
-    } else {
-      clearSharedState()
-    }
-  } else {
-    uploadTasksReturnView.value = 'files'
-    uploadTasksReturnPath.value = currentPath.value
-  }
-  detailDrawerVisible.value = false
-  showUploadTasks.value = true
-  showShare.value = false
-  showRecycle.value = false
-  showSharedWithMe.value = false
-  showQuotaManage.value = false
-  showAddressBook.value = false
-  persistView('uploadTasks')
-}
-
-async function exitUploadTasks() {
-  const returnView = uploadTasksReturnView.value
-  uploadTasksReturnView.value = null
-  if (returnView === 'sharedWithMe') {
-    await restoreSharedWithMeView()
-    return
-  }
-  enterFiles(uploadTasksReturnPath.value || currentPath.value)
-}
-
 function clearFinishedUploadTasks() {
-  uploadTasks.value = uploadTasks.value.filter(task => task.status !== 'success')
+  uploadTaskStore.clearFinished()
 }
 
 function openUploadTaskLocation(task: UploadTask) {
@@ -4205,8 +4139,7 @@ function openUploadTaskLocation(task: UploadTask) {
   const parentPath = normalizedTargetPath === '/'
     ? '/'
     : normalizeDirectoryPath(normalizedTargetPath.replace(/\/[^/]+\/?$/, '') || '/')
-  uploadTasksReturnView.value = 'files'
-  uploadTasksReturnPath.value = parentPath
+  uploadTaskStore.closeDialog()
   enterFiles(parentPath)
 }
 
@@ -4492,7 +4425,7 @@ async function restoreView() {
     return
   }
   if (storedView === 'uploadTasks') {
-    enterUploadTasks()
+    enterFiles(resolveInitialFilePath(localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'))
     return
   }
   const storedPath = localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'
@@ -4605,7 +4538,7 @@ function handleExternalNavigate(event: Event) {
     return
   }
   if (view === 'uploadTasks') {
-    enterUploadTasks()
+    uploadTaskStore.openDialog()
     return
   }
 }
@@ -4890,7 +4823,7 @@ onBeforeUnmount(() => {
           <div class="nav-group">
             <div class="nav-group-title" v-show="!sidePanelCollapsed">管理</div>
             <div class="nav-list">
-              <el-tooltip content="个人资料" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="我的资料" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
@@ -4898,10 +4831,10 @@ onBeforeUnmount(() => {
                   @click="enterQuotaManage('account')"
                 >
                   <el-icon class="nav-icon"><User /></el-icon>
-                  <span v-show="!sidePanelCollapsed">个人资料</span>
+                  <span v-show="!sidePanelCollapsed">我的资料</span>
                 </button>
               </el-tooltip>
-              <el-tooltip content="访问密钥" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="密钥管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
@@ -4909,7 +4842,7 @@ onBeforeUnmount(() => {
                   @click="enterQuotaManage('keys')"
                 >
                   <el-icon class="nav-icon"><DocumentCopy /></el-icon>
-                  <span v-show="!sidePanelCollapsed">访问密钥</span>
+                  <span v-show="!sidePanelCollapsed">密钥管理</span>
                 </button>
               </el-tooltip>
               <el-tooltip v-if="canManageUsers" content="用户管理" placement="right" :disabled="!sidePanelCollapsed">
@@ -4923,7 +4856,7 @@ onBeforeUnmount(() => {
                   <span v-show="!sidePanelCollapsed">用户管理</span>
                 </button>
               </el-tooltip>
-              <el-tooltip content="联系人" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="好友管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
@@ -4931,18 +4864,7 @@ onBeforeUnmount(() => {
                   @click="enterQuotaManage('addressBook')"
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
-                  <span v-show="!sidePanelCollapsed">联系人</span>
-                </button>
-              </el-tooltip>
-              <el-tooltip content="上传记录" placement="right" :disabled="!sidePanelCollapsed">
-                <button
-                  type="button"
-                  class="nav-item"
-                  :class="{ active: showQuotaManage && managementSection === 'uploadTasks' }"
-                  @click="enterQuotaManage('uploadTasks')"
-                >
-                  <el-icon class="nav-icon"><Upload /></el-icon>
-                  <span v-show="!sidePanelCollapsed">上传记录</span>
+                  <span v-show="!sidePanelCollapsed">好友管理</span>
                 </button>
               </el-tooltip>
             </div>
@@ -4982,9 +4904,9 @@ onBeforeUnmount(() => {
                   />
                 </el-tooltip>
               </template>
-              <template v-else-if="showRecycle || showShare || showSharedWithMe || showUploadTasks">
-                <el-tooltip :content="showUploadTasks ? '返回上一页' : '返回文件列表'" placement="top">
-                  <el-button circle :icon="ArrowLeft" @click="showUploadTasks ? exitUploadTasks() : backToFiles()" />
+              <template v-else-if="showRecycle || showShare || showSharedWithMe">
+                <el-tooltip content="返回文件列表" placement="top">
+                  <el-button circle :icon="ArrowLeft" @click="backToFiles" />
                 </el-tooltip>
               </template>
               <template v-else>
@@ -5078,12 +5000,6 @@ onBeforeUnmount(() => {
                       <span class="path-value">定向分享</span>
                     </div>
                   </template>
-                </template>
-                <template v-else-if="showUploadTasks">
-                  <div class="path-pill">
-                    <span class="path-label">当前位置</span>
-                    <span class="path-value">上传任务</span>
-                  </div>
                 </template>
                 <template v-else>
                   <div class="breadcrumb">
@@ -5291,8 +5207,6 @@ onBeforeUnmount(() => {
                     </el-tooltip>
                   </template>
                 </template>
-                <template v-else-if="showUploadTasks">
-                </template>
                 <template v-else>
                   <div class="action-cluster">
                     <span class="action-cluster-label">新建与上传</span>
@@ -5352,49 +5266,6 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="showQuotaManage" class="content-body content-scroll" v-loading="quotaManageLoading && !manualRefresh">
             <div class="user-center">
-              <div class="view-segment management-segment">
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'account' }"
-                  @click="managementSection = 'account'"
-                >
-                  账户
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'keys' }"
-                  @click="managementSection = 'keys'"
-                >
-                  密钥
-                </button>
-                <button
-                  v-if="canManageUsers"
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'adminUsers' }"
-                  @click="enterQuotaManage('adminUsers')"
-                >
-                  用户管理
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'addressBook' }"
-                  @click="enterQuotaManage('addressBook')"
-                >
-                  好友
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'uploadTasks' }"
-                  @click="enterQuotaManage('uploadTasks')"
-                >
-                  上传任务
-                </button>
-              </div>
               <div v-if="managementSection === 'account'" class="user-card">
                 <div class="card-head">
                   <div class="card-title">基础信息</div>
@@ -5610,7 +5481,7 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="managementSection === 'keys'" class="user-card user-card-full" v-loading="accessKeyLoading">
                 <div class="card-head">
-                  <div class="card-title">访问密钥</div>
+                  <div class="card-title">密钥管理</div>
                   <div class="user-actions">
                     <el-button size="small" @click="fetchAccessKeys(true)">刷新</el-button>
                     <el-button size="small" type="primary" @click="openAccessKeyDialogFromUserCenter">新建密钥</el-button>
@@ -5620,7 +5491,7 @@ onBeforeUnmount(() => {
                   <span>总数：{{ accessKeys.length }}</span>
                   <span>生效中：{{ accessKeys.filter(item => item.status === 'active').length }}</span>
                 </div>
-                <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无访问密钥" />
+                <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无密钥" />
                 <div v-else class="key-list">
                   <div v-for="item in accessKeys" :key="item.id" class="key-item">
                     <div class="key-main">
@@ -5679,7 +5550,7 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="managementSection === 'addressBook'" class="user-card user-card-full" v-loading="addressBookLoading && !manualRefresh">
                 <div class="card-head">
-                  <div class="card-title">好友</div>
+                  <div class="card-title">好友管理</div>
                   <div class="user-actions">
                     <el-button size="small" @click="addressBookStore.fetchAddressBook()">刷新</el-button>
                   </div>
@@ -5691,43 +5562,10 @@ onBeforeUnmount(() => {
                 </div>
                 <AddressBookView embedded @refresh="refreshCurrentView" />
               </div>
-              <div v-if="managementSection === 'uploadTasks'" class="user-card user-card-full">
-                <div class="card-head">
-                  <div class="card-title">上传任务</div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="clearFinishedUploadTasks">清理已完成</el-button>
-                  </div>
-                </div>
-                <div class="key-summary">
-                  <span>总数：{{ uploadTaskSummary.total }}</span>
-                  <span>等待中：{{ uploadTaskSummary.queued }}</span>
-                  <span>上传中：{{ uploadTaskSummary.uploading }}</span>
-                  <span>已完成：{{ uploadTaskSummary.success }}</span>
-                  <span>失败：{{ uploadTaskSummary.failed }}</span>
-                </div>
-                <UploadTaskListView
-                  :is-mobile="isMobileViewport"
-                  :tasks="uploadTasks"
-                  :format-size="formatSize"
-                  :format-time="formatTime"
-                  :retry-task="retryUploadTask"
-                  :open-task-location="openUploadTaskLocation"
-                />
-              </div>
             </div>
           </div>
           <div v-else-if="showAddressBook" class="content-body content-scroll" v-loading="addressBookLoading && !manualRefresh">
             <AddressBookView @refresh="refreshCurrentView" />
-          </div>
-          <div v-else-if="showUploadTasks" class="content-body table-wrapper">
-            <UploadTaskListView
-              :is-mobile="isMobileViewport"
-              :tasks="uploadTasks"
-              :format-size="formatSize"
-              :format-time="formatTime"
-              :retry-task="retryUploadTask"
-              :open-task-location="openUploadTaskLocation"
-            />
           </div>
           <div v-else class="content-body table-wrapper">
             <div v-if="shareViewSummary" class="view-summary-bar">
@@ -6120,6 +5958,37 @@ onBeforeUnmount(() => {
           <el-button @click="closeAdminUsersDialog">取消</el-button>
           <el-button type="primary" :loading="adminUsersSubmitting" @click="submitAdminUsersUpdate">保存</el-button>
         </template>
+      </el-dialog>
+      <el-dialog
+        v-model="uploadTasksDialogVisible"
+        title="任务"
+        width="860px"
+        class="upload-task-dialog"
+      >
+        <div class="upload-task-dialog-body">
+          <div class="key-summary">
+            <span>总数：{{ uploadTaskSummary.total }}</span>
+            <span>等待中：{{ uploadTaskSummary.queued }}</span>
+            <span>进行中：{{ uploadTaskSummary.uploading }}</span>
+            <span>已完成：{{ uploadTaskSummary.success }}</span>
+            <span>失败：{{ uploadTaskSummary.failed }}</span>
+          </div>
+          <div class="upload-task-dialog-actions">
+            <el-button size="small" :disabled="uploadTaskSummary.success === 0" @click="clearFinishedUploadTasks">
+              清理已完成
+            </el-button>
+          </div>
+          <div class="upload-task-dialog-list">
+            <UploadTaskListView
+              :is-mobile="isMobileViewport"
+              :tasks="uploadTasks"
+              :format-size="formatSize"
+              :format-time="formatTime"
+              :retry-task="retryUploadTask"
+              :open-task-location="openUploadTaskLocation"
+            />
+          </div>
+        </div>
       </el-dialog>
       <FilePreviewDialog
         v-model="previewVisible"
@@ -6932,6 +6801,23 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
+.upload-task-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 360px;
+}
+
+.upload-task-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.upload-task-dialog-list {
+  height: min(52vh, 460px);
+  min-height: 260px;
+}
+
 .section-title-row {
   display: flex;
   align-items: baseline;
@@ -7172,11 +7058,6 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   padding: 8px;
-}
-
-.management-segment {
-  grid-column: 1 / -1;
-  justify-self: start;
 }
 
 .user-card {
