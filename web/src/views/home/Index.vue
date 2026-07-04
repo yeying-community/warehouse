@@ -1644,7 +1644,11 @@ async function fetchAssetSpaces() {
 async function fetchUserCenter() {
   quotaManageLoading.value = true
   try {
-    await Promise.all([fetchUserInfo(), fetchQuota(), fetchAccessKeys(), fetchAdminUsers()])
+    const tasks: Array<Promise<unknown>> = [fetchUserInfo(), fetchQuota(), fetchAccessKeys()]
+    if (managementSection.value === 'adminQuota') {
+      tasks.push(fetchAdminUsers())
+    }
+    await Promise.all(tasks)
   } finally {
     quotaManageLoading.value = false
   }
