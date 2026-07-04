@@ -5,6 +5,8 @@ import { storeToRefs } from 'pinia'
 import { notificationApi, type AdminNotificationCreatePayload, type NotificationItem, type NotificationPreferenceItem } from '@/api'
 import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, focusPendingWalletApproval, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
 import { useUploadTaskStore } from '@/stores/uploadTaskStore'
+import UploadTaskListView from '@/views/home/components/UploadTaskListView.vue'
+import type { UploadTask } from '@/views/home/types'
 
 const isAuth = ref(false)
 const account = ref<string | null>(null)
@@ -17,7 +19,7 @@ const notifications = ref<NotificationItem[]>([])
 const notificationPreferences = ref<Array<{ type: string; enabled: boolean }>>([])
 const unreadCount = ref(0)
 const uploadTaskStore = useUploadTaskStore()
-const { addSignal: uploadTaskAddSignal, summary: uploadTaskSummary } = storeToRefs(uploadTaskStore)
+const { addSignal: uploadTaskAddSignal, dialogVisible: uploadTasksVisible, summary: uploadTaskSummary, tasks: uploadTasks } = storeToRefs(uploadTaskStore)
 const taskPulse = ref(false)
 const canAnnounce = ref(false)
 const announcementSubmitting = ref(false)
@@ -103,6 +105,40 @@ async function handleConnect() {
 
 function handleLogout() {
   logout()
+}
+
+function formatTaskSize(bytes: number): string {
+  const value = Number(bytes)
+  if (!Number.isFinite(value) || value < 0) return '-'
+  const units = ['B', 'K', 'M', 'G', 'T', 'P']
+  let size = value
+  let index = 0
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024
+    index += 1
+  }
+  return `${Math.round(size)} ${units[index]}`
+}
+
+function formatTaskTime(time: string | number): string {
+  if (time === null || time === undefined || time === '') return '-'
+  const value = typeof time === 'string' && /^\d+$/.test(time.trim()) ? Number(time) : time
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  const pad = (num: number) => String(num).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function emitTaskEvent(name: string, task: UploadTask) {
+  window.dispatchEvent(new CustomEvent(name, { detail: { task } }))
+}
+
+function retryTask(task: UploadTask) {
+  emitTaskEvent('warehouse:upload-task-retry', task)
+}
+
+function openTaskLocation(task: UploadTask) {
+  emitTaskEvent('warehouse:upload-task-open', task)
 }
 
 function handleMenuCommand(command: string) {
@@ -344,18 +380,52 @@ onBeforeUnmount(() => {
       </template>
 
       <!-- 已登录 -->
-      <el-tooltip v-if="isAuth" content="任务" placement="bottom">
-        <el-button class="task-button" :class="{ 'is-task-pulse': taskPulse }" circle @click="uploadTaskStore.openDialog()">
-          <el-badge
-            :value="uploadTaskSummary.uploading + uploadTaskSummary.failed"
-            :hidden="uploadTaskSummary.uploading + uploadTaskSummary.failed === 0"
-            :max="99"
-            class="task-badge"
-          >
-            <el-icon><Notebook /></el-icon>
-          </el-badge>
-        </el-button>
-      </el-tooltip>
+      <el-popover
+        v-if="isAuth"
+        v-model:visible="uploadTasksVisible"
+        placement="bottom-end"
+        width="760"
+        trigger="click"
+        popper-class="task-popover"
+      >
+        <template #reference>
+          <el-button class="task-button" :class="{ 'is-task-pulse': taskPulse }" title="任务" circle>
+            <el-badge
+              :value="uploadTaskSummary.total"
+              :hidden="uploadTaskSummary.total === 0"
+              :max="99"
+              class="task-badge"
+            >
+              <el-icon><Notebook /></el-icon>
+            </el-badge>
+          </el-button>
+        </template>
+        <div class="task-panel">
+          <div class="task-panel-head">
+            <div class="task-panel-title">任务</div>
+            <div class="task-panel-summary">
+              <span>总数：{{ uploadTaskSummary.total }}</span>
+              <span>等待中：{{ uploadTaskSummary.queued }}</span>
+              <span>进行中：{{ uploadTaskSummary.uploading }}</span>
+              <span>已完成：{{ uploadTaskSummary.success }}</span>
+              <span>失败：{{ uploadTaskSummary.failed }}</span>
+            </div>
+            <el-button size="small" :disabled="uploadTaskSummary.success === 0" @click="uploadTaskStore.clearFinished()">
+              清理已完成
+            </el-button>
+          </div>
+          <div class="task-panel-list">
+            <UploadTaskListView
+              :is-mobile="false"
+              :tasks="uploadTasks"
+              :format-size="formatTaskSize"
+              :format-time="formatTaskTime"
+              :retry-task="retryTask"
+              :open-task-location="openTaskLocation"
+            />
+          </div>
+        </div>
+      </el-popover>
       <el-popover
         v-if="isAuth"
         :visible="notificationOpen"
@@ -584,6 +654,44 @@ onBeforeUnmount(() => {
 
 .notification-panel {
   min-height: 160px;
+}
+
+.task-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 320px;
+}
+
+.task-panel-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.task-panel-title {
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.task-panel-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  color: #606266;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.task-panel-list {
+  height: min(52vh, 420px);
+  min-height: 260px;
 }
 
 .notification-head {

@@ -26,7 +26,6 @@ import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
 import SharedWithMeTableView from './components/SharedWithMeTableView.vue'
 import RecycleTableView from './components/RecycleTableView.vue'
-import UploadTaskListView from './components/UploadTaskListView.vue'
 import type { DropEntry, FileItem, UploadItem, UploadTask } from './types'
 
 const FilePreviewDialog = defineAsyncComponent(() => import('./components/FilePreviewDialog.vue'))
@@ -150,11 +149,6 @@ const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const addressBookStore = useAddressBookStore()
 const { addressBookLoading, addressGroups, addressContacts } = storeToRefs(addressBookStore)
 const uploadTaskStore = useUploadTaskStore()
-const {
-  tasks: uploadTasks,
-  dialogVisible: uploadTasksDialogVisible,
-  summary: uploadTaskSummary
-} = storeToRefs(uploadTaskStore)
 const editingUsername = ref(false)
 const usernameDraft = ref('')
 const usernameSaving = ref(false)
@@ -4127,10 +4121,6 @@ function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'addressB
   fetchUserCenter()
 }
 
-function clearFinishedUploadTasks() {
-  uploadTaskStore.clearFinished()
-}
-
 function openUploadTaskLocation(task: UploadTask) {
   if (task.isShared) return
   const rawTargetPath = String(task.targetPath || '').trim()
@@ -4141,6 +4131,18 @@ function openUploadTaskLocation(task: UploadTask) {
     : normalizeDirectoryPath(normalizedTargetPath.replace(/\/[^/]+\/?$/, '') || '/')
   uploadTaskStore.closeDialog()
   enterFiles(parentPath)
+}
+
+function handleUploadTaskRetryEvent(event: Event) {
+  const task = (event as CustomEvent<{ task?: UploadTask }>).detail?.task
+  if (!task) return
+  retryUploadTask(task)
+}
+
+function handleUploadTaskOpenEvent(event: Event) {
+  const task = (event as CustomEvent<{ task?: UploadTask }>).detail?.task
+  if (!task) return
+  openUploadTaskLocation(task)
 }
 
 function openShareLocation(item: ShareItem) {
@@ -4545,10 +4547,14 @@ function handleExternalNavigate(event: Event) {
 
 onMounted(() => {
   window.addEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
+  window.addEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
+  window.addEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
+  window.removeEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
+  window.removeEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
 })
 
 function syncWalletHistory(next?: string) {
@@ -5959,37 +5965,6 @@ onBeforeUnmount(() => {
           <el-button type="primary" :loading="adminUsersSubmitting" @click="submitAdminUsersUpdate">保存</el-button>
         </template>
       </el-dialog>
-      <el-dialog
-        v-model="uploadTasksDialogVisible"
-        title="任务"
-        width="860px"
-        class="upload-task-dialog"
-      >
-        <div class="upload-task-dialog-body">
-          <div class="key-summary">
-            <span>总数：{{ uploadTaskSummary.total }}</span>
-            <span>等待中：{{ uploadTaskSummary.queued }}</span>
-            <span>进行中：{{ uploadTaskSummary.uploading }}</span>
-            <span>已完成：{{ uploadTaskSummary.success }}</span>
-            <span>失败：{{ uploadTaskSummary.failed }}</span>
-          </div>
-          <div class="upload-task-dialog-actions">
-            <el-button size="small" :disabled="uploadTaskSummary.success === 0" @click="clearFinishedUploadTasks">
-              清理已完成
-            </el-button>
-          </div>
-          <div class="upload-task-dialog-list">
-            <UploadTaskListView
-              :is-mobile="isMobileViewport"
-              :tasks="uploadTasks"
-              :format-size="formatSize"
-              :format-time="formatTime"
-              :retry-task="retryUploadTask"
-              :open-task-location="openUploadTaskLocation"
-            />
-          </div>
-        </div>
-      </el-dialog>
       <FilePreviewDialog
         v-model="previewVisible"
         v-model:content="previewContent"
@@ -6799,23 +6774,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.upload-task-dialog-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 360px;
-}
-
-.upload-task-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.upload-task-dialog-list {
-  height: min(52vh, 460px);
-  min-height: 260px;
 }
 
 .section-title-row {
