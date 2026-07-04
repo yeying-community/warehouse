@@ -338,14 +338,6 @@ export interface DirectShareItem {
   createdAt: string
 }
 
-export interface ShareEntryItem {
-  name: string
-  path: string
-  isDir: boolean
-  size: number
-  modified: string
-}
-
 export type ShareExpiryUnit = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year'
 
 export interface AddressGroup {
@@ -472,37 +464,6 @@ export const directShareApi = {
         sourceGroupId?: string
       }>
     }>(`/api/v1/public/share/user/audiences?${query.toString()}`)
-  },
-
-  listEntries(shareId: string, path: string) {
-    const query = new URLSearchParams({
-      shareId,
-      path: path || ''
-    })
-    return request<{
-      items: ShareEntryItem[]
-    }>(`/api/v1/public/share/user/entries?${query.toString()}`)
-  },
-
-  createFolder(shareId: string, path: string) {
-    return request('/api/v1/public/share/user/folder', {
-      method: 'POST',
-      body: { shareId, path }
-    })
-  },
-
-  rename(shareId: string, from: string, to: string) {
-    return request('/api/v1/public/share/user/rename', {
-      method: 'POST',
-      body: { shareId, from, to }
-    })
-  },
-
-  remove(shareId: string, path: string) {
-    return request('/api/v1/public/share/user/item', {
-      method: 'DELETE',
-      body: { shareId, path }
-    })
   }
 }
 

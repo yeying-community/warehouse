@@ -901,6 +901,16 @@ function buildDavPath(path: string): string {
   return ensureDavPrefixedPath(path)
 }
 
+function buildShareDavRoot(shareID: string): string {
+  return buildDavPath(`/share/${shareID}`)
+}
+
+function buildShareDavPath(shareID: string, path: string = ''): string {
+  const relative = normalizeShareRelative(path)
+  const suffix = relative ? `/${relative}` : '/'
+  return buildDavPath(`/share/${shareID}${suffix}`)
+}
+
 function buildAbsoluteDavURL(path: string): string {
   const rawBase = String(API_BASE || '').trim()
   const normalizedBase = rawBase ? rawBase.replace(/\/+$/, '') : ''
@@ -2043,12 +2053,7 @@ async function openFilePreview(item: FileItem) {
   try {
     const token = localStorage.getItem('authToken') || ''
     const previewURL = isSharedBrowse.value && sharedActive.value
-      ? ((mode === 'audio' || mode === 'video')
-          ? buildShareUserPreviewUrl(sharedActive.value.id, item.path)
-          : buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
-              shareId: sharedActive.value.id,
-              path: normalizeShareRelative(item.path)
-            })))
+      ? buildShareUserPreviewUrl(sharedActive.value.id, item.path)
       : buildDavPath(item.path)
     if (item.encryptedRoot) {
       if (isSharedBrowse.value) {
@@ -2153,18 +2158,13 @@ async function savePreview() {
     const token = localStorage.getItem('authToken') || ''
     if (isSharedBrowse.value && sharedActive.value) {
       const relPath = normalizeShareRelative(previewTarget.value.path)
-      const params = new URLSearchParams({ shareId: sharedActive.value.id, path: relPath })
-      const apiPath = buildShareUserUrl('/api/v1/public/share/user/upload', params)
-      const blob = new Blob([previewContent.value], { type: 'text/plain;charset=utf-8' })
-      const file = new File([blob], previewTarget.value.name, { type: 'text/plain;charset=utf-8' })
-      const formData = new FormData()
-      formData.append('file', file)
-      const response = await fetch(apiPath, {
+      const response = await fetch(buildShareDavPath(sharedActive.value.id, relPath), {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'text/plain; charset=utf-8'
         },
-        body: formData
+        body: previewContent.value
       })
       if (!response.ok) {
         const text = (await response.text()).trim()
@@ -2372,18 +2372,8 @@ async function downloadFile(item: FileItem) {
   }
 }
 
-function buildShareUserUrl(path: string, params?: URLSearchParams) {
-  const base = API_BASE ? API_BASE.replace(/\/+$/, '') : ''
-  const query = params ? `?${params.toString()}` : ''
-  return `${base}${path}${query}`
-}
-
 function buildShareUserPreviewUrl(shareID: string, filePath: string) {
-  return buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
-    shareId: shareID,
-    path: normalizeShareRelative(filePath),
-    disposition: 'inline'
-  }))
+  return buildShareDavPath(shareID, filePath)
 }
 
 function normalizeShareRelative(path: string) {
@@ -2478,8 +2468,7 @@ async function revokeSharesBeforeDelete(item: FileItem): Promise<{ proceed: bool
 
 async function downloadSharedRoot(item: DirectShareItem) {
   if (!item || item.isDir) return
-  const params = new URLSearchParams({ shareId: item.id, path: '' })
-  const url = buildShareUserUrl('/api/v1/public/share/user/download', params)
+  const url = buildShareDavPath(item.id)
   showInfo('下载中...')
   try {
     const token = localStorage.getItem('authToken') || ''
@@ -2503,8 +2492,7 @@ async function downloadSharedFile(item: FileItem) {
     return
   }
   const relPath = normalizeShareRelative(item.path)
-  const params = new URLSearchParams({ shareId: sharedActive.value.id, path: relPath })
-  const url = buildShareUserUrl('/api/v1/public/share/user/download', params)
+  const url = buildShareDavPath(sharedActive.value.id, relPath)
   showInfo('下载中...')
   try {
     const token = localStorage.getItem('authToken') || ''
@@ -2608,7 +2596,19 @@ async function submitRename() {
       if (!sharedActive.value || !sharedCanUpdate.value) return
       const fromPath = context.normalized.replace(/^\/+/, '')
       const toPath = (context.parentPath === '/' ? '/' + newName : context.parentPath + newName).replace(/^\/+/, '')
-      await directShareApi.rename(sharedActive.value.id, fromPath, toPath)
+      const token = localStorage.getItem('authToken') || ''
+      const response = await fetch(buildShareDavPath(sharedActive.value.id, fromPath + (context.isDir ? '/' : '')), {
+        method: 'MOVE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Destination': buildShareDavPath(sharedActive.value.id, toPath + (context.isDir ? '/' : '')),
+          'Overwrite': 'F'
+        }
+      })
+      if (!response.ok) {
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `重命名失败: ${response.status}`))
+      }
       fetchSharedEntries(sharedPath.value)
     }
     renameDialogVisible.value = false
@@ -2840,8 +2840,7 @@ function getUploadUrlForTask(task: UploadTask): string | null {
   if (task.isShared) {
     if (!task.shareId) return null
     const path = normalizeRelativePath(task.sharePath || task.relativePath || task.name)
-    const params = new URLSearchParams({ shareId: task.shareId, path })
-    return buildShareUserUrl('/api/v1/public/share/user/upload', params)
+    return buildShareDavPath(task.shareId, path)
   }
   const targetPath = task.targetPath || buildTargetPath('', task.relativePath || task.name)
   return buildDavPath(targetPath)
@@ -2899,7 +2898,7 @@ async function performUploadTask(task: UploadTask) {
     return
   }
   const token = localStorage.getItem('authToken') || ''
-  const useMultipart = task.isShared
+  const useMultipart = false
   updateUploadTask(task, { status: 'uploading', progress: 0, error: undefined })
   try {
     let uploadBody: Blob = task.file
@@ -2972,7 +2971,17 @@ async function ensureSharedDirectories(path: string, ensured: Set<string>, share
     current = current ? `${current}/${segment}` : segment
     if (ensured.has(current)) continue
     try {
-      await directShareApi.createFolder(shareId, current)
+      const token = localStorage.getItem('authToken') || ''
+      const response = await fetch(buildShareDavPath(shareId, current + '/'), {
+        method: 'MKCOL',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      if (!response.ok && response.status !== 405) {
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `创建目录失败: ${response.status}`))
+      }
       ensured.add(current)
     } catch (error) {
       throw error
@@ -3422,11 +3431,19 @@ async function moveSharedItemToDirectoryPath(source: FileItem, targetPath: strin
 
   movingSharedByDrag.value = true
   try {
-    await directShareApi.rename(
-      sharedActive.value.id,
-      normalizeShareRelative(sourcePath),
-      normalizeShareRelative(destinationPath)
-    )
+    await fetch(buildShareDavPath(sharedActive.value.id, sourcePath), {
+      method: 'MOVE',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`,
+        'Destination': new URL(buildShareDavPath(sharedActive.value.id, destinationPath), window.location.origin).toString(),
+        'Overwrite': 'F'
+      }
+    }).then(async response => {
+      if (!response.ok) {
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `移动失败: ${response.status}`))
+      }
+    })
     await fetchSharedEntries(sharedPath.value)
     showSuccess(`已移动到 ${targetDirPath}`)
   } catch (error: any) {
@@ -3654,7 +3671,17 @@ async function deleteSharedItem(item: FileItem) {
   if (!(await confirmAction(`确定删除 ${item.name} 吗？`, '删除确认'))) return
   const relPath = normalizeShareRelative(item.path)
   try {
-    await directShareApi.remove(sharedActive.value.id, relPath)
+    const token = localStorage.getItem('authToken') || ''
+    const response = await fetch(buildShareDavPath(sharedActive.value.id, relPath + (item.isDir ? '/' : '')), {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    if (!response.ok) {
+      const text = (await response.text()).trim()
+      throw new Error(normalizeUserFacingErrorMessage(text, `删除失败: ${response.status}`))
+    }
     fetchSharedEntries(sharedPath.value)
   } catch (error) {
     showError(`删除失败: ${String(error)}`)
@@ -3840,8 +3867,21 @@ async function fetchSharedEntries(path: string = sharedPath.value) {
   sharedEntriesLoading.value = true
   try {
     const cleanPath = path.replace(/^\/+/, '').replace(/\/$/, '')
-    const data = await directShareApi.listEntries(sharedActive.value.id, cleanPath)
-    sharedEntries.value = data.items as FileItem[]
+    const token = localStorage.getItem('authToken') || ''
+    const davPath = buildShareDavPath(sharedActive.value.id, cleanPath)
+    const response = await fetch(davPath, {
+      method: 'PROPFIND',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Depth': '1'
+      }
+    })
+    if (!response.ok) {
+      const text = (await response.text()).trim()
+      throw new Error(normalizeUserFacingErrorMessage(text, `获取共享目录失败: ${response.status}`))
+    }
+    const xml = await response.text()
+    sharedEntries.value = parsePropfindResponse(xml, davPath, buildShareDavRoot(sharedActive.value.id))
   } catch (error: any) {
     console.error('获取共享目录失败:', error)
     showError(error?.message || '获取共享目录失败')
@@ -4226,7 +4266,17 @@ async function createSharedFolderWithName(name: string) {
   if (!sharedActive.value || !sharedCanCreate.value) return
   const basePath = sharedPath.value.replace(/^\/+/, '').replace(/\/$/, '')
   const targetPath = basePath ? `${basePath}/${name}` : name
-  await directShareApi.createFolder(sharedActive.value.id, targetPath)
+  const token = localStorage.getItem('authToken') || ''
+  const response = await fetch(buildShareDavPath(sharedActive.value.id, targetPath + '/'), {
+    method: 'MKCOL',
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  })
+  if (!response.ok && response.status !== 405) {
+    const text = (await response.text()).trim()
+    throw new Error(normalizeUserFacingErrorMessage(text, `创建失败: ${response.status}`))
+  }
   fetchSharedEntries(sharedPath.value)
 }
 
