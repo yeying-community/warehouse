@@ -443,6 +443,7 @@ func (c *Container) initHandlers() error {
 	)
 	c.NotificationHandler = handler.NewNotificationHandler(
 		c.NotificationService,
+		c.Config.Security.AdminAddresses,
 		c.Logger,
 	)
 

@@ -1054,14 +1054,21 @@ function clearEncryptedDirectoryPasswordByRoot(rootPath: string) {
 
 function collectAncestorDirectories(path: string): string[] {
   const normalized = normalizeEncryptedRootPath(path)
-  if (normalized === '/') return ['/']
+  if (normalized === '/') return []
   const segments = normalized.split('/').filter(Boolean)
   const directories: string[] = []
   for (let index = segments.length; index >= 1; index -= 1) {
     directories.push(`/${segments.slice(0, index).join('/')}`)
   }
-  directories.push('/')
   return directories
+}
+
+function getEncryptedDirectoryParentPath(path: string): string {
+  const normalized = normalizeEncryptedRootPath(path)
+  if (normalized === '/') return '/'
+  const segments = normalized.split('/').filter(Boolean)
+  segments.pop()
+  return segments.length ? `/${segments.join('/')}` : '/'
 }
 
 async function discoverEncryptedRootForPath(path: string): Promise<string | null> {
@@ -1070,15 +1077,21 @@ async function discoverEncryptedRootForPath(path: string): Promise<string | null
 
   const token = localStorage.getItem('authToken') || ''
   for (const candidate of collectAncestorDirectories(path)) {
-    const response = await fetch(buildDavPath(buildEncryptedDirectoryMetadataPath(candidate)), {
-      method: 'GET',
+    const davPath = buildDavPath(candidate)
+    const response = await fetch(davPath, {
+      method: 'PROPFIND',
       headers: {
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${token}`,
+        'Depth': '1'
       }
     })
     if (!response.ok) continue
-    registerEncryptedDirectoryRoot(candidate)
-    return normalizeEncryptedRootPath(candidate)
+    const xml = await response.text()
+    const items = parsePropfindResponse(xml, davPath, DAV_PREFIX)
+    if (items.some(item => isEncryptedDirectoryMetadataFileName(item.name))) {
+      registerEncryptedDirectoryRoot(candidate)
+      return normalizeEncryptedRootPath(candidate)
+    }
   }
 
   return null
@@ -1546,7 +1559,7 @@ async function fetchFiles(path: string = '/') {
     }
     const encryptedRoot = hasEncryptionMarker
       ? currentDirRoot
-      : (await discoverEncryptedRootForPath(currentDirRoot))
+      : (await discoverEncryptedRootForPath(getEncryptedDirectoryParentPath(currentDirRoot)))
     fileList.value = parsedItems
       .filter(item => !isEncryptedDirectoryMetadataFileName(item.name))
       .map(item => {

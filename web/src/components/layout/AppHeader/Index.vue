@@ -10,14 +10,11 @@ const walletInfo = ref({ present: false, name: '' })
 const walletConnectSubmitting = ref(false)
 const notificationOpen = ref(false)
 const notificationLoading = ref(false)
-const notificationTab = ref<'user' | 'admin'>('user')
 const notificationView = ref<'messages' | 'preferences' | 'announce'>('messages')
-const userNotifications = ref<NotificationItem[]>([])
-const adminNotifications = ref<NotificationItem[]>([])
+const notifications = ref<NotificationItem[]>([])
 const notificationPreferences = ref<Array<{ type: string; enabled: boolean }>>([])
-const userUnreadCount = ref(0)
-const adminUnreadCount = ref(0)
-const adminNotificationsAvailable = ref(false)
+const unreadCount = ref(0)
+const canAnnounce = ref(false)
 const announcementSubmitting = ref(false)
 const announcementForm = ref<AdminNotificationCreatePayload>({
   recipientRole: 'all',
@@ -28,12 +25,11 @@ const announcementForm = ref<AdminNotificationCreatePayload>({
   actionUrl: ''
 })
 const announcementTargetsText = ref('')
-const totalUnreadCount = computed(() => userUnreadCount.value + adminUnreadCount.value)
+const totalUnreadCount = computed(() => unreadCount.value)
 let stopAccountWatch: (() => void) | null = null
 let stopWalletProviderWatch: (() => void) | null = null
 let notificationTimer: number | null = null
 let userNotificationStream: EventSource | null = null
-let adminNotificationStream: EventSource | null = null
 
 onMounted(() => {
   isAuth.value = isLoggedIn()
@@ -97,21 +93,9 @@ function handleMenuCommand(command: string) {
 async function refreshUnreadCounts() {
   try {
     const userCount = await notificationApi.unreadCount()
-    userUnreadCount.value = Number(userCount.count || 0)
+    unreadCount.value = Number(userCount.count || 0)
   } catch (error) {
     console.warn('获取消息未读数失败:', error)
-  }
-
-  try {
-    const adminCount = await notificationApi.adminUnreadCount()
-    adminUnreadCount.value = Number(adminCount.count || 0)
-    adminNotificationsAvailable.value = true
-  } catch {
-    adminUnreadCount.value = 0
-    adminNotificationsAvailable.value = false
-    if (notificationTab.value === 'admin') {
-      notificationTab.value = 'user'
-    }
   }
 }
 
@@ -119,11 +103,8 @@ async function loadNotifications() {
   notificationLoading.value = true
   try {
     const userResult = await notificationApi.list(20)
-    userNotifications.value = userResult.items || []
-    if (adminNotificationsAvailable.value) {
-      const adminResult = await notificationApi.adminList(20)
-      adminNotifications.value = adminResult.items || []
-    }
+    notifications.value = userResult.items || []
+    canAnnounce.value = Boolean(userResult.canAnnounce)
   } catch (error) {
     console.warn('获取消息列表失败:', error)
   } finally {
@@ -150,14 +131,10 @@ async function handleNotificationOpenChange(open: boolean) {
   }
 }
 
-async function markNotificationRead(item: NotificationItem, scope: 'user' | 'admin') {
+async function markNotificationRead(item: NotificationItem) {
   if (item.readAt) return
   try {
-    if (scope === 'admin') {
-      await notificationApi.adminMarkRead([item.id])
-    } else {
-      await notificationApi.markRead([item.id])
-    }
+    await notificationApi.markRead([item.id])
     item.readAt = new Date().toISOString()
     await refreshUnreadCounts()
   } catch (error) {
@@ -167,13 +144,8 @@ async function markNotificationRead(item: NotificationItem, scope: 'user' | 'adm
 
 async function markAllNotificationsRead() {
   try {
-    if (notificationTab.value === 'admin') {
-      await notificationApi.adminMarkAllRead()
-      adminNotifications.value = adminNotifications.value.map(item => ({ ...item, readAt: item.readAt || new Date().toISOString() }))
-    } else {
-      await notificationApi.markAllRead()
-      userNotifications.value = userNotifications.value.map(item => ({ ...item, readAt: item.readAt || new Date().toISOString() }))
-    }
+    await notificationApi.markAllRead()
+    notifications.value = notifications.value.map(item => ({ ...item, readAt: item.readAt || new Date().toISOString() }))
     await refreshUnreadCounts()
   } catch (error) {
     console.warn('全部标记已读失败:', error)
@@ -181,7 +153,7 @@ async function markAllNotificationsRead() {
 }
 
 function currentNotifications() {
-  return notificationTab.value === 'admin' ? adminNotifications.value : userNotifications.value
+  return notifications.value
 }
 
 function normalizePreferences(items: NotificationPreferenceItem[]) {
@@ -240,8 +212,8 @@ function notificationSeverityClass(severity: string): string {
   return 'is-info'
 }
 
-async function handleNotificationClick(item: NotificationItem, scope: 'user' | 'admin') {
-  await markNotificationRead(item, scope)
+async function handleNotificationClick(item: NotificationItem) {
+  await markNotificationRead(item)
   if (!item.actionUrl) return
   notificationOpen.value = false
   if (item.actionUrl === '#shared-with-me') {
@@ -299,33 +271,16 @@ function startNotificationStreams() {
     userNotificationStream = new EventSource(notificationApi.streamUrl(), { withCredentials: true })
     userNotificationStream.addEventListener('unread', (event) => {
       const data = JSON.parse((event as MessageEvent).data || '{}')
-      userUnreadCount.value = Number(data.user || 0)
+      unreadCount.value = Number(data.count ?? data.user ?? 0)
     })
   } catch (error) {
     console.warn('用户消息推送连接失败:', error)
-  }
-  try {
-    adminNotificationStream = new EventSource(notificationApi.adminStreamUrl(), { withCredentials: true })
-    adminNotificationStream.addEventListener('unread', (event) => {
-      const data = JSON.parse((event as MessageEvent).data || '{}')
-      adminUnreadCount.value = Number(data.admin || 0)
-      adminNotificationsAvailable.value = true
-    })
-    adminNotificationStream.onerror = () => {
-      adminNotificationsAvailable.value = false
-      adminNotificationStream?.close()
-      adminNotificationStream = null
-    }
-  } catch {
-    adminNotificationsAvailable.value = false
   }
 }
 
 function stopNotificationStreams() {
   userNotificationStream?.close()
-  adminNotificationStream?.close()
   userNotificationStream = null
-  adminNotificationStream = null
 }
 
 onBeforeUnmount(() => {
@@ -389,7 +344,7 @@ onBeforeUnmount(() => {
                 偏好
               </el-button>
               <el-button
-                v-if="adminNotificationsAvailable"
+                v-if="canAnnounce"
                 size="small"
                 text
                 @click="notificationView = notificationView === 'announce' ? 'messages' : 'announce'"
@@ -408,14 +363,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <template v-if="notificationView === 'messages'">
-            <el-tabs v-model="notificationTab" class="notification-tabs">
-              <el-tab-pane :label="`我的 ${userUnreadCount ? `(${userUnreadCount})` : ''}`" name="user" />
-              <el-tab-pane
-                v-if="adminNotificationsAvailable"
-                :label="`管理员 ${adminUnreadCount ? `(${adminUnreadCount})` : ''}`"
-                name="admin"
-              />
-            </el-tabs>
             <div v-if="!currentNotifications().length" class="notification-empty">暂无消息</div>
             <div v-else class="notification-list">
               <button
@@ -424,7 +371,7 @@ onBeforeUnmount(() => {
                 type="button"
                 class="notification-item"
                 :class="[{ unread: !item.readAt }, notificationSeverityClass(item.severity)]"
-                @click="handleNotificationClick(item, notificationTab)"
+                @click="handleNotificationClick(item)"
               >
                 <span class="notification-dot" />
                 <span class="notification-main">

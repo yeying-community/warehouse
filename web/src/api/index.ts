@@ -150,7 +150,7 @@ export interface AdminNotificationCreatePayload {
 
 export const notificationApi = {
   list(limit = 20) {
-    return request<{ items: NotificationItem[] }>(`/api/v1/public/notifications/list?limit=${limit}`)
+    return request<{ items: NotificationItem[]; canAnnounce?: boolean }>(`/api/v1/public/notifications/list?limit=${limit}`)
   },
   unreadCount() {
     return request<{ count: number }>('/api/v1/public/notifications/unread-count')
@@ -176,29 +176,11 @@ export const notificationApi = {
   streamUrl() {
     return `${API_BASE}/api/v1/public/notifications/stream`
   },
-  adminList(limit = 20) {
-    return request<{ items: NotificationItem[] }>(`/api/v1/admin/notifications/list?limit=${limit}`)
-  },
-  adminUnreadCount() {
-    return request<{ count: number }>('/api/v1/admin/notifications/unread-count')
-  },
-  adminMarkRead(ids: string[]) {
-    return request('/api/v1/admin/notifications/read', {
-      method: 'POST',
-      body: { ids }
-    })
-  },
-  adminMarkAllRead() {
-    return request('/api/v1/admin/notifications/read-all', { method: 'POST' })
-  },
   adminCreate(payload: AdminNotificationCreatePayload) {
     return request<{ message: string; count: number }>('/api/v1/admin/notifications/create', {
       method: 'POST',
       body: payload as unknown as Record<string, unknown>
     })
-  },
-  adminStreamUrl() {
-    return `${API_BASE}/api/v1/admin/notifications/stream`
   }
 }
 

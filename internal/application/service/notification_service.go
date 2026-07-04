@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/yeying-community/warehouse/internal/domain/notification"
@@ -41,6 +42,21 @@ func (s *NotificationService) ListForUser(ctx context.Context, u *user.User, lim
 	return s.repo.ListForUser(ctx, u.ID, limit)
 }
 
+func (s *NotificationService) ListForCurrentUser(ctx context.Context, u *user.User, includeAdmin bool, limit int) ([]*notification.Notification, error) {
+	items, err := s.ListForUser(ctx, u, limit)
+	if err != nil {
+		return nil, err
+	}
+	if !includeAdmin {
+		return items, nil
+	}
+	adminItems, err := s.ListForAdmin(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	return mergeNotificationsByCreatedAt(limit, items, adminItems), nil
+}
+
 func (s *NotificationService) ListForAdmin(ctx context.Context, limit int) ([]*notification.Notification, error) {
 	if s == nil || s.repo == nil {
 		return nil, nil
@@ -56,6 +72,21 @@ func (s *NotificationService) UnreadCountForUser(ctx context.Context, u *user.Us
 		return 0, nil
 	}
 	return s.repo.UnreadCountForUser(ctx, u.ID)
+}
+
+func (s *NotificationService) UnreadCountForCurrentUser(ctx context.Context, u *user.User, includeAdmin bool) (int, error) {
+	count, err := s.UnreadCountForUser(ctx, u)
+	if err != nil {
+		return 0, err
+	}
+	if !includeAdmin {
+		return count, nil
+	}
+	adminCount, err := s.UnreadCountForAdmin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return count + adminCount, nil
 }
 
 func (s *NotificationService) UnreadCountForAdmin(ctx context.Context) (int, error) {
@@ -75,11 +106,53 @@ func (s *NotificationService) MarkReadForUser(ctx context.Context, u *user.User,
 	return s.repo.MarkReadForUser(ctx, u.ID, ids)
 }
 
+func (s *NotificationService) MarkReadForCurrentUser(ctx context.Context, u *user.User, includeAdmin bool, ids []string) error {
+	if err := s.MarkReadForUser(ctx, u, ids); err != nil {
+		return err
+	}
+	if includeAdmin {
+		return s.MarkReadForAdmin(ctx, ids)
+	}
+	return nil
+}
+
 func (s *NotificationService) MarkAllReadForUser(ctx context.Context, u *user.User) error {
 	if s == nil || s.repo == nil || u == nil {
 		return nil
 	}
 	return s.repo.MarkAllReadForUser(ctx, u.ID)
+}
+
+func (s *NotificationService) MarkAllReadForCurrentUser(ctx context.Context, u *user.User, includeAdmin bool) error {
+	if err := s.MarkAllReadForUser(ctx, u); err != nil {
+		return err
+	}
+	if includeAdmin {
+		return s.MarkAllReadForAdmin(ctx)
+	}
+	return nil
+}
+
+func mergeNotificationsByCreatedAt(limit int, groups ...[]*notification.Notification) []*notification.Notification {
+	total := 0
+	for _, group := range groups {
+		total += len(group)
+	}
+	merged := make([]*notification.Notification, 0, total)
+	for _, group := range groups {
+		for _, item := range group {
+			if item != nil {
+				merged = append(merged, item)
+			}
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].CreatedAt.After(merged[j].CreatedAt)
+	})
+	if limit > 0 && len(merged) > limit {
+		return merged[:limit]
+	}
+	return merged
 }
 
 func (s *NotificationService) MarkReadForAdmin(ctx context.Context, ids []string) error {
