@@ -98,6 +98,9 @@ export const userApi = {
       wallet_address?: string
       email?: string
       permissions: string[]
+      capabilities?: {
+        manageUsers?: boolean
+      }
       created_at?: string
       updated_at?: string
       has_password?: boolean

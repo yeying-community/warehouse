@@ -221,7 +221,7 @@ async function handleNotificationClick(item: NotificationItem) {
     return
   }
   if (item.actionUrl === '#admin-quota') {
-    window.dispatchEvent(new CustomEvent('warehouse:navigate', { detail: { view: 'quotaManage', section: 'adminQuota' } }))
+    window.dispatchEvent(new CustomEvent('warehouse:navigate', { detail: { view: 'quotaManage', section: 'adminUsers' } }))
     return
   }
   if (item.actionUrl === '#quota') {

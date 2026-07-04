@@ -17,26 +17,40 @@ type UserHandler struct {
 	logger         *zap.Logger
 	userRepository user.Repository
 	passwordHasher *crypto.PasswordHasher
+	adminAddresses map[string]struct{}
 }
 
 // NewUserHandler 创建用户信息处理器
-func NewUserHandler(logger *zap.Logger, userRepo user.Repository) *UserHandler {
+func NewUserHandler(logger *zap.Logger, userRepo user.Repository, adminAddresses []string) *UserHandler {
+	admins := make(map[string]struct{}, len(adminAddresses))
+	for _, raw := range adminAddresses {
+		addr := strings.ToLower(strings.TrimSpace(raw))
+		if addr != "" {
+			admins[addr] = struct{}{}
+		}
+	}
 	return &UserHandler{
 		logger:         logger,
 		userRepository: userRepo,
 		passwordHasher: crypto.NewPasswordHasher(),
+		adminAddresses: admins,
 	}
+}
+
+type UserCapabilitiesResponse struct {
+	ManageUsers bool `json:"manageUsers"`
 }
 
 // UserInfoResponse 用户信息响应
 type UserInfoResponse struct {
-	Username      string   `json:"username"`
-	WalletAddress string   `json:"wallet_address,omitempty"`
-	Email         string   `json:"email,omitempty"`
-	Permissions   []string `json:"permissions"`
-	CreatedAt     string   `json:"created_at,omitempty"`
-	UpdatedAt     string   `json:"updated_at,omitempty"`
-	HasPassword   bool     `json:"has_password"`
+	Username      string                   `json:"username"`
+	WalletAddress string                   `json:"wallet_address,omitempty"`
+	Email         string                   `json:"email,omitempty"`
+	Permissions   []string                 `json:"permissions"`
+	Capabilities  UserCapabilitiesResponse `json:"capabilities"`
+	CreatedAt     string                   `json:"created_at,omitempty"`
+	UpdatedAt     string                   `json:"updated_at,omitempty"`
+	HasPassword   bool                     `json:"has_password"`
 }
 
 // GetUserInfo 获取用户信息
@@ -60,7 +74,10 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		WalletAddress: u.WalletAddress,
 		Email:         u.Email,
 		Permissions:   permissionsToStrings(u.Permissions),
-		HasPassword:   u.HasPassword(),
+		Capabilities: UserCapabilitiesResponse{
+			ManageUsers: h.canManageUsers(u),
+		},
+		HasPassword: u.HasPassword(),
 	}
 
 	if !u.CreatedAt.IsZero() {
@@ -71,6 +88,18 @@ func (h *UserHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, response)
+}
+
+func (h *UserHandler) canManageUsers(u *user.User) bool {
+	if h == nil || u == nil || len(h.adminAddresses) == 0 {
+		return false
+	}
+	addr := strings.ToLower(strings.TrimSpace(u.WalletAddress))
+	if addr == "" {
+		return false
+	}
+	_, ok := h.adminAddresses[addr]
+	return ok
 }
 
 // UpdateUsername 更新用户名

@@ -41,6 +41,9 @@ const userInfo = ref<{
   wallet_address?: string
   email?: string
   permissions: string[]
+  capabilities?: {
+    manageUsers?: boolean
+  }
   created_at?: string
   updated_at?: string
   has_password?: boolean
@@ -93,19 +96,19 @@ const sharedEntries = ref<FileItem[]>([])
 const sharedEntriesLoading = ref(false)
 const showQuotaManage = ref(false)
 const quotaManageLoading = ref(false)
-const adminQuotaLoading = ref(false)
-const adminQuotaAvailable = ref(false)
-const adminQuotaError = ref('')
+const adminUsersLoading = ref(false)
+const canManageUsers = ref(false)
+const adminUsersError = ref('')
 const adminUsers = ref<AdminUserItem[]>([])
-const adminQuotaFilter = ref<'all' | 'unlimited' | 'near_limit' | 'over_quota'>('all')
-const adminQuotaDialogVisible = ref(false)
-const adminQuotaSubmitting = ref(false)
-const adminQuotaEditTarget = ref<AdminUserItem | null>(null)
-const adminQuotaEditValue = ref('')
-const adminQuotaEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
+const adminUsersFilter = ref<'all' | 'unlimited' | 'near_limit' | 'over_quota'>('all')
+const adminUsersDialogVisible = ref(false)
+const adminUsersSubmitting = ref(false)
+const adminUsersEditTarget = ref<AdminUserItem | null>(null)
+const adminUsersEditValue = ref('')
+const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showAddressBook = ref(false)
 const showUploadTasks = ref(false)
-const managementSection = ref<'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks'>('account')
+const managementSection = ref<'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks'>('account')
 const uploadTasksReturnView = ref<ViewKey | null>(null)
 const uploadTasksReturnPath = ref('/')
 const manualRefresh = ref(false)
@@ -478,7 +481,7 @@ const fileBreadcrumbRoot = computed(() => {
 })
 const managementSectionLabel = computed(() => {
   if (managementSection.value === 'keys') return '访问密钥'
-  if (managementSection.value === 'adminQuota') return '用户额度'
+  if (managementSection.value === 'adminUsers') return '用户管理'
   if (managementSection.value === 'addressBook') return '联系人'
   if (managementSection.value === 'uploadTasks') return '上传记录'
   return '个人资料'
@@ -579,7 +582,7 @@ const quotaAlertState = computed(() => {
     message: '当前额度使用正常。'
   }
 })
-const adminQuotaSummary = computed(() => {
+const adminUsersSummary = computed(() => {
   const items = adminUsers.value
   const limitedUsers = items.filter(item => item.quota > 0)
   const overQuotaUsers = limitedUsers.filter(item => item.used_space > item.quota)
@@ -595,17 +598,17 @@ const adminQuotaSummary = computed(() => {
     overQuota: overQuotaUsers.length
   }
 })
-const adminQuotaHeadline = computed(() => {
-  if (adminQuotaSummary.value.overQuota > 0) {
+const adminUsersHeadline = computed(() => {
+  if (adminUsersSummary.value.overQuota > 0) {
     return {
       type: 'error' as 'error' | 'warning' | 'info',
-      title: `当前有 ${adminQuotaSummary.value.overQuota} 个用户已超额，新增写入会被拒绝。`
+      title: `当前有 ${adminUsersSummary.value.overQuota} 个用户已超额，新增写入会被拒绝。`
     }
   }
-  if (adminQuotaSummary.value.nearLimit > 0) {
+  if (adminUsersSummary.value.nearLimit > 0) {
     return {
       type: 'warning' as const,
-      title: `当前有 ${adminQuotaSummary.value.nearLimit} 个用户使用率已达到 80% 以上。`
+      title: `当前有 ${adminUsersSummary.value.nearLimit} 个用户使用率已达到 80% 以上。`
     }
   }
   return {
@@ -614,7 +617,7 @@ const adminQuotaHeadline = computed(() => {
   }
 })
 const filteredAdminUsers = computed(() => {
-  const filter = adminQuotaFilter.value
+  const filter = adminUsersFilter.value
   const items = [...adminUsers.value]
   const filtered = items.filter(item => {
     if (filter === 'unlimited') return item.quota === 0
@@ -1611,6 +1614,10 @@ async function fetchUserInfo() {
     if (Array.isArray(data.permissions)) {
       localStorage.setItem('permissions', JSON.stringify(data.permissions))
     }
+    canManageUsers.value = Boolean(data.capabilities?.manageUsers)
+    if (!canManageUsers.value && managementSection.value === 'adminUsers') {
+      managementSection.value = 'account'
+    }
     if (data.created_at) {
       localStorage.setItem('createdAt', data.created_at)
     }
@@ -1644,8 +1651,9 @@ async function fetchAssetSpaces() {
 async function fetchUserCenter() {
   quotaManageLoading.value = true
   try {
-    const tasks: Array<Promise<unknown>> = [fetchUserInfo(), fetchQuota(), fetchAccessKeys()]
-    if (managementSection.value === 'adminQuota') {
+    await fetchUserInfo()
+    const tasks: Array<Promise<unknown>> = [fetchQuota(), fetchAccessKeys()]
+    if (managementSection.value === 'adminUsers' && canManageUsers.value) {
       tasks.push(fetchAdminUsers())
     }
     await Promise.all(tasks)
@@ -1676,23 +1684,24 @@ function isAdminPermissionError(error: unknown): boolean {
 }
 
 async function fetchAdminUsers() {
-  adminQuotaLoading.value = true
-  adminQuotaError.value = ''
+  if (!canManageUsers.value) return
+  adminUsersLoading.value = true
+  adminUsersError.value = ''
   try {
     const data = await adminUserApi.list()
     adminUsers.value = Array.isArray(data.items) ? data.items : []
-    adminQuotaAvailable.value = true
+    canManageUsers.value = true
   } catch (error) {
     adminUsers.value = []
     if (isAdminPermissionError(error)) {
-      adminQuotaAvailable.value = false
+      canManageUsers.value = false
       return
     }
-    adminQuotaAvailable.value = true
-    adminQuotaError.value = extractApiErrorMessage(error) || '加载失败'
-    console.error('获取管理员用户额度列表失败:', error)
+    canManageUsers.value = true
+    adminUsersError.value = extractApiErrorMessage(error) || '加载失败'
+    console.error('获取用户管理列表失败:', error)
   } finally {
-    adminQuotaLoading.value = false
+    adminUsersLoading.value = false
   }
 }
 
@@ -1770,36 +1779,36 @@ function normalizeQuotaEditor(quota: number): { value: string; unit: 'B' | 'KB' 
   return { value: String(quota), unit: 'B' }
 }
 
-const adminQuotaPreviewBytes = computed(() => {
-  const raw = adminQuotaEditValue.value.trim()
+const adminUsersPreviewBytes = computed(() => {
+  const raw = adminUsersEditValue.value.trim()
   if (raw === '' || !/^\d+$/.test(raw)) return null
   const value = Number(raw)
   if (!Number.isSafeInteger(value) || value < 0) return null
-  const bytes = value * quotaUnitMultiplier(adminQuotaEditUnit.value)
+  const bytes = value * quotaUnitMultiplier(adminUsersEditUnit.value)
   if (!Number.isSafeInteger(bytes) || bytes < 0) return null
   return bytes
 })
 
-function openAdminQuotaDialog(item: AdminUserItem) {
-  adminQuotaEditTarget.value = item
+function openAdminUsersDialog(item: AdminUserItem) {
+  adminUsersEditTarget.value = item
   const normalized = normalizeQuotaEditor(item.quota)
-  adminQuotaEditValue.value = normalized.value
-  adminQuotaEditUnit.value = normalized.unit
-  adminQuotaDialogVisible.value = true
+  adminUsersEditValue.value = normalized.value
+  adminUsersEditUnit.value = normalized.unit
+  adminUsersDialogVisible.value = true
 }
 
-function closeAdminQuotaDialog() {
-  adminQuotaDialogVisible.value = false
-  adminQuotaSubmitting.value = false
-  adminQuotaEditTarget.value = null
-  adminQuotaEditValue.value = ''
-  adminQuotaEditUnit.value = 'GB'
+function closeAdminUsersDialog() {
+  adminUsersDialogVisible.value = false
+  adminUsersSubmitting.value = false
+  adminUsersEditTarget.value = null
+  adminUsersEditValue.value = ''
+  adminUsersEditUnit.value = 'GB'
 }
 
-async function submitAdminQuotaUpdate() {
-  const target = adminQuotaEditTarget.value
+async function submitAdminUsersUpdate() {
+  const target = adminUsersEditTarget.value
   if (!target) return
-  const raw = adminQuotaEditValue.value.trim()
+  const raw = adminUsersEditValue.value.trim()
   if (raw === '') {
     showError('请输入额度值')
     return
@@ -1813,23 +1822,23 @@ async function submitAdminQuotaUpdate() {
     showError('额度值无效，请输入安全整数')
     return
   }
-  const multiplier = quotaUnitMultiplier(adminQuotaEditUnit.value)
+  const multiplier = quotaUnitMultiplier(adminUsersEditUnit.value)
   const quota = value * multiplier
   if (!Number.isSafeInteger(quota) || quota < 0) {
     showError('换算后的额度值过大，请调整后重试')
     return
   }
 
-  adminQuotaSubmitting.value = true
+  adminUsersSubmitting.value = true
   try {
     await adminUserApi.updateQuota(target.username, quota)
     showSuccess('用户额度已更新')
-    closeAdminQuotaDialog()
+    closeAdminUsersDialog()
     await fetchAdminUsers()
   } catch (error) {
     showError(extractApiErrorMessage(error) || '更新用户额度失败')
   } finally {
-    adminQuotaSubmitting.value = false
+    adminUsersSubmitting.value = false
   }
 }
 
@@ -4129,7 +4138,7 @@ function enterAddressBook() {
 }
 
 // 进入账户管理
-function enterQuotaManage(section: 'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks' = 'account') {
+function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks' = 'account') {
   detailDrawerVisible.value = false
   managementSection.value = section
   showQuotaManage.value = true
@@ -4580,7 +4589,7 @@ onMounted(() => {
 })
 
 function handleExternalNavigate(event: Event) {
-  const customEvent = event as CustomEvent<{ view?: ViewKey; section?: 'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks' }>
+  const customEvent = event as CustomEvent<{ view?: ViewKey; section?: 'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks' }>
   const view = customEvent?.detail?.view
   if (!view) return
   if (view === 'quotaManage') {
@@ -4903,15 +4912,15 @@ onBeforeUnmount(() => {
                   <span v-show="!sidePanelCollapsed">访问密钥</span>
                 </button>
               </el-tooltip>
-              <el-tooltip v-if="adminQuotaAvailable" content="用户额度" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip v-if="canManageUsers" content="用户管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
-                  :class="{ active: showQuotaManage && managementSection === 'adminQuota' }"
-                  @click="enterQuotaManage('adminQuota')"
+                  :class="{ active: showQuotaManage && managementSection === 'adminUsers' }"
+                  @click="enterQuotaManage('adminUsers')"
                 >
                   <el-icon class="nav-icon"><Grid /></el-icon>
-                  <span v-show="!sidePanelCollapsed">用户额度</span>
+                  <span v-show="!sidePanelCollapsed">用户管理</span>
                 </button>
               </el-tooltip>
               <el-tooltip content="联系人" placement="right" :disabled="!sidePanelCollapsed">
@@ -5361,13 +5370,13 @@ onBeforeUnmount(() => {
                   密钥
                 </button>
                 <button
-                  v-if="adminQuotaAvailable"
+                  v-if="canManageUsers"
                   type="button"
                   class="segment-button"
-                  :class="{ active: managementSection === 'adminQuota' }"
-                  @click="managementSection = 'adminQuota'"
+                  :class="{ active: managementSection === 'adminUsers' }"
+                  @click="enterQuotaManage('adminUsers')"
                 >
-                  用户额度
+                  用户管理
                 </button>
                 <button
                   type="button"
@@ -5522,14 +5531,14 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div
-                v-if="adminQuotaAvailable && managementSection === 'adminQuota'"
+                v-if="canManageUsers && managementSection === 'adminUsers'"
                 class="user-card user-card-full"
-                v-loading="adminQuotaLoading"
+                v-loading="adminUsersLoading"
               >
                 <div class="card-head">
-                  <div class="card-title">用户额度概览</div>
+                  <div class="card-title">用户管理概览</div>
                   <div class="user-actions">
-                    <el-select v-model="adminQuotaFilter" size="small" class="admin-quota-filter">
+                    <el-select v-model="adminUsersFilter" size="small" class="admin-quota-filter">
                       <el-option label="全部用户" value="all" />
                       <el-option label="不限额" value="unlimited" />
                       <el-option label="接近上限" value="near_limit" />
@@ -5539,27 +5548,27 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="key-summary">
-                  <span>总用户：{{ adminQuotaSummary.total }}</span>
-                  <span>已设上限：{{ adminQuotaSummary.limited }}</span>
-                  <span>不限额：{{ adminQuotaSummary.unlimited }}</span>
-                  <span>接近上限：{{ adminQuotaSummary.nearLimit }}</span>
-                  <span>已超额：{{ adminQuotaSummary.overQuota }}</span>
+                  <span>总用户：{{ adminUsersSummary.total }}</span>
+                  <span>已设上限：{{ adminUsersSummary.limited }}</span>
+                  <span>不限额：{{ adminUsersSummary.unlimited }}</span>
+                  <span>接近上限：{{ adminUsersSummary.nearLimit }}</span>
+                  <span>已超额：{{ adminUsersSummary.overQuota }}</span>
                 </div>
                 <el-alert
-                  :type="adminQuotaHeadline.type"
+                  :type="adminUsersHeadline.type"
                   :closable="false"
                   show-icon
-                  :title="adminQuotaHeadline.title"
+                  :title="adminUsersHeadline.title"
                 />
                 <el-alert
-                  v-if="adminQuotaError"
+                  v-if="adminUsersError"
                   type="warning"
                   :closable="false"
                   show-icon
-                  :title="`用户额度列表加载失败：${adminQuotaError}`"
+                  :title="`用户管理列表加载失败：${adminUsersError}`"
                 />
                 <el-empty
-                  v-else-if="!adminQuotaLoading && !filteredAdminUsers.length"
+                  v-else-if="!adminUsersLoading && !filteredAdminUsers.length"
                   description="当前筛选条件下暂无用户"
                 />
                 <el-table
@@ -5594,7 +5603,7 @@ onBeforeUnmount(() => {
                   </el-table-column>
                   <el-table-column label="操作" width="120" align="left" header-align="left">
                     <template #default="{ row }">
-                      <el-button size="small" @click="openAdminQuotaDialog(row)">修改额度</el-button>
+                      <el-button size="small" @click="openAdminUsersDialog(row)">修改额度</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -6072,24 +6081,24 @@ onBeforeUnmount(() => {
         </template>
       </el-dialog>
       <el-dialog
-        v-model="adminQuotaDialogVisible"
+        v-model="adminUsersDialogVisible"
         title="修改用户额度"
         width="420px"
-        @closed="closeAdminQuotaDialog"
+        @closed="closeAdminUsersDialog"
       >
         <div class="admin-quota-dialog">
-          <div v-if="adminQuotaEditTarget" class="admin-quota-target">
-            <div class="admin-quota-target-name">{{ adminQuotaEditTarget.username }}</div>
+          <div v-if="adminUsersEditTarget" class="admin-quota-target">
+            <div class="admin-quota-target-name">{{ adminUsersEditTarget.username }}</div>
             <div class="admin-quota-target-meta">
-              已使用 {{ formatSize(adminQuotaEditTarget.used_space) }}，当前上限
-              {{ adminQuotaEditTarget.quota > 0 ? formatSize(adminQuotaEditTarget.quota) : '无限' }}
+              已使用 {{ formatSize(adminUsersEditTarget.used_space) }}，当前上限
+              {{ adminUsersEditTarget.quota > 0 ? formatSize(adminUsersEditTarget.quota) : '无限' }}
             </div>
           </div>
           <el-form label-position="top">
             <el-form-item label="额度">
               <div class="admin-quota-input-row">
-                <el-input v-model="adminQuotaEditValue" placeholder="输入 0 表示不限额" />
-                <el-select v-model="adminQuotaEditUnit" class="admin-quota-input-unit">
+                <el-input v-model="adminUsersEditValue" placeholder="输入 0 表示不限额" />
+                <el-select v-model="adminUsersEditUnit" class="admin-quota-input-unit">
                   <el-option label="B" value="B" />
                   <el-option label="KB" value="KB" />
                   <el-option label="MB" value="MB" />
@@ -6099,17 +6108,17 @@ onBeforeUnmount(() => {
               </div>
             </el-form-item>
           </el-form>
-          <div v-if="adminQuotaPreviewBytes !== null" class="admin-quota-preview">
+          <div v-if="adminUsersPreviewBytes !== null" class="admin-quota-preview">
             <span class="admin-quota-preview-label">换算预览</span>
             <span class="admin-quota-preview-value">
-              {{ adminQuotaPreviewBytes === 0 ? '不限额（保存为 0 字节）' : `${adminQuotaPreviewBytes} 字节（约 ${formatSize(adminQuotaPreviewBytes)}）` }}
+              {{ adminUsersPreviewBytes === 0 ? '不限额（保存为 0 字节）' : `${adminUsersPreviewBytes} 字节（约 ${formatSize(adminUsersPreviewBytes)}）` }}
             </span>
           </div>
           <div class="share-group-meta">请输入大于等于 0 的整数，`0` 表示不限额。保存时会自动换算为字节。</div>
         </div>
         <template #footer>
-          <el-button @click="closeAdminQuotaDialog">取消</el-button>
-          <el-button type="primary" :loading="adminQuotaSubmitting" @click="submitAdminQuotaUpdate">保存</el-button>
+          <el-button @click="closeAdminUsersDialog">取消</el-button>
+          <el-button type="primary" :loading="adminUsersSubmitting" @click="submitAdminUsersUpdate">保存</el-button>
         </template>
       </el-dialog>
       <FilePreviewDialog
