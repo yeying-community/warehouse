@@ -249,6 +249,9 @@ func (w *ReplicationWorker) dispatchFileApply(ctx context.Context, peer *Resolve
 		return fmt.Errorf("open replication source file %q: %w", fullPath, err)
 	}
 	defer file.Close()
+	if err := validateReplicationFileSnapshot(file, fullPath, event); err != nil {
+		return err
+	}
 
 	values := url.Values{}
 	values.Set("outboxId", fmt.Sprintf("%d", event.ID))
@@ -270,6 +273,37 @@ func (w *ReplicationWorker) dispatchFileApply(ctx context.Context, peer *Resolve
 	req.Header.Set(middleware.InternalAssignmentGenerationHeader, fmt.Sprintf("%d", assignmentGeneration))
 
 	return w.doRequest(req)
+}
+
+func validateReplicationFileSnapshot(file *os.File, fullPath string, event *replication.OutboxEvent) error {
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat replication source file %q: %w", fullPath, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("replication source path %q is a directory", fullPath)
+	}
+	if info.Size() != *event.FileSize {
+		return fmt.Errorf(
+			"replication source file changed since outbox event %d: expected size %d, current size %d",
+			event.ID,
+			*event.FileSize,
+			info.Size(),
+		)
+	}
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return fmt.Errorf("hash replication source file %q: %w", fullPath, err)
+	}
+	actualHash := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(actualHash, *event.ContentSHA256) {
+		return fmt.Errorf("replication source file changed since outbox event %d: content sha256 mismatch", event.ID)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind replication source file %q: %w", fullPath, err)
+	}
+	return nil
 }
 
 func (w *ReplicationWorker) requiredAssignmentGeneration(peer *ResolvedReplicationPeer, event *replication.OutboxEvent) (int64, error) {
