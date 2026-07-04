@@ -243,6 +243,7 @@ func (c *Container) initServices() error {
 		c.QuotaService,
 		c.UserRepository,
 		c.RecycleRepository,
+		c.UserShareRepository,
 		c.MutationRecorder,
 		c.Logger,
 	)
@@ -373,7 +374,7 @@ func (c *Container) initHandlers() error {
 	c.QuotaHandler = handler.NewQuotaHandler(c.QuotaService, c.Logger)
 	c.QuotaHandler.SetNotificationService(c.NotificationService)
 	// 用户信息处理器
-	c.UserHandler = handler.NewUserHandler(c.Logger, c.UserRepository)
+	c.UserHandler = handler.NewUserHandler(c.Logger, c.UserRepository, c.Config.Security.AdminAddresses)
 	// 管理员用户处理器
 	c.AdminUserHandler = handler.NewAdminUserHandler(c.Logger, c.UserRepository, c.AssetSpaceManager)
 
@@ -442,6 +443,7 @@ func (c *Container) initHandlers() error {
 	)
 	c.NotificationHandler = handler.NewNotificationHandler(
 		c.NotificationService,
+		c.Config.Security.AdminAddresses,
 		c.Logger,
 	)
 

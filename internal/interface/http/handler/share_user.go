@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	webdavfs "github.com/yeying-community/warehouse/internal/infrastructure/webdav"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
+	"golang.org/x/net/webdav"
 )
 
 // ShareUserHandler 定向分享处理器
@@ -26,6 +29,38 @@ type ShareUserHandler struct {
 	userRepo         user.Repository
 	mutationRecorder service.MutationRecorder
 	logger           *zap.Logger
+}
+
+type bufferedResponse struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func newBufferedResponse() *bufferedResponse {
+	return &bufferedResponse{header: make(http.Header), status: http.StatusOK}
+}
+
+func (r *bufferedResponse) Header() http.Header {
+	return r.header
+}
+
+func (r *bufferedResponse) WriteHeader(status int) {
+	r.status = status
+}
+
+func (r *bufferedResponse) Write(p []byte) (int, error) {
+	return r.body.Write(p)
+}
+
+func (r *bufferedResponse) FlushTo(w http.ResponseWriter) {
+	for key, values := range r.header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(r.status)
+	_, _ = r.body.WriteTo(w)
 }
 
 // NewShareUserHandler 创建定向分享处理器
@@ -43,6 +78,324 @@ func NewShareUserHandler(
 		userRepo:         userRepo,
 		mutationRecorder: mutationRecorder,
 		logger:           logger,
+	}
+}
+
+// HandleDAV exposes shared content as a WebDAV virtual root:
+// /dav/share/{shareId}/...
+func (h *ShareUserHandler) HandleDAV(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		writeDAVOptions(w)
+		return
+	}
+
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		h.logger.Error("user not found in context")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	shareID, relPath, davPrefix, err := h.parseDAVSharePath(r.URL.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	item, owner, err := h.shareUserService.ResolveForTarget(r.Context(), u, shareID, requiredActionsForShareDAV(r.Method)...)
+	if err != nil {
+		writeShareUserError(w, err)
+		return
+	}
+	perms := permissionsFromStored(item.Permissions)
+
+	_, baseFull, err := h.shareUserService.ResolveSharePath(owner, item, "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_, targetFull, err := h.shareUserService.ResolveSharePath(owner, item, relPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := h.checkDAVSharePermission(r, perms, shareID, targetFull); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	if isMutatingShareDAVMethod(r.Method) {
+		targetWasDir := false
+		if info, err := os.Stat(targetFull); err == nil {
+			targetWasDir = info.IsDir()
+		}
+		h.serveMutatingShareDAV(w, r, shareDAVContext{
+			shareID:      shareID,
+			davPrefix:    davPrefix,
+			baseFull:     baseFull,
+			targetFull:   targetFull,
+			targetWasDir: targetWasDir,
+			owner:        owner,
+			item:         item,
+		})
+		return
+	}
+
+	h.serveShareDAV(w, r, davPrefix, baseFull)
+}
+
+type shareDAVContext struct {
+	shareID      string
+	davPrefix    string
+	baseFull     string
+	targetFull   string
+	targetWasDir bool
+	owner        *user.User
+	item         *shareuser.ShareUserItem
+}
+
+func writeDAVOptions(w http.ResponseWriter) {
+	methods := []string{
+		"OPTIONS",
+		"GET", "HEAD", "PUT", "DELETE",
+		"PROPFIND", "PROPPATCH",
+		"MKCOL", "COPY", "MOVE",
+		"LOCK", "UNLOCK",
+	}
+	w.Header().Set("Allow", strings.Join(methods, ", "))
+	w.Header().Set("DAV", "1, 2")
+	w.Header().Set("MS-Author-Via", "DAV")
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *ShareUserHandler) parseDAVSharePath(rawPath string) (shareID, relPath, davPrefix string, err error) {
+	cfg := h.shareUserService.Config()
+	webdavPrefix := "/dav/"
+	if cfg != nil && strings.TrimSpace(cfg.WebDAV.Prefix) != "" {
+		webdavPrefix = strings.Trim(strings.TrimSpace(cfg.WebDAV.Prefix), "/")
+		webdavPrefix = "/" + webdavPrefix + "/"
+	}
+	sharePrefix := webdavPrefix + "share/"
+	if !strings.HasPrefix(rawPath, sharePrefix) {
+		return "", "", "", fmt.Errorf("invalid share dav path")
+	}
+	rest := strings.TrimPrefix(rawPath, sharePrefix)
+	parts := strings.SplitN(rest, "/", 2)
+	shareID = strings.TrimSpace(parts[0])
+	if shareID == "" {
+		return "", "", "", fmt.Errorf("shareId is required")
+	}
+	if len(parts) > 1 {
+		relPath = normalizeRelPath(parts[1])
+	}
+	davPrefix = strings.TrimSuffix(sharePrefix+shareID, "/")
+	return shareID, relPath, davPrefix, nil
+}
+
+func requiredActionsForShareDAV(method string) []string {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, "PROPFIND", "REPORT":
+		return []string{"read"}
+	case http.MethodPut, "MKCOL", http.MethodPost:
+		return []string{"create", "update"}
+	case "MOVE":
+		return []string{"move"}
+	case http.MethodDelete:
+		return []string{"delete"}
+	case "COPY":
+		return []string{"copy", "read", "create"}
+	default:
+		return []string{"read"}
+	}
+}
+
+func (h *ShareUserHandler) checkDAVSharePermission(r *http.Request, perms *user.Permissions, shareID, targetFull string) error {
+	if perms == nil {
+		return fmt.Errorf("permission denied")
+	}
+	switch strings.ToUpper(strings.TrimSpace(r.Method)) {
+	case http.MethodGet, http.MethodHead, "PROPFIND", "REPORT":
+		if !perms.Has("read") {
+			return fmt.Errorf("permission denied")
+		}
+	case "MKCOL":
+		if !perms.Has("create") {
+			return fmt.Errorf("permission denied")
+		}
+	case http.MethodPut:
+		if _, err := os.Stat(targetFull); err == nil {
+			if !perms.Has("update") {
+				return fmt.Errorf("permission denied")
+			}
+		} else if os.IsNotExist(err) {
+			if !perms.Has("create") {
+				return fmt.Errorf("permission denied")
+			}
+		} else {
+			return fmt.Errorf("permission denied")
+		}
+	case "MOVE":
+		if !perms.Has("update") {
+			return fmt.Errorf("permission denied")
+		}
+		if err := h.ensureSameDAVShareDestination(r, shareID); err != nil {
+			return err
+		}
+	case "COPY":
+		if !perms.Has("read") || !perms.Has("create") {
+			return fmt.Errorf("permission denied")
+		}
+		if err := h.ensureSameDAVShareDestination(r, shareID); err != nil {
+			return err
+		}
+	case http.MethodDelete:
+		if !perms.Has("delete") {
+			return fmt.Errorf("permission denied")
+		}
+	default:
+		return fmt.Errorf("method not allowed")
+	}
+	return nil
+}
+
+func (h *ShareUserHandler) ensureSameDAVShareDestination(r *http.Request, shareID string) error {
+	destination := strings.TrimSpace(r.Header.Get("Destination"))
+	if destination == "" {
+		return fmt.Errorf("missing Destination header")
+	}
+	destPath := destination
+	if strings.HasPrefix(destPath, "http://") || strings.HasPrefix(destPath, "https://") {
+		parsed, err := url.Parse(destPath)
+		if err != nil {
+			return fmt.Errorf("invalid Destination header")
+		}
+		destPath = parsed.Path
+	}
+	destShareID, _, _, err := h.parseDAVSharePath(destPath)
+	if err != nil {
+		return err
+	}
+	if destShareID != shareID {
+		return fmt.Errorf("cross-share move is not allowed")
+	}
+	return nil
+}
+
+func isMutatingShareDAVMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodPut, http.MethodPost, "MKCOL", http.MethodDelete, "MOVE", "COPY":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *ShareUserHandler) serveShareDAV(w http.ResponseWriter, r *http.Request, davPrefix, baseFull string) {
+	handler := &webdav.Handler{
+		Prefix:     davPrefix,
+		FileSystem: webdavfs.NewUnicodeFileSystem(baseFull),
+		LockSystem: webdav.NewMemLS(),
+		Logger:     h.createShareDAVLogger(),
+	}
+	w.Header().Set("DAV", "1, 2")
+	w.Header().Set("MS-Author-Via", "DAV")
+	handler.ServeHTTP(w, r)
+}
+
+func (h *ShareUserHandler) serveMutatingShareDAV(w http.ResponseWriter, r *http.Request, ctx shareDAVContext) {
+	rec := newBufferedResponse()
+	h.serveShareDAV(rec, r, ctx.davPrefix, ctx.baseFull)
+	if rec.status >= 200 && rec.status < 300 {
+		if err := h.recordShareDAVMutation(r, ctx); err != nil {
+			h.logger.Error("failed to record share dav mutation", zap.Error(err))
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	}
+	rec.FlushTo(w)
+}
+
+func (h *ShareUserHandler) recordShareDAVMutation(r *http.Request, ctx shareDAVContext) error {
+	switch strings.ToUpper(strings.TrimSpace(r.Method)) {
+	case http.MethodPut, http.MethodPost:
+		if err := h.mutationRecorder.EnsureDir(r.Context(), filepath.Dir(ctx.targetFull)); err != nil {
+			return err
+		}
+		return h.mutationRecorder.UpsertFile(r.Context(), ctx.targetFull)
+	case "MKCOL":
+		return h.mutationRecorder.EnsureDir(r.Context(), ctx.targetFull)
+	case http.MethodDelete:
+		return h.mutationRecorder.RemovePath(r.Context(), ctx.targetFull, ctx.targetWasDir)
+	case "MOVE":
+		toFull, err := h.resolveDAVShareDestinationFullPath(r, ctx)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(toFull)
+		isDir := false
+		if err == nil {
+			isDir = info.IsDir()
+		}
+		if err := service.SyncUserSharePathsForOwnerMove(r.Context(), h.shareUserService.Repository(), h.shareUserService.Config(), ctx.owner, ctx.targetFull, toFull); err != nil {
+			return err
+		}
+		if err := h.mutationRecorder.EnsureDir(r.Context(), filepath.Dir(toFull)); err != nil {
+			return err
+		}
+		return h.mutationRecorder.MovePath(r.Context(), ctx.targetFull, toFull, isDir)
+	case "COPY":
+		toFull, err := h.resolveDAVShareDestinationFullPath(r, ctx)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(toFull)
+		isDir := false
+		if err == nil {
+			isDir = info.IsDir()
+		}
+		if err := h.mutationRecorder.EnsureDir(r.Context(), filepath.Dir(toFull)); err != nil {
+			return err
+		}
+		return h.mutationRecorder.CopyPath(r.Context(), ctx.targetFull, toFull, isDir)
+	}
+	return nil
+}
+
+func (h *ShareUserHandler) resolveDAVShareDestinationFullPath(r *http.Request, ctx shareDAVContext) (string, error) {
+	destination := strings.TrimSpace(r.Header.Get("Destination"))
+	if destination == "" {
+		return "", fmt.Errorf("missing Destination header")
+	}
+	destPath := destination
+	if strings.HasPrefix(destPath, "http://") || strings.HasPrefix(destPath, "https://") {
+		parsed, err := url.Parse(destPath)
+		if err != nil {
+			return "", fmt.Errorf("invalid Destination header")
+		}
+		destPath = parsed.Path
+	}
+	_, relPath, _, err := h.parseDAVSharePath(destPath)
+	if err != nil {
+		return "", err
+	}
+	_, fullPath, err := h.shareUserService.ResolveSharePath(ctx.owner, ctx.item, relPath)
+	if err != nil {
+		return "", err
+	}
+	return fullPath, nil
+}
+
+func (h *ShareUserHandler) createShareDAVLogger() func(*http.Request, error) {
+	return func(r *http.Request, err error) {
+		if err == nil {
+			return
+		}
+		h.logger.Warn("share dav error",
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.Error(err),
+		)
 	}
 }
 
@@ -651,11 +1004,25 @@ func (h *ShareUserHandler) HandleUpload(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		h.logger.Warn("invalid shared upload multipart body",
+			zap.String("share_id", shareID),
+			zap.String("path", relPath),
+			zap.String("content_type", r.Header.Get("Content-Type")),
+			zap.Int64("content_length", r.ContentLength),
+			zap.Error(err),
+		)
 		http.Error(w, "Invalid upload body", http.StatusBadRequest)
 		return
 	}
 	file, _, err := r.FormFile("file")
 	if err != nil {
+		h.logger.Warn("shared upload multipart missing file field",
+			zap.String("share_id", shareID),
+			zap.String("path", relPath),
+			zap.String("content_type", r.Header.Get("Content-Type")),
+			zap.Int64("content_length", r.ContentLength),
+			zap.Error(err),
+		)
 		http.Error(w, "file is required", http.StatusBadRequest)
 		return
 	}
@@ -816,6 +1183,11 @@ func (h *ShareUserHandler) HandleRename(w http.ResponseWriter, r *http.Request) 
 
 	if err := os.Rename(fromPath, toPath); err != nil {
 		http.Error(w, "Failed to rename", http.StatusInternalServerError)
+		return
+	}
+	if err := service.SyncUserSharePathsForOwnerMove(r.Context(), h.shareUserService.Repository(), h.shareUserService.Config(), owner, fromPath, toPath); err != nil {
+		h.logger.Error("failed to sync share paths after share rename", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 	if err := h.mutationRecorder.EnsureDir(r.Context(), filepath.Dir(toPath)); err != nil {

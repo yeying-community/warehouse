@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/yeying-community/warehouse/internal/domain/shareuser"
@@ -24,6 +25,7 @@ type UserShareRepository interface {
 	GetByID(ctx context.Context, id string) (*shareuser.ShareUserItem, error)
 	GetByOwnerID(ctx context.Context, ownerID string) ([]*shareuser.ShareUserItem, error)
 	GetByTargetID(ctx context.Context, targetID string) ([]*shareuser.ShareUserItem, error)
+	UpdatePathsForOwnerMove(ctx context.Context, ownerID, fromPath, toPath string) error
 	DeleteByID(ctx context.Context, id string) error
 	ListAudiencesByShareID(ctx context.Context, shareID string) ([]UserShareAudience, error)
 }
@@ -262,6 +264,35 @@ func (r *PostgresUserShareRepository) GetByTargetID(ctx context.Context, targetI
 	defer rows.Close()
 
 	return scanShareItems(rows)
+}
+
+func (r *PostgresUserShareRepository) UpdatePathsForOwnerMove(ctx context.Context, ownerID, fromPath, toPath string) error {
+	fromPath = strings.TrimSpace(fromPath)
+	toPath = strings.TrimSpace(toPath)
+	if ownerID == "" || fromPath == "" || toPath == "" || fromPath == toPath {
+		return nil
+	}
+
+	query := `
+		UPDATE internal_share_items
+		SET
+			path = CASE
+				WHEN path = $2 THEN $3
+				ELSE $3 || SUBSTRING(path FROM CHAR_LENGTH($2) + 1)
+			END,
+			name = CASE
+				WHEN path = $2 THEN $4
+				ELSE name
+			END,
+			updated_at = NOW()
+		WHERE owner_user_id = $1
+		  AND status = 'active'
+		  AND (path = $2 OR path LIKE $2 || '/%')
+	`
+	if _, err := r.db.ExecContext(ctx, query, ownerID, fromPath, toPath, path.Base(toPath)); err != nil {
+		return fmt.Errorf("failed to update share paths for owner move: %w", err)
+	}
+	return nil
 }
 
 func (r *PostgresUserShareRepository) DeleteByID(ctx context.Context, id string) error {

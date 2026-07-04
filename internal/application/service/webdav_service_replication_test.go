@@ -48,6 +48,7 @@ func TestWebDAVServeHTTPPutDegradesWhenReplicationPeerUnavailable(t *testing.T) 
 		quota.NewService(userRepo),
 		userRepo,
 		&testRecycleRepo{},
+		nil,
 		recorder,
 		zap.NewNop(),
 	)
@@ -102,6 +103,7 @@ func TestWebDAVServeHTTPPutStillFailsOnNonReplicationMutationError(t *testing.T)
 		quota.NewService(userRepo),
 		userRepo,
 		&testRecycleRepo{},
+		nil,
 		recorder,
 		zap.NewNop(),
 	)
@@ -142,6 +144,7 @@ func TestWebDAVServeHTTPDeleteDegradesWhenReplicationPeerUnavailable(t *testing.
 		quota.NewService(userRepo),
 		userRepo,
 		&testRecycleRepo{},
+		nil,
 		&testMutationRecorder{movePathErr: ErrReplicationPeerUnavailable},
 		zap.NewNop(),
 	)
@@ -226,6 +229,7 @@ func TestWebDAVServeHTTPDeleteHardDeletesSyncArtifacts(t *testing.T) {
 				quota.NewService(userRepo),
 				userRepo,
 				recycleRepo,
+				nil,
 				recorder,
 				zap.NewNop(),
 			)

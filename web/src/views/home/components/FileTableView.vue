@@ -168,7 +168,7 @@ watch(() => props.selectionNonce, () => {
                 <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir && canShare(row)" command="share">创建链接</el-dropdown-item>
-                <el-dropdown-item v-if="canShare(row)" command="shareUser">指定对象</el-dropdown-item>
+                <el-dropdown-item v-if="canShare(row)" command="shareUser">分享</el-dropdown-item>
                 <el-dropdown-item v-if="row.encrypted" disabled>加密项暂不支持分享</el-dropdown-item>
                 <el-dropdown-item command="rename">重命名</el-dropdown-item>
                 <el-dropdown-item command="delete">删除</el-dropdown-item>
@@ -213,7 +213,7 @@ watch(() => props.selectionNonce, () => {
                 <el-dropdown-item v-if="canPreview(row)" command="preview">预览</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir" command="download">下载</el-dropdown-item>
                 <el-dropdown-item v-if="!row.isDir && canShare(row)" command="share">创建链接</el-dropdown-item>
-                <el-dropdown-item v-if="canShare(row)" command="shareUser">指定对象</el-dropdown-item>
+                <el-dropdown-item v-if="canShare(row)" command="shareUser">分享</el-dropdown-item>
                 <el-dropdown-item v-if="row.encrypted" disabled>加密项暂不支持分享</el-dropdown-item>
                 <el-dropdown-item command="rename">重命名</el-dropdown-item>
                 <el-dropdown-item command="delete">删除</el-dropdown-item>

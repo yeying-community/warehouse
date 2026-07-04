@@ -98,6 +98,9 @@ export const userApi = {
       wallet_address?: string
       email?: string
       permissions: string[]
+      capabilities?: {
+        manageUsers?: boolean
+      }
       created_at?: string
       updated_at?: string
       has_password?: boolean
@@ -150,7 +153,7 @@ export interface AdminNotificationCreatePayload {
 
 export const notificationApi = {
   list(limit = 20) {
-    return request<{ items: NotificationItem[] }>(`/api/v1/public/notifications/list?limit=${limit}`)
+    return request<{ items: NotificationItem[]; canAnnounce?: boolean }>(`/api/v1/public/notifications/list?limit=${limit}`)
   },
   unreadCount() {
     return request<{ count: number }>('/api/v1/public/notifications/unread-count')
@@ -176,29 +179,11 @@ export const notificationApi = {
   streamUrl() {
     return `${API_BASE}/api/v1/public/notifications/stream`
   },
-  adminList(limit = 20) {
-    return request<{ items: NotificationItem[] }>(`/api/v1/admin/notifications/list?limit=${limit}`)
-  },
-  adminUnreadCount() {
-    return request<{ count: number }>('/api/v1/admin/notifications/unread-count')
-  },
-  adminMarkRead(ids: string[]) {
-    return request('/api/v1/admin/notifications/read', {
-      method: 'POST',
-      body: { ids }
-    })
-  },
-  adminMarkAllRead() {
-    return request('/api/v1/admin/notifications/read-all', { method: 'POST' })
-  },
   adminCreate(payload: AdminNotificationCreatePayload) {
     return request<{ message: string; count: number }>('/api/v1/admin/notifications/create', {
       method: 'POST',
       body: payload as unknown as Record<string, unknown>
     })
-  },
-  adminStreamUrl() {
-    return `${API_BASE}/api/v1/admin/notifications/stream`
   }
 }
 
@@ -338,14 +323,6 @@ export interface DirectShareItem {
   createdAt: string
 }
 
-export interface ShareEntryItem {
-  name: string
-  path: string
-  isDir: boolean
-  size: number
-  modified: string
-}
-
 export type ShareExpiryUnit = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year'
 
 export interface AddressGroup {
@@ -472,37 +449,6 @@ export const directShareApi = {
         sourceGroupId?: string
       }>
     }>(`/api/v1/public/share/user/audiences?${query.toString()}`)
-  },
-
-  listEntries(shareId: string, path: string) {
-    const query = new URLSearchParams({
-      shareId,
-      path: path || ''
-    })
-    return request<{
-      items: ShareEntryItem[]
-    }>(`/api/v1/public/share/user/entries?${query.toString()}`)
-  },
-
-  createFolder(shareId: string, path: string) {
-    return request('/api/v1/public/share/user/folder', {
-      method: 'POST',
-      body: { shareId, path }
-    })
-  },
-
-  rename(shareId: string, from: string, to: string) {
-    return request('/api/v1/public/share/user/rename', {
-      method: 'POST',
-      body: { shareId, from, to }
-    })
-  },
-
-  remove(shareId: string, path: string) {
-    return request('/api/v1/public/share/user/item', {
-      method: 'DELETE',
-      body: { shareId, path }
-    })
   }
 }
 

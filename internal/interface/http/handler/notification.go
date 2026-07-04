@@ -6,24 +6,47 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/notification"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
 type NotificationHandler struct {
-	service *service.NotificationService
-	logger  *zap.Logger
+	service        *service.NotificationService
+	adminAddresses map[string]struct{}
+	logger         *zap.Logger
 }
 
-func NewNotificationHandler(service *service.NotificationService, logger *zap.Logger) *NotificationHandler {
-	return &NotificationHandler{
-		service: service,
-		logger:  logger,
+func NewNotificationHandler(service *service.NotificationService, adminAddresses []string, logger *zap.Logger) *NotificationHandler {
+	admins := make(map[string]struct{}, len(adminAddresses))
+	for _, raw := range adminAddresses {
+		addr := strings.ToLower(strings.TrimSpace(raw))
+		if addr != "" {
+			admins[addr] = struct{}{}
+		}
 	}
+	return &NotificationHandler{
+		service:        service,
+		adminAddresses: admins,
+		logger:         logger,
+	}
+}
+
+func (h *NotificationHandler) canReceiveAdminNotifications(u *user.User) bool {
+	if h == nil || u == nil || len(h.adminAddresses) == 0 {
+		return false
+	}
+	addr := strings.ToLower(strings.TrimSpace(u.WalletAddress))
+	if addr == "" {
+		return false
+	}
+	_, ok := h.adminAddresses[addr]
+	return ok
 }
 
 func (h *NotificationHandler) HandleList(w http.ResponseWriter, r *http.Request) {
@@ -36,13 +59,16 @@ func (h *NotificationHandler) HandleList(w http.ResponseWriter, r *http.Request)
 		h.writeError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	items, err := h.service.ListForUser(r.Context(), u, parseLimit(r, 20))
+	items, err := h.service.ListForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u), parseLimit(r, 20))
 	if err != nil {
 		h.logger.Error("failed to list notifications", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to list notifications")
 		return
 	}
-	h.writeJSON(w, http.StatusOK, map[string]any{"items": notificationResponses(items)})
+	h.writeJSON(w, http.StatusOK, map[string]any{
+		"items":       notificationResponses(items),
+		"canAnnounce": h.canReceiveAdminNotifications(u),
+	})
 }
 
 func (h *NotificationHandler) HandleUnreadCount(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +81,7 @@ func (h *NotificationHandler) HandleUnreadCount(w http.ResponseWriter, r *http.R
 		h.writeError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	count, err := h.service.UnreadCountForUser(r.Context(), u)
+	count, err := h.service.UnreadCountForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u))
 	if err != nil {
 		h.logger.Error("failed to count notifications", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to count notifications")
@@ -81,7 +107,7 @@ func (h *NotificationHandler) HandleMarkRead(w http.ResponseWriter, r *http.Requ
 		h.writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
-	if err := h.service.MarkReadForUser(r.Context(), u, req.IDs); err != nil {
+	if err := h.service.MarkReadForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u), req.IDs); err != nil {
 		h.logger.Error("failed to mark notifications read", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to mark notifications read")
 		return
@@ -99,7 +125,7 @@ func (h *NotificationHandler) HandleMarkAllRead(w http.ResponseWriter, r *http.R
 		h.writeError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	if err := h.service.MarkAllReadForUser(r.Context(), u); err != nil {
+	if err := h.service.MarkAllReadForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u)); err != nil {
 		h.logger.Error("failed to mark all notifications read", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to mark all notifications read")
 		return
@@ -152,8 +178,8 @@ func (h *NotificationHandler) HandleStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	h.streamCounts(w, r, func(ctx context.Context) (map[string]int, error) {
-		count, err := h.service.UnreadCountForUser(ctx, u)
-		return map[string]int{"user": count}, err
+		count, err := h.service.UnreadCountForCurrentUser(ctx, u, h.canReceiveAdminNotifications(u))
+		return map[string]int{"count": count}, err
 	})
 }
 

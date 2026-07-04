@@ -19,13 +19,13 @@ import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
 import { showInfo, showSuccess } from '@/utils/toast'
 import { useAddressBookStore } from '@/stores/addressBookStore'
+import { useUploadTaskStore } from '@/stores/uploadTaskStore'
 import AddressBookView from './components/AddressBookView.vue'
 import HomeOverlays from './components/HomeOverlays.vue'
 import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
 import SharedWithMeTableView from './components/SharedWithMeTableView.vue'
 import RecycleTableView from './components/RecycleTableView.vue'
-import UploadTaskListView from './components/UploadTaskListView.vue'
 import type { DropEntry, FileItem, UploadItem, UploadTask } from './types'
 
 const FilePreviewDialog = defineAsyncComponent(() => import('./components/FilePreviewDialog.vue'))
@@ -41,11 +41,13 @@ const userInfo = ref<{
   wallet_address?: string
   email?: string
   permissions: string[]
+  capabilities?: {
+    manageUsers?: boolean
+  }
   created_at?: string
   updated_at?: string
   has_password?: boolean
 } | null>(null)
-const uploadTasks = ref<UploadTask[]>([])
 const loginSubmitting = ref(false)
 const showPasswordLoginForm = ref(false)
 const passwordLoginForm = ref({
@@ -93,21 +95,19 @@ const sharedEntries = ref<FileItem[]>([])
 const sharedEntriesLoading = ref(false)
 const showQuotaManage = ref(false)
 const quotaManageLoading = ref(false)
-const adminQuotaLoading = ref(false)
-const adminQuotaAvailable = ref(false)
-const adminQuotaError = ref('')
+const adminUsersLoading = ref(false)
+const canManageUsers = ref(false)
+const adminUsersError = ref('')
 const adminUsers = ref<AdminUserItem[]>([])
-const adminQuotaFilter = ref<'all' | 'unlimited' | 'near_limit' | 'over_quota'>('all')
-const adminQuotaDialogVisible = ref(false)
-const adminQuotaSubmitting = ref(false)
-const adminQuotaEditTarget = ref<AdminUserItem | null>(null)
-const adminQuotaEditValue = ref('')
-const adminQuotaEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
+const adminUsersFilter = ref<'all' | 'unlimited' | 'near_limit' | 'over_quota'>('all')
+const adminUsersDialogVisible = ref(false)
+const adminUsersSubmitting = ref(false)
+const adminUsersEditTarget = ref<AdminUserItem | null>(null)
+const adminUsersEditValue = ref('')
+const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showAddressBook = ref(false)
 const showUploadTasks = ref(false)
-const managementSection = ref<'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks'>('account')
-const uploadTasksReturnView = ref<ViewKey | null>(null)
-const uploadTasksReturnPath = ref('/')
+const managementSection = ref<'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks'>('account')
 const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
@@ -148,6 +148,7 @@ const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const addressBookStore = useAddressBookStore()
 const { addressBookLoading, addressGroups, addressContacts } = storeToRefs(addressBookStore)
+const uploadTaskStore = useUploadTaskStore()
 const editingUsername = ref(false)
 const usernameDraft = ref('')
 const usernameSaving = ref(false)
@@ -435,7 +436,7 @@ const searchKeyword = computed({
   }
 })
 const searchPlaceholder = computed(() => {
-  if (showUploadTasks.value) return '搜索上传任务'
+  if (showUploadTasks.value) return '搜索任务'
   if (showRecycle.value) return '搜索回收站'
   if (showShare.value) return shareTab.value === 'link' ? '搜索链接分享' : '搜索指定对象分享'
   if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索分享给我'
@@ -477,11 +478,11 @@ const fileBreadcrumbRoot = computed(() => {
   return { name: '根目录', path: '/' }
 })
 const managementSectionLabel = computed(() => {
-  if (managementSection.value === 'keys') return '访问密钥'
-  if (managementSection.value === 'adminQuota') return '用户额度'
-  if (managementSection.value === 'addressBook') return '联系人'
-  if (managementSection.value === 'uploadTasks') return '上传记录'
-  return '个人资料'
+  if (managementSection.value === 'keys') return '密钥管理'
+  if (managementSection.value === 'adminUsers') return '用户管理'
+  if (managementSection.value === 'addressBook') return '好友管理'
+  if (managementSection.value === 'uploadTasks') return '任务'
+  return '我的资料'
 })
 const isManagementView = computed(() => showQuotaManage.value || showAddressBook.value || showUploadTasks.value)
 const mobileLocationLabel = computed(() => {
@@ -489,8 +490,8 @@ const mobileLocationLabel = computed(() => {
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
   if (showQuotaManage.value) return managementSectionLabel.value
-  if (showAddressBook.value) return '联系人'
-  if (showUploadTasks.value) return '上传记录'
+  if (showAddressBook.value) return '好友管理'
+  if (showUploadTasks.value) return '任务'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
     return currentAssetSpace.value.name
@@ -501,13 +502,6 @@ const mobileLocationLabel = computed(() => {
   return defaultSpace?.name || '根目录'
 })
 const mobileLocationText = computed(() => `当前位置：${mobileLocationLabel.value}`)
-const uploadTaskSummary = computed(() => ({
-  total: uploadTasks.value.length,
-  queued: uploadTasks.value.filter(task => task.status === 'queued').length,
-  uploading: uploadTasks.value.filter(task => task.status === 'uploading').length,
-  success: uploadTasks.value.filter(task => task.status === 'success').length,
-  failed: uploadTasks.value.filter(task => task.status === 'failed').length
-}))
 const detailTitle = computed(() => {
   if (detailMode.value === 'recycle') return '回收站详情'
   if (detailMode.value === 'share') return '分享详情'
@@ -579,7 +573,7 @@ const quotaAlertState = computed(() => {
     message: '当前额度使用正常。'
   }
 })
-const adminQuotaSummary = computed(() => {
+const adminUsersSummary = computed(() => {
   const items = adminUsers.value
   const limitedUsers = items.filter(item => item.quota > 0)
   const overQuotaUsers = limitedUsers.filter(item => item.used_space > item.quota)
@@ -595,17 +589,17 @@ const adminQuotaSummary = computed(() => {
     overQuota: overQuotaUsers.length
   }
 })
-const adminQuotaHeadline = computed(() => {
-  if (adminQuotaSummary.value.overQuota > 0) {
+const adminUsersHeadline = computed(() => {
+  if (adminUsersSummary.value.overQuota > 0) {
     return {
       type: 'error' as 'error' | 'warning' | 'info',
-      title: `当前有 ${adminQuotaSummary.value.overQuota} 个用户已超额，新增写入会被拒绝。`
+      title: `当前有 ${adminUsersSummary.value.overQuota} 个用户已超额，新增写入会被拒绝。`
     }
   }
-  if (adminQuotaSummary.value.nearLimit > 0) {
+  if (adminUsersSummary.value.nearLimit > 0) {
     return {
       type: 'warning' as const,
-      title: `当前有 ${adminQuotaSummary.value.nearLimit} 个用户使用率已达到 80% 以上。`
+      title: `当前有 ${adminUsersSummary.value.nearLimit} 个用户使用率已达到 80% 以上。`
     }
   }
   return {
@@ -614,7 +608,7 @@ const adminQuotaHeadline = computed(() => {
   }
 })
 const filteredAdminUsers = computed(() => {
-  const filter = adminQuotaFilter.value
+  const filter = adminUsersFilter.value
   const items = [...adminUsers.value]
   const filtered = items.filter(item => {
     if (filter === 'unlimited') return item.quota === 0
@@ -901,6 +895,16 @@ function buildDavPath(path: string): string {
   return ensureDavPrefixedPath(path)
 }
 
+function buildShareDavRoot(shareID: string): string {
+  return buildDavPath(`/share/${shareID}`)
+}
+
+function buildShareDavPath(shareID: string, path: string = ''): string {
+  const relative = normalizeShareRelative(path)
+  const suffix = relative ? `/${relative}` : '/'
+  return buildDavPath(`/share/${shareID}${suffix}`)
+}
+
 function buildAbsoluteDavURL(path: string): string {
   const rawBase = String(API_BASE || '').trim()
   const normalizedBase = rawBase ? rawBase.replace(/\/+$/, '') : ''
@@ -1044,14 +1048,21 @@ function clearEncryptedDirectoryPasswordByRoot(rootPath: string) {
 
 function collectAncestorDirectories(path: string): string[] {
   const normalized = normalizeEncryptedRootPath(path)
-  if (normalized === '/') return ['/']
+  if (normalized === '/') return []
   const segments = normalized.split('/').filter(Boolean)
   const directories: string[] = []
   for (let index = segments.length; index >= 1; index -= 1) {
     directories.push(`/${segments.slice(0, index).join('/')}`)
   }
-  directories.push('/')
   return directories
+}
+
+function getEncryptedDirectoryParentPath(path: string): string {
+  const normalized = normalizeEncryptedRootPath(path)
+  if (normalized === '/') return '/'
+  const segments = normalized.split('/').filter(Boolean)
+  segments.pop()
+  return segments.length ? `/${segments.join('/')}` : '/'
 }
 
 async function discoverEncryptedRootForPath(path: string): Promise<string | null> {
@@ -1060,15 +1071,21 @@ async function discoverEncryptedRootForPath(path: string): Promise<string | null
 
   const token = localStorage.getItem('authToken') || ''
   for (const candidate of collectAncestorDirectories(path)) {
-    const response = await fetch(buildDavPath(buildEncryptedDirectoryMetadataPath(candidate)), {
-      method: 'GET',
+    const davPath = buildDavPath(candidate)
+    const response = await fetch(davPath, {
+      method: 'PROPFIND',
       headers: {
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${token}`,
+        'Depth': '1'
       }
     })
     if (!response.ok) continue
-    registerEncryptedDirectoryRoot(candidate)
-    return normalizeEncryptedRootPath(candidate)
+    const xml = await response.text()
+    const items = parsePropfindResponse(xml, davPath, DAV_PREFIX)
+    if (items.some(item => isEncryptedDirectoryMetadataFileName(item.name))) {
+      registerEncryptedDirectoryRoot(candidate)
+      return normalizeEncryptedRootPath(candidate)
+    }
   }
 
   return null
@@ -1536,7 +1553,7 @@ async function fetchFiles(path: string = '/') {
     }
     const encryptedRoot = hasEncryptionMarker
       ? currentDirRoot
-      : (await discoverEncryptedRootForPath(currentDirRoot))
+      : (await discoverEncryptedRootForPath(getEncryptedDirectoryParentPath(currentDirRoot)))
     fileList.value = parsedItems
       .filter(item => !isEncryptedDirectoryMetadataFileName(item.name))
       .map(item => {
@@ -1588,6 +1605,10 @@ async function fetchUserInfo() {
     if (Array.isArray(data.permissions)) {
       localStorage.setItem('permissions', JSON.stringify(data.permissions))
     }
+    canManageUsers.value = Boolean(data.capabilities?.manageUsers)
+    if (!canManageUsers.value && managementSection.value === 'adminUsers') {
+      managementSection.value = 'account'
+    }
     if (data.created_at) {
       localStorage.setItem('createdAt', data.created_at)
     }
@@ -1621,7 +1642,12 @@ async function fetchAssetSpaces() {
 async function fetchUserCenter() {
   quotaManageLoading.value = true
   try {
-    await Promise.all([fetchUserInfo(), fetchQuota(), fetchAccessKeys(), fetchAdminUsers()])
+    await fetchUserInfo()
+    const tasks: Array<Promise<unknown>> = [fetchQuota(), fetchAccessKeys()]
+    if (managementSection.value === 'adminUsers' && canManageUsers.value) {
+      tasks.push(fetchAdminUsers())
+    }
+    await Promise.all(tasks)
   } finally {
     quotaManageLoading.value = false
   }
@@ -1649,23 +1675,24 @@ function isAdminPermissionError(error: unknown): boolean {
 }
 
 async function fetchAdminUsers() {
-  adminQuotaLoading.value = true
-  adminQuotaError.value = ''
+  if (!canManageUsers.value) return
+  adminUsersLoading.value = true
+  adminUsersError.value = ''
   try {
     const data = await adminUserApi.list()
     adminUsers.value = Array.isArray(data.items) ? data.items : []
-    adminQuotaAvailable.value = true
+    canManageUsers.value = true
   } catch (error) {
     adminUsers.value = []
     if (isAdminPermissionError(error)) {
-      adminQuotaAvailable.value = false
+      canManageUsers.value = false
       return
     }
-    adminQuotaAvailable.value = true
-    adminQuotaError.value = extractApiErrorMessage(error) || '加载失败'
-    console.error('获取管理员用户额度列表失败:', error)
+    canManageUsers.value = true
+    adminUsersError.value = extractApiErrorMessage(error) || '加载失败'
+    console.error('获取用户管理列表失败:', error)
   } finally {
-    adminQuotaLoading.value = false
+    adminUsersLoading.value = false
   }
 }
 
@@ -1743,36 +1770,36 @@ function normalizeQuotaEditor(quota: number): { value: string; unit: 'B' | 'KB' 
   return { value: String(quota), unit: 'B' }
 }
 
-const adminQuotaPreviewBytes = computed(() => {
-  const raw = adminQuotaEditValue.value.trim()
+const adminUsersPreviewBytes = computed(() => {
+  const raw = adminUsersEditValue.value.trim()
   if (raw === '' || !/^\d+$/.test(raw)) return null
   const value = Number(raw)
   if (!Number.isSafeInteger(value) || value < 0) return null
-  const bytes = value * quotaUnitMultiplier(adminQuotaEditUnit.value)
+  const bytes = value * quotaUnitMultiplier(adminUsersEditUnit.value)
   if (!Number.isSafeInteger(bytes) || bytes < 0) return null
   return bytes
 })
 
-function openAdminQuotaDialog(item: AdminUserItem) {
-  adminQuotaEditTarget.value = item
+function openAdminUsersDialog(item: AdminUserItem) {
+  adminUsersEditTarget.value = item
   const normalized = normalizeQuotaEditor(item.quota)
-  adminQuotaEditValue.value = normalized.value
-  adminQuotaEditUnit.value = normalized.unit
-  adminQuotaDialogVisible.value = true
+  adminUsersEditValue.value = normalized.value
+  adminUsersEditUnit.value = normalized.unit
+  adminUsersDialogVisible.value = true
 }
 
-function closeAdminQuotaDialog() {
-  adminQuotaDialogVisible.value = false
-  adminQuotaSubmitting.value = false
-  adminQuotaEditTarget.value = null
-  adminQuotaEditValue.value = ''
-  adminQuotaEditUnit.value = 'GB'
+function closeAdminUsersDialog() {
+  adminUsersDialogVisible.value = false
+  adminUsersSubmitting.value = false
+  adminUsersEditTarget.value = null
+  adminUsersEditValue.value = ''
+  adminUsersEditUnit.value = 'GB'
 }
 
-async function submitAdminQuotaUpdate() {
-  const target = adminQuotaEditTarget.value
+async function submitAdminUsersUpdate() {
+  const target = adminUsersEditTarget.value
   if (!target) return
-  const raw = adminQuotaEditValue.value.trim()
+  const raw = adminUsersEditValue.value.trim()
   if (raw === '') {
     showError('请输入额度值')
     return
@@ -1786,23 +1813,23 @@ async function submitAdminQuotaUpdate() {
     showError('额度值无效，请输入安全整数')
     return
   }
-  const multiplier = quotaUnitMultiplier(adminQuotaEditUnit.value)
+  const multiplier = quotaUnitMultiplier(adminUsersEditUnit.value)
   const quota = value * multiplier
   if (!Number.isSafeInteger(quota) || quota < 0) {
     showError('换算后的额度值过大，请调整后重试')
     return
   }
 
-  adminQuotaSubmitting.value = true
+  adminUsersSubmitting.value = true
   try {
     await adminUserApi.updateQuota(target.username, quota)
     showSuccess('用户额度已更新')
-    closeAdminQuotaDialog()
+    closeAdminUsersDialog()
     await fetchAdminUsers()
   } catch (error) {
     showError(extractApiErrorMessage(error) || '更新用户额度失败')
   } finally {
-    adminQuotaSubmitting.value = false
+    adminUsersSubmitting.value = false
   }
 }
 
@@ -2043,12 +2070,7 @@ async function openFilePreview(item: FileItem) {
   try {
     const token = localStorage.getItem('authToken') || ''
     const previewURL = isSharedBrowse.value && sharedActive.value
-      ? ((mode === 'audio' || mode === 'video')
-          ? buildShareUserPreviewUrl(sharedActive.value.id, item.path)
-          : buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
-              shareId: sharedActive.value.id,
-              path: normalizeShareRelative(item.path)
-            })))
+      ? buildShareUserPreviewUrl(sharedActive.value.id, item.path)
       : buildDavPath(item.path)
     if (item.encryptedRoot) {
       if (isSharedBrowse.value) {
@@ -2153,18 +2175,13 @@ async function savePreview() {
     const token = localStorage.getItem('authToken') || ''
     if (isSharedBrowse.value && sharedActive.value) {
       const relPath = normalizeShareRelative(previewTarget.value.path)
-      const params = new URLSearchParams({ shareId: sharedActive.value.id, path: relPath })
-      const apiPath = buildShareUserUrl('/api/v1/public/share/user/upload', params)
-      const blob = new Blob([previewContent.value], { type: 'text/plain;charset=utf-8' })
-      const file = new File([blob], previewTarget.value.name, { type: 'text/plain;charset=utf-8' })
-      const formData = new FormData()
-      formData.append('file', file)
-      const response = await fetch(apiPath, {
+      const response = await fetch(buildShareDavPath(sharedActive.value.id, relPath), {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'text/plain; charset=utf-8'
         },
-        body: formData
+        body: previewContent.value
       })
       if (!response.ok) {
         const text = (await response.text()).trim()
@@ -2341,13 +2358,7 @@ async function downloadFile(item: FileItem) {
     try {
       const bytes = await readEncryptedFileBytes(item, item.encryptedRoot)
       const url = createEncryptedDownloadURL(bytes, item.name)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = item.name
-      a.rel = 'noopener'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      triggerBrowserDownload(url, item.name)
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (error) {
       showError(`下载失败: ${String(error)}`)
@@ -2360,30 +2371,14 @@ async function downloadFile(item: FileItem) {
   try {
     const token = localStorage.getItem('authToken') || ''
     ensureAuthCookie(token)
-    const a = document.createElement('a')
-    a.href = apiPath
-    a.download = item.name
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    triggerBrowserDownload(apiPath, item.name)
   } catch (error) {
     showError(`下载失败: ${String(error)}`)
   }
 }
 
-function buildShareUserUrl(path: string, params?: URLSearchParams) {
-  const base = API_BASE ? API_BASE.replace(/\/+$/, '') : ''
-  const query = params ? `?${params.toString()}` : ''
-  return `${base}${path}${query}`
-}
-
 function buildShareUserPreviewUrl(shareID: string, filePath: string) {
-  return buildShareUserUrl('/api/v1/public/share/user/download', new URLSearchParams({
-    shareId: shareID,
-    path: normalizeShareRelative(filePath),
-    disposition: 'inline'
-  }))
+  return buildShareDavPath(shareID, filePath)
 }
 
 function normalizeShareRelative(path: string) {
@@ -2478,19 +2473,12 @@ async function revokeSharesBeforeDelete(item: FileItem): Promise<{ proceed: bool
 
 async function downloadSharedRoot(item: DirectShareItem) {
   if (!item || item.isDir) return
-  const params = new URLSearchParams({ shareId: item.id, path: '' })
-  const url = buildShareUserUrl('/api/v1/public/share/user/download', params)
+  const url = buildShareDavPath(item.id)
   showInfo('下载中...')
   try {
     const token = localStorage.getItem('authToken') || ''
     ensureAuthCookie(token)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = item.name
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    triggerBrowserDownload(url, item.name)
   } catch (error) {
     showError(`下载失败: ${String(error)}`)
   }
@@ -2503,19 +2491,12 @@ async function downloadSharedFile(item: FileItem) {
     return
   }
   const relPath = normalizeShareRelative(item.path)
-  const params = new URLSearchParams({ shareId: sharedActive.value.id, path: relPath })
-  const url = buildShareUserUrl('/api/v1/public/share/user/download', params)
+  const url = buildShareDavPath(sharedActive.value.id, relPath)
   showInfo('下载中...')
   try {
     const token = localStorage.getItem('authToken') || ''
     ensureAuthCookie(token)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = item.name
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    triggerBrowserDownload(url, item.name)
   } catch (error) {
     showError(`下载失败: ${String(error)}`)
   }
@@ -2608,7 +2589,19 @@ async function submitRename() {
       if (!sharedActive.value || !sharedCanUpdate.value) return
       const fromPath = context.normalized.replace(/^\/+/, '')
       const toPath = (context.parentPath === '/' ? '/' + newName : context.parentPath + newName).replace(/^\/+/, '')
-      await directShareApi.rename(sharedActive.value.id, fromPath, toPath)
+      const token = localStorage.getItem('authToken') || ''
+      const response = await fetch(buildShareDavPath(sharedActive.value.id, fromPath + (context.isDir ? '/' : '')), {
+        method: 'MOVE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Destination': buildShareDavPath(sharedActive.value.id, toPath + (context.isDir ? '/' : '')),
+          'Overwrite': 'F'
+        }
+      })
+      if (!response.ok) {
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `重命名失败: ${response.status}`))
+      }
       fetchSharedEntries(sharedPath.value)
     }
     renameDialogVisible.value = false
@@ -2670,7 +2663,11 @@ async function triggerDirectoryUpload() {
       const directories = new Set<string>()
       await walkDirectoryHandle(handle, '', files, directories)
       if (files.length || directories.size) {
-        await uploadFilesWithDirectories(files, directories)
+        if (isSharedBrowse.value) {
+          await uploadSharedFilesWithDirectories(files, directories)
+        } else {
+          await uploadFilesWithDirectories(files, directories)
+        }
       }
       return
     } catch (error: any) {
@@ -2812,32 +2809,29 @@ function createUploadTask(item: UploadItem, options: { basePath: string; isShare
   }
 }
 
+function triggerBrowserDownload(url: string, filename: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+}
+
 function addUploadTasks(tasks: UploadTask[]) {
-  if (!tasks.length) return
-  uploadTasks.value = [...tasks, ...uploadTasks.value]
+  uploadTaskStore.addTasks(tasks)
 }
 
 function updateUploadTask(task: UploadTask, patch: Partial<UploadTask>) {
-  const index = uploadTasks.value.findIndex(item => item.id === task.id)
-  const updatedAt = Date.now()
-  if (index === -1) {
-    Object.assign(task, patch, { updatedAt })
-    return
-  }
-  const current = uploadTasks.value[index]
-  uploadTasks.value[index] = {
-    ...current,
-    ...patch,
-    updatedAt
-  }
+  uploadTaskStore.updateTask(task, patch)
 }
 
 function getUploadUrlForTask(task: UploadTask): string | null {
   if (task.isShared) {
     if (!task.shareId) return null
     const path = normalizeRelativePath(task.sharePath || task.relativePath || task.name)
-    const params = new URLSearchParams({ shareId: task.shareId, path })
-    return buildShareUserUrl('/api/v1/public/share/user/upload', params)
+    return buildShareDavPath(task.shareId, path)
   }
   const targetPath = task.targetPath || buildTargetPath('', task.relativePath || task.name)
   return buildDavPath(targetPath)
@@ -2895,7 +2889,7 @@ async function performUploadTask(task: UploadTask) {
     return
   }
   const token = localStorage.getItem('authToken') || ''
-  const useMultipart = task.isShared
+  const useMultipart = false
   updateUploadTask(task, { status: 'uploading', progress: 0, error: undefined })
   try {
     let uploadBody: Blob = task.file
@@ -2934,9 +2928,6 @@ async function uploadFilesWithDirectories(files: UploadItem[], extraDirectories?
 
   const tasks = files.map(item => createUploadTask(item, { basePath: cleanPath, isShared: false, encryptedRoot }))
   addUploadTasks(tasks)
-  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showAddressBook.value && !showUploadTasks.value) {
-    enterUploadTasks('files')
-  }
 
   const dirsToCreate = Array.from(directories).filter(Boolean).sort((a, b) => a.split('/').length - b.split('/').length)
   for (const dir of dirsToCreate) {
@@ -2968,7 +2959,17 @@ async function ensureSharedDirectories(path: string, ensured: Set<string>, share
     current = current ? `${current}/${segment}` : segment
     if (ensured.has(current)) continue
     try {
-      await directShareApi.createFolder(shareId, current)
+      const token = localStorage.getItem('authToken') || ''
+      const response = await fetch(buildShareDavPath(shareId, current + '/'), {
+        method: 'MKCOL',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      if (!response.ok && response.status !== 405) {
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `创建目录失败: ${response.status}`))
+      }
       ensured.add(current)
     } catch (error) {
       throw error
@@ -2997,9 +2998,6 @@ async function uploadSharedFilesWithDirectories(files: UploadItem[], extraDirect
 
   const tasks = files.map(item => createUploadTask(item, { basePath: '', isShared: true, shareId }))
   addUploadTasks(tasks)
-  if (!showUploadTasks.value) {
-    enterUploadTasks('shared')
-  }
 
   const dirsToCreate = Array.from(directories).filter(Boolean).sort((a, b) => a.split('/').length - b.split('/').length)
   for (const dir of dirsToCreate) {
@@ -3418,11 +3416,19 @@ async function moveSharedItemToDirectoryPath(source: FileItem, targetPath: strin
 
   movingSharedByDrag.value = true
   try {
-    await directShareApi.rename(
-      sharedActive.value.id,
-      normalizeShareRelative(sourcePath),
-      normalizeShareRelative(destinationPath)
-    )
+    await fetch(buildShareDavPath(sharedActive.value.id, sourcePath), {
+      method: 'MOVE',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`,
+        'Destination': new URL(buildShareDavPath(sharedActive.value.id, destinationPath), window.location.origin).toString(),
+        'Overwrite': 'F'
+      }
+    }).then(async response => {
+      if (!response.ok) {
+        const text = (await response.text()).trim()
+        throw new Error(normalizeUserFacingErrorMessage(text, `移动失败: ${response.status}`))
+      }
+    })
     await fetchSharedEntries(sharedPath.value)
     showSuccess(`已移动到 ${targetDirPath}`)
   } catch (error: any) {
@@ -3650,7 +3656,17 @@ async function deleteSharedItem(item: FileItem) {
   if (!(await confirmAction(`确定删除 ${item.name} 吗？`, '删除确认'))) return
   const relPath = normalizeShareRelative(item.path)
   try {
-    await directShareApi.remove(sharedActive.value.id, relPath)
+    const token = localStorage.getItem('authToken') || ''
+    const response = await fetch(buildShareDavPath(sharedActive.value.id, relPath + (item.isDir ? '/' : '')), {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    if (!response.ok) {
+      const text = (await response.text()).trim()
+      throw new Error(normalizeUserFacingErrorMessage(text, `删除失败: ${response.status}`))
+    }
     fetchSharedEntries(sharedPath.value)
   } catch (error) {
     showError(`删除失败: ${String(error)}`)
@@ -3836,8 +3852,21 @@ async function fetchSharedEntries(path: string = sharedPath.value) {
   sharedEntriesLoading.value = true
   try {
     const cleanPath = path.replace(/^\/+/, '').replace(/\/$/, '')
-    const data = await directShareApi.listEntries(sharedActive.value.id, cleanPath)
-    sharedEntries.value = data.items as FileItem[]
+    const token = localStorage.getItem('authToken') || ''
+    const davPath = buildShareDavPath(sharedActive.value.id, cleanPath)
+    const response = await fetch(davPath, {
+      method: 'PROPFIND',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Depth': '1'
+      }
+    })
+    if (!response.ok) {
+      const text = (await response.text()).trim()
+      throw new Error(normalizeUserFacingErrorMessage(text, `获取共享目录失败: ${response.status}`))
+    }
+    const xml = await response.text()
+    sharedEntries.value = parsePropfindResponse(xml, davPath, buildShareDavRoot(sharedActive.value.id))
   } catch (error: any) {
     console.error('获取共享目录失败:', error)
     showError(error?.message || '获取共享目录失败')
@@ -4068,7 +4097,7 @@ function enterAddressBook() {
 }
 
 // 进入账户管理
-function enterQuotaManage(section: 'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks' = 'account') {
+function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks' = 'account') {
   detailDrawerVisible.value = false
   managementSection.value = section
   showQuotaManage.value = true
@@ -4085,46 +4114,11 @@ function enterQuotaManage(section: 'account' | 'keys' | 'adminQuota' | 'addressB
     return
   }
   if (section === 'uploadTasks') {
+    uploadTaskStore.openDialog()
+    managementSection.value = 'account'
     return
   }
   fetchUserCenter()
-}
-
-function enterUploadTasks(source?: 'files' | 'shared') {
-  const resolved = source || (showSharedWithMe.value ? 'shared' : 'files')
-  if (resolved === 'shared') {
-    uploadTasksReturnView.value = 'sharedWithMe'
-    if (sharedActive.value) {
-      persistSharedState()
-    } else {
-      clearSharedState()
-    }
-  } else {
-    uploadTasksReturnView.value = 'files'
-    uploadTasksReturnPath.value = currentPath.value
-  }
-  detailDrawerVisible.value = false
-  showUploadTasks.value = true
-  showShare.value = false
-  showRecycle.value = false
-  showSharedWithMe.value = false
-  showQuotaManage.value = false
-  showAddressBook.value = false
-  persistView('uploadTasks')
-}
-
-async function exitUploadTasks() {
-  const returnView = uploadTasksReturnView.value
-  uploadTasksReturnView.value = null
-  if (returnView === 'sharedWithMe') {
-    await restoreSharedWithMeView()
-    return
-  }
-  enterFiles(uploadTasksReturnPath.value || currentPath.value)
-}
-
-function clearFinishedUploadTasks() {
-  uploadTasks.value = uploadTasks.value.filter(task => task.status !== 'success')
 }
 
 function openUploadTaskLocation(task: UploadTask) {
@@ -4135,9 +4129,20 @@ function openUploadTaskLocation(task: UploadTask) {
   const parentPath = normalizedTargetPath === '/'
     ? '/'
     : normalizeDirectoryPath(normalizedTargetPath.replace(/\/[^/]+\/?$/, '') || '/')
-  uploadTasksReturnView.value = 'files'
-  uploadTasksReturnPath.value = parentPath
+  uploadTaskStore.closeDialog()
   enterFiles(parentPath)
+}
+
+function handleUploadTaskRetryEvent(event: Event) {
+  const task = (event as CustomEvent<{ task?: UploadTask }>).detail?.task
+  if (!task) return
+  retryUploadTask(task)
+}
+
+function handleUploadTaskOpenEvent(event: Event) {
+  const task = (event as CustomEvent<{ task?: UploadTask }>).detail?.task
+  if (!task) return
+  openUploadTaskLocation(task)
 }
 
 function openShareLocation(item: ShareItem) {
@@ -4222,7 +4227,17 @@ async function createSharedFolderWithName(name: string) {
   if (!sharedActive.value || !sharedCanCreate.value) return
   const basePath = sharedPath.value.replace(/^\/+/, '').replace(/\/$/, '')
   const targetPath = basePath ? `${basePath}/${name}` : name
-  await directShareApi.createFolder(sharedActive.value.id, targetPath)
+  const token = localStorage.getItem('authToken') || ''
+  const response = await fetch(buildShareDavPath(sharedActive.value.id, targetPath + '/'), {
+    method: 'MKCOL',
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  })
+  if (!response.ok && response.status !== 405) {
+    const text = (await response.text()).trim()
+    throw new Error(normalizeUserFacingErrorMessage(text, `创建失败: ${response.status}`))
+  }
   fetchSharedEntries(sharedPath.value)
 }
 
@@ -4412,7 +4427,7 @@ async function restoreView() {
     return
   }
   if (storedView === 'uploadTasks') {
-    enterUploadTasks()
+    enterFiles(resolveInitialFilePath(localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'))
     return
   }
   const storedPath = localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'
@@ -4509,7 +4524,7 @@ onMounted(() => {
 })
 
 function handleExternalNavigate(event: Event) {
-  const customEvent = event as CustomEvent<{ view?: ViewKey; section?: 'account' | 'keys' | 'adminQuota' | 'addressBook' | 'uploadTasks' }>
+  const customEvent = event as CustomEvent<{ view?: ViewKey; section?: 'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks' }>
   const view = customEvent?.detail?.view
   if (!view) return
   if (view === 'quotaManage') {
@@ -4525,17 +4540,21 @@ function handleExternalNavigate(event: Event) {
     return
   }
   if (view === 'uploadTasks') {
-    enterUploadTasks()
+    uploadTaskStore.openDialog()
     return
   }
 }
 
 onMounted(() => {
   window.addEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
+  window.addEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
+  window.addEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
+  window.removeEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
+  window.removeEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
 })
 
 function syncWalletHistory(next?: string) {
@@ -4810,7 +4829,7 @@ onBeforeUnmount(() => {
           <div class="nav-group">
             <div class="nav-group-title" v-show="!sidePanelCollapsed">管理</div>
             <div class="nav-list">
-              <el-tooltip content="个人资料" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="我的资料" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
@@ -4818,10 +4837,10 @@ onBeforeUnmount(() => {
                   @click="enterQuotaManage('account')"
                 >
                   <el-icon class="nav-icon"><User /></el-icon>
-                  <span v-show="!sidePanelCollapsed">个人资料</span>
+                  <span v-show="!sidePanelCollapsed">我的资料</span>
                 </button>
               </el-tooltip>
-              <el-tooltip content="访问密钥" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="密钥管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
@@ -4829,21 +4848,21 @@ onBeforeUnmount(() => {
                   @click="enterQuotaManage('keys')"
                 >
                   <el-icon class="nav-icon"><DocumentCopy /></el-icon>
-                  <span v-show="!sidePanelCollapsed">访问密钥</span>
+                  <span v-show="!sidePanelCollapsed">密钥管理</span>
                 </button>
               </el-tooltip>
-              <el-tooltip v-if="adminQuotaAvailable" content="用户额度" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip v-if="canManageUsers" content="用户管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
-                  :class="{ active: showQuotaManage && managementSection === 'adminQuota' }"
-                  @click="enterQuotaManage('adminQuota')"
+                  :class="{ active: showQuotaManage && managementSection === 'adminUsers' }"
+                  @click="enterQuotaManage('adminUsers')"
                 >
                   <el-icon class="nav-icon"><Grid /></el-icon>
-                  <span v-show="!sidePanelCollapsed">用户额度</span>
+                  <span v-show="!sidePanelCollapsed">用户管理</span>
                 </button>
               </el-tooltip>
-              <el-tooltip content="联系人" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="好友管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
@@ -4851,18 +4870,7 @@ onBeforeUnmount(() => {
                   @click="enterQuotaManage('addressBook')"
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
-                  <span v-show="!sidePanelCollapsed">联系人</span>
-                </button>
-              </el-tooltip>
-              <el-tooltip content="上传记录" placement="right" :disabled="!sidePanelCollapsed">
-                <button
-                  type="button"
-                  class="nav-item"
-                  :class="{ active: showQuotaManage && managementSection === 'uploadTasks' }"
-                  @click="enterQuotaManage('uploadTasks')"
-                >
-                  <el-icon class="nav-icon"><Upload /></el-icon>
-                  <span v-show="!sidePanelCollapsed">上传记录</span>
+                  <span v-show="!sidePanelCollapsed">好友管理</span>
                 </button>
               </el-tooltip>
             </div>
@@ -4902,9 +4910,9 @@ onBeforeUnmount(() => {
                   />
                 </el-tooltip>
               </template>
-              <template v-else-if="showRecycle || showShare || showSharedWithMe || showUploadTasks">
-                <el-tooltip :content="showUploadTasks ? '返回上一页' : '返回文件列表'" placement="top">
-                  <el-button circle :icon="ArrowLeft" @click="showUploadTasks ? exitUploadTasks() : backToFiles()" />
+              <template v-else-if="showRecycle || showShare || showSharedWithMe">
+                <el-tooltip content="返回文件列表" placement="top">
+                  <el-button circle :icon="ArrowLeft" @click="backToFiles" />
                 </el-tooltip>
               </template>
               <template v-else>
@@ -4998,12 +5006,6 @@ onBeforeUnmount(() => {
                       <span class="path-value">定向分享</span>
                     </div>
                   </template>
-                </template>
-                <template v-else-if="showUploadTasks">
-                  <div class="path-pill">
-                    <span class="path-label">当前位置</span>
-                    <span class="path-value">上传任务</span>
-                  </div>
                 </template>
                 <template v-else>
                   <div class="breadcrumb">
@@ -5211,8 +5213,6 @@ onBeforeUnmount(() => {
                     </el-tooltip>
                   </template>
                 </template>
-                <template v-else-if="showUploadTasks">
-                </template>
                 <template v-else>
                   <div class="action-cluster">
                     <span class="action-cluster-label">新建与上传</span>
@@ -5272,49 +5272,6 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="showQuotaManage" class="content-body content-scroll" v-loading="quotaManageLoading && !manualRefresh">
             <div class="user-center">
-              <div class="view-segment management-segment">
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'account' }"
-                  @click="managementSection = 'account'"
-                >
-                  账户
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'keys' }"
-                  @click="managementSection = 'keys'"
-                >
-                  密钥
-                </button>
-                <button
-                  v-if="adminQuotaAvailable"
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'adminQuota' }"
-                  @click="managementSection = 'adminQuota'"
-                >
-                  用户额度
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'addressBook' }"
-                  @click="enterQuotaManage('addressBook')"
-                >
-                  好友
-                </button>
-                <button
-                  type="button"
-                  class="segment-button"
-                  :class="{ active: managementSection === 'uploadTasks' }"
-                  @click="enterQuotaManage('uploadTasks')"
-                >
-                  上传任务
-                </button>
-              </div>
               <div v-if="managementSection === 'account'" class="user-card">
                 <div class="card-head">
                   <div class="card-title">基础信息</div>
@@ -5451,14 +5408,14 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div
-                v-if="adminQuotaAvailable && managementSection === 'adminQuota'"
+                v-if="canManageUsers && managementSection === 'adminUsers'"
                 class="user-card user-card-full"
-                v-loading="adminQuotaLoading"
+                v-loading="adminUsersLoading"
               >
                 <div class="card-head">
-                  <div class="card-title">用户额度概览</div>
+                  <div class="card-title">用户管理概览</div>
                   <div class="user-actions">
-                    <el-select v-model="adminQuotaFilter" size="small" class="admin-quota-filter">
+                    <el-select v-model="adminUsersFilter" size="small" class="admin-quota-filter">
                       <el-option label="全部用户" value="all" />
                       <el-option label="不限额" value="unlimited" />
                       <el-option label="接近上限" value="near_limit" />
@@ -5468,27 +5425,27 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="key-summary">
-                  <span>总用户：{{ adminQuotaSummary.total }}</span>
-                  <span>已设上限：{{ adminQuotaSummary.limited }}</span>
-                  <span>不限额：{{ adminQuotaSummary.unlimited }}</span>
-                  <span>接近上限：{{ adminQuotaSummary.nearLimit }}</span>
-                  <span>已超额：{{ adminQuotaSummary.overQuota }}</span>
+                  <span>总用户：{{ adminUsersSummary.total }}</span>
+                  <span>已设上限：{{ adminUsersSummary.limited }}</span>
+                  <span>不限额：{{ adminUsersSummary.unlimited }}</span>
+                  <span>接近上限：{{ adminUsersSummary.nearLimit }}</span>
+                  <span>已超额：{{ adminUsersSummary.overQuota }}</span>
                 </div>
                 <el-alert
-                  :type="adminQuotaHeadline.type"
+                  :type="adminUsersHeadline.type"
                   :closable="false"
                   show-icon
-                  :title="adminQuotaHeadline.title"
+                  :title="adminUsersHeadline.title"
                 />
                 <el-alert
-                  v-if="adminQuotaError"
+                  v-if="adminUsersError"
                   type="warning"
                   :closable="false"
                   show-icon
-                  :title="`用户额度列表加载失败：${adminQuotaError}`"
+                  :title="`用户管理列表加载失败：${adminUsersError}`"
                 />
                 <el-empty
-                  v-else-if="!adminQuotaLoading && !filteredAdminUsers.length"
+                  v-else-if="!adminUsersLoading && !filteredAdminUsers.length"
                   description="当前筛选条件下暂无用户"
                 />
                 <el-table
@@ -5523,14 +5480,14 @@ onBeforeUnmount(() => {
                   </el-table-column>
                   <el-table-column label="操作" width="120" align="left" header-align="left">
                     <template #default="{ row }">
-                      <el-button size="small" @click="openAdminQuotaDialog(row)">修改额度</el-button>
+                      <el-button size="small" @click="openAdminUsersDialog(row)">修改额度</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
               </div>
               <div v-if="managementSection === 'keys'" class="user-card user-card-full" v-loading="accessKeyLoading">
                 <div class="card-head">
-                  <div class="card-title">访问密钥</div>
+                  <div class="card-title">密钥管理</div>
                   <div class="user-actions">
                     <el-button size="small" @click="fetchAccessKeys(true)">刷新</el-button>
                     <el-button size="small" type="primary" @click="openAccessKeyDialogFromUserCenter">新建密钥</el-button>
@@ -5540,7 +5497,7 @@ onBeforeUnmount(() => {
                   <span>总数：{{ accessKeys.length }}</span>
                   <span>生效中：{{ accessKeys.filter(item => item.status === 'active').length }}</span>
                 </div>
-                <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无访问密钥" />
+                <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无密钥" />
                 <div v-else class="key-list">
                   <div v-for="item in accessKeys" :key="item.id" class="key-item">
                     <div class="key-main">
@@ -5599,7 +5556,7 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="managementSection === 'addressBook'" class="user-card user-card-full" v-loading="addressBookLoading && !manualRefresh">
                 <div class="card-head">
-                  <div class="card-title">好友</div>
+                  <div class="card-title">好友管理</div>
                   <div class="user-actions">
                     <el-button size="small" @click="addressBookStore.fetchAddressBook()">刷新</el-button>
                   </div>
@@ -5611,43 +5568,10 @@ onBeforeUnmount(() => {
                 </div>
                 <AddressBookView embedded @refresh="refreshCurrentView" />
               </div>
-              <div v-if="managementSection === 'uploadTasks'" class="user-card user-card-full">
-                <div class="card-head">
-                  <div class="card-title">上传任务</div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="clearFinishedUploadTasks">清理已完成</el-button>
-                  </div>
-                </div>
-                <div class="key-summary">
-                  <span>总数：{{ uploadTaskSummary.total }}</span>
-                  <span>等待中：{{ uploadTaskSummary.queued }}</span>
-                  <span>上传中：{{ uploadTaskSummary.uploading }}</span>
-                  <span>已完成：{{ uploadTaskSummary.success }}</span>
-                  <span>失败：{{ uploadTaskSummary.failed }}</span>
-                </div>
-                <UploadTaskListView
-                  :is-mobile="isMobileViewport"
-                  :tasks="uploadTasks"
-                  :format-size="formatSize"
-                  :format-time="formatTime"
-                  :retry-task="retryUploadTask"
-                  :open-task-location="openUploadTaskLocation"
-                />
-              </div>
             </div>
           </div>
           <div v-else-if="showAddressBook" class="content-body content-scroll" v-loading="addressBookLoading && !manualRefresh">
             <AddressBookView @refresh="refreshCurrentView" />
-          </div>
-          <div v-else-if="showUploadTasks" class="content-body table-wrapper">
-            <UploadTaskListView
-              :is-mobile="isMobileViewport"
-              :tasks="uploadTasks"
-              :format-size="formatSize"
-              :format-time="formatTime"
-              :retry-task="retryUploadTask"
-              :open-task-location="openUploadTaskLocation"
-            />
           </div>
           <div v-else class="content-body table-wrapper">
             <div v-if="shareViewSummary" class="view-summary-bar">
@@ -6001,24 +5925,24 @@ onBeforeUnmount(() => {
         </template>
       </el-dialog>
       <el-dialog
-        v-model="adminQuotaDialogVisible"
+        v-model="adminUsersDialogVisible"
         title="修改用户额度"
         width="420px"
-        @closed="closeAdminQuotaDialog"
+        @closed="closeAdminUsersDialog"
       >
         <div class="admin-quota-dialog">
-          <div v-if="adminQuotaEditTarget" class="admin-quota-target">
-            <div class="admin-quota-target-name">{{ adminQuotaEditTarget.username }}</div>
+          <div v-if="adminUsersEditTarget" class="admin-quota-target">
+            <div class="admin-quota-target-name">{{ adminUsersEditTarget.username }}</div>
             <div class="admin-quota-target-meta">
-              已使用 {{ formatSize(adminQuotaEditTarget.used_space) }}，当前上限
-              {{ adminQuotaEditTarget.quota > 0 ? formatSize(adminQuotaEditTarget.quota) : '无限' }}
+              已使用 {{ formatSize(adminUsersEditTarget.used_space) }}，当前上限
+              {{ adminUsersEditTarget.quota > 0 ? formatSize(adminUsersEditTarget.quota) : '无限' }}
             </div>
           </div>
           <el-form label-position="top">
             <el-form-item label="额度">
               <div class="admin-quota-input-row">
-                <el-input v-model="adminQuotaEditValue" placeholder="输入 0 表示不限额" />
-                <el-select v-model="adminQuotaEditUnit" class="admin-quota-input-unit">
+                <el-input v-model="adminUsersEditValue" placeholder="输入 0 表示不限额" />
+                <el-select v-model="adminUsersEditUnit" class="admin-quota-input-unit">
                   <el-option label="B" value="B" />
                   <el-option label="KB" value="KB" />
                   <el-option label="MB" value="MB" />
@@ -6028,17 +5952,17 @@ onBeforeUnmount(() => {
               </div>
             </el-form-item>
           </el-form>
-          <div v-if="adminQuotaPreviewBytes !== null" class="admin-quota-preview">
+          <div v-if="adminUsersPreviewBytes !== null" class="admin-quota-preview">
             <span class="admin-quota-preview-label">换算预览</span>
             <span class="admin-quota-preview-value">
-              {{ adminQuotaPreviewBytes === 0 ? '不限额（保存为 0 字节）' : `${adminQuotaPreviewBytes} 字节（约 ${formatSize(adminQuotaPreviewBytes)}）` }}
+              {{ adminUsersPreviewBytes === 0 ? '不限额（保存为 0 字节）' : `${adminUsersPreviewBytes} 字节（约 ${formatSize(adminUsersPreviewBytes)}）` }}
             </span>
           </div>
           <div class="share-group-meta">请输入大于等于 0 的整数，`0` 表示不限额。保存时会自动换算为字节。</div>
         </div>
         <template #footer>
-          <el-button @click="closeAdminQuotaDialog">取消</el-button>
-          <el-button type="primary" :loading="adminQuotaSubmitting" @click="submitAdminQuotaUpdate">保存</el-button>
+          <el-button @click="closeAdminUsersDialog">取消</el-button>
+          <el-button type="primary" :loading="adminUsersSubmitting" @click="submitAdminUsersUpdate">保存</el-button>
         </template>
       </el-dialog>
       <FilePreviewDialog
@@ -7092,11 +7016,6 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
   padding: 8px;
-}
-
-.management-segment {
-  grid-column: 1 / -1;
-  justify-self: start;
 }
 
 .user-card {

@@ -178,6 +178,7 @@ func (r *Router) Setup() http.Handler {
 
 	// WebDAV 路由（需要认证）
 	webdavPrefix := r.normalizePrefix(r.config.WebDAV.Prefix)
+	mux.Handle(webdavPrefix+"share/", r.createAuthenticatedHandler(http.HandlerFunc(r.shareUserHandler.HandleDAV)))
 	mux.Handle(webdavPrefix, r.createAuthenticatedHandler(http.HandlerFunc(r.webdavHandler.Handle)))
 
 	// 应用全局中间件

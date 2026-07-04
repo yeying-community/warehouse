@@ -15,36 +15,6 @@ function getTaskName(task: UploadTask): string {
   return task.relativePath || task.name
 }
 
-function statusLabel(status: UploadTaskStatus): string {
-  switch (status) {
-    case 'queued':
-      return '等待中'
-    case 'uploading':
-      return '上传中'
-    case 'success':
-      return '已完成'
-    case 'failed':
-      return '失败'
-    default:
-      return '-'
-  }
-}
-
-function statusTag(status: UploadTaskStatus): '' | 'success' | 'warning' | 'danger' | 'info' {
-  switch (status) {
-    case 'success':
-      return 'success'
-    case 'failed':
-      return 'danger'
-    case 'uploading':
-      return 'warning'
-    case 'queued':
-      return 'info'
-    default:
-      return ''
-  }
-}
-
 function progressStatus(status: UploadTaskStatus): '' | 'success' | 'exception' | 'warning' {
   if (status === 'success') return 'success'
   if (status === 'failed') return 'exception'
@@ -74,14 +44,13 @@ function handleOpenTaskLocation(task: UploadTask) {
   <el-table
     v-if="!isMobile"
     :data="tasks"
-    empty-text="暂无上传任务"
+    empty-text="暂无任务"
     height="100%"
   >
     <el-table-column label="文件" min-width="240">
       <template #default="{ row }">
         <div class="task-name">
           <span class="task-title" :title="getTaskName(row)">{{ getTaskName(row) }}</span>
-          <span v-if="row.isShared" class="task-meta">共享上传</span>
           <span v-if="row.error" class="task-error">{{ row.error }}</span>
         </div>
       </template>
@@ -91,7 +60,7 @@ function handleOpenTaskLocation(task: UploadTask) {
         <span class="size-cell">{{ formatSize(row.size) }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="进度" min-width="200">
+    <el-table-column label="进度" min-width="210">
       <template #default="{ row }">
         <div class="task-progress">
           <el-progress
@@ -100,11 +69,6 @@ function handleOpenTaskLocation(task: UploadTask) {
             :stroke-width="10"
           />
         </div>
-      </template>
-    </el-table-column>
-    <el-table-column label="状态" width="120">
-      <template #default="{ row }">
-        <el-tag :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
       </template>
     </el-table-column>
     <el-table-column label="更新时间" width="180">
@@ -143,11 +107,10 @@ function handleOpenTaskLocation(task: UploadTask) {
   </el-table>
 
   <div v-else class="card-list">
-    <el-empty v-if="!tasks.length" description="暂无上传任务" />
+    <el-empty v-if="!tasks.length" description="暂无任务" />
     <div v-for="row in tasks" :key="row.id" class="card-item">
       <div class="card-header">
         <div class="card-title" :title="getTaskName(row)">{{ getTaskName(row) }}</div>
-        <el-tag size="small" :type="statusTag(row.status)">{{ statusLabel(row.status) }}</el-tag>
       </div>
       <div class="card-meta-compact">
         <span class="card-meta-value">{{ formatTime(row.updatedAt) }}</span>
@@ -204,11 +167,6 @@ function handleOpenTaskLocation(task: UploadTask) {
   white-space: nowrap;
 }
 
-.task-meta {
-  font-size: 12px;
-  color: #909399;
-}
-
 .task-error {
   font-size: 12px;
   color: #f56c6c;
@@ -216,7 +174,14 @@ function handleOpenTaskLocation(task: UploadTask) {
 }
 
 .task-progress :deep(.el-progress) {
-  min-width: 160px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.task-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .card-item .el-progress {

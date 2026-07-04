@@ -1,8 +1,12 @@
 <script lang="ts" setup>
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
-import { Bell, SwitchButton, Wallet } from '@element-plus/icons-vue'
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { Bell, Notebook, SwitchButton, Wallet } from '@element-plus/icons-vue'
+import { storeToRefs } from 'pinia'
 import { notificationApi, type AdminNotificationCreatePayload, type NotificationItem, type NotificationPreferenceItem } from '@/api'
 import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, focusPendingWalletApproval, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
+import { useUploadTaskStore } from '@/stores/uploadTaskStore'
+import UploadTaskListView from '@/views/home/components/UploadTaskListView.vue'
+import type { UploadTask } from '@/views/home/types'
 
 const isAuth = ref(false)
 const account = ref<string | null>(null)
@@ -10,14 +14,14 @@ const walletInfo = ref({ present: false, name: '' })
 const walletConnectSubmitting = ref(false)
 const notificationOpen = ref(false)
 const notificationLoading = ref(false)
-const notificationTab = ref<'user' | 'admin'>('user')
 const notificationView = ref<'messages' | 'preferences' | 'announce'>('messages')
-const userNotifications = ref<NotificationItem[]>([])
-const adminNotifications = ref<NotificationItem[]>([])
+const notifications = ref<NotificationItem[]>([])
 const notificationPreferences = ref<Array<{ type: string; enabled: boolean }>>([])
-const userUnreadCount = ref(0)
-const adminUnreadCount = ref(0)
-const adminNotificationsAvailable = ref(false)
+const unreadCount = ref(0)
+const uploadTaskStore = useUploadTaskStore()
+const { addSignal: uploadTaskAddSignal, dialogVisible: uploadTasksVisible, summary: uploadTaskSummary, tasks: uploadTasks } = storeToRefs(uploadTaskStore)
+const taskPulse = ref(false)
+const canAnnounce = ref(false)
 const announcementSubmitting = ref(false)
 const announcementForm = ref<AdminNotificationCreatePayload>({
   recipientRole: 'all',
@@ -28,12 +32,27 @@ const announcementForm = ref<AdminNotificationCreatePayload>({
   actionUrl: ''
 })
 const announcementTargetsText = ref('')
-const totalUnreadCount = computed(() => userUnreadCount.value + adminUnreadCount.value)
+const totalUnreadCount = computed(() => unreadCount.value)
 let stopAccountWatch: (() => void) | null = null
 let stopWalletProviderWatch: (() => void) | null = null
 let notificationTimer: number | null = null
 let userNotificationStream: EventSource | null = null
-let adminNotificationStream: EventSource | null = null
+let taskPulseTimer: number | null = null
+
+watch(uploadTaskAddSignal, (value, oldValue) => {
+  if (!isAuth.value || value === oldValue) return
+  taskPulse.value = false
+  if (taskPulseTimer !== null) {
+    window.clearTimeout(taskPulseTimer)
+  }
+  requestAnimationFrame(() => {
+    taskPulse.value = true
+    taskPulseTimer = window.setTimeout(() => {
+      taskPulse.value = false
+      taskPulseTimer = null
+    }, 900)
+  })
+})
 
 onMounted(() => {
   isAuth.value = isLoggedIn()
@@ -88,6 +107,40 @@ function handleLogout() {
   logout()
 }
 
+function formatTaskSize(bytes: number): string {
+  const value = Number(bytes)
+  if (!Number.isFinite(value) || value < 0) return '-'
+  const units = ['B', 'K', 'M', 'G', 'T', 'P']
+  let size = value
+  let index = 0
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024
+    index += 1
+  }
+  return `${Math.round(size)} ${units[index]}`
+}
+
+function formatTaskTime(time: string | number): string {
+  if (time === null || time === undefined || time === '') return '-'
+  const value = typeof time === 'string' && /^\d+$/.test(time.trim()) ? Number(time) : time
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  const pad = (num: number) => String(num).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function emitTaskEvent(name: string, task: UploadTask) {
+  window.dispatchEvent(new CustomEvent(name, { detail: { task } }))
+}
+
+function retryTask(task: UploadTask) {
+  emitTaskEvent('warehouse:upload-task-retry', task)
+}
+
+function openTaskLocation(task: UploadTask) {
+  emitTaskEvent('warehouse:upload-task-open', task)
+}
+
 function handleMenuCommand(command: string) {
   if (command === 'logout') {
     handleLogout()
@@ -97,21 +150,9 @@ function handleMenuCommand(command: string) {
 async function refreshUnreadCounts() {
   try {
     const userCount = await notificationApi.unreadCount()
-    userUnreadCount.value = Number(userCount.count || 0)
+    unreadCount.value = Number(userCount.count || 0)
   } catch (error) {
     console.warn('获取消息未读数失败:', error)
-  }
-
-  try {
-    const adminCount = await notificationApi.adminUnreadCount()
-    adminUnreadCount.value = Number(adminCount.count || 0)
-    adminNotificationsAvailable.value = true
-  } catch {
-    adminUnreadCount.value = 0
-    adminNotificationsAvailable.value = false
-    if (notificationTab.value === 'admin') {
-      notificationTab.value = 'user'
-    }
   }
 }
 
@@ -119,11 +160,8 @@ async function loadNotifications() {
   notificationLoading.value = true
   try {
     const userResult = await notificationApi.list(20)
-    userNotifications.value = userResult.items || []
-    if (adminNotificationsAvailable.value) {
-      const adminResult = await notificationApi.adminList(20)
-      adminNotifications.value = adminResult.items || []
-    }
+    notifications.value = userResult.items || []
+    canAnnounce.value = Boolean(userResult.canAnnounce)
   } catch (error) {
     console.warn('获取消息列表失败:', error)
   } finally {
@@ -150,14 +188,10 @@ async function handleNotificationOpenChange(open: boolean) {
   }
 }
 
-async function markNotificationRead(item: NotificationItem, scope: 'user' | 'admin') {
+async function markNotificationRead(item: NotificationItem) {
   if (item.readAt) return
   try {
-    if (scope === 'admin') {
-      await notificationApi.adminMarkRead([item.id])
-    } else {
-      await notificationApi.markRead([item.id])
-    }
+    await notificationApi.markRead([item.id])
     item.readAt = new Date().toISOString()
     await refreshUnreadCounts()
   } catch (error) {
@@ -167,13 +201,8 @@ async function markNotificationRead(item: NotificationItem, scope: 'user' | 'adm
 
 async function markAllNotificationsRead() {
   try {
-    if (notificationTab.value === 'admin') {
-      await notificationApi.adminMarkAllRead()
-      adminNotifications.value = adminNotifications.value.map(item => ({ ...item, readAt: item.readAt || new Date().toISOString() }))
-    } else {
-      await notificationApi.markAllRead()
-      userNotifications.value = userNotifications.value.map(item => ({ ...item, readAt: item.readAt || new Date().toISOString() }))
-    }
+    await notificationApi.markAllRead()
+    notifications.value = notifications.value.map(item => ({ ...item, readAt: item.readAt || new Date().toISOString() }))
     await refreshUnreadCounts()
   } catch (error) {
     console.warn('全部标记已读失败:', error)
@@ -181,7 +210,7 @@ async function markAllNotificationsRead() {
 }
 
 function currentNotifications() {
-  return notificationTab.value === 'admin' ? adminNotifications.value : userNotifications.value
+  return notifications.value
 }
 
 function normalizePreferences(items: NotificationPreferenceItem[]) {
@@ -240,8 +269,8 @@ function notificationSeverityClass(severity: string): string {
   return 'is-info'
 }
 
-async function handleNotificationClick(item: NotificationItem, scope: 'user' | 'admin') {
-  await markNotificationRead(item, scope)
+async function handleNotificationClick(item: NotificationItem) {
+  await markNotificationRead(item)
   if (!item.actionUrl) return
   notificationOpen.value = false
   if (item.actionUrl === '#shared-with-me') {
@@ -249,7 +278,7 @@ async function handleNotificationClick(item: NotificationItem, scope: 'user' | '
     return
   }
   if (item.actionUrl === '#admin-quota') {
-    window.dispatchEvent(new CustomEvent('warehouse:navigate', { detail: { view: 'quotaManage', section: 'adminQuota' } }))
+    window.dispatchEvent(new CustomEvent('warehouse:navigate', { detail: { view: 'quotaManage', section: 'adminUsers' } }))
     return
   }
   if (item.actionUrl === '#quota') {
@@ -299,38 +328,24 @@ function startNotificationStreams() {
     userNotificationStream = new EventSource(notificationApi.streamUrl(), { withCredentials: true })
     userNotificationStream.addEventListener('unread', (event) => {
       const data = JSON.parse((event as MessageEvent).data || '{}')
-      userUnreadCount.value = Number(data.user || 0)
+      unreadCount.value = Number(data.count ?? data.user ?? 0)
     })
   } catch (error) {
     console.warn('用户消息推送连接失败:', error)
-  }
-  try {
-    adminNotificationStream = new EventSource(notificationApi.adminStreamUrl(), { withCredentials: true })
-    adminNotificationStream.addEventListener('unread', (event) => {
-      const data = JSON.parse((event as MessageEvent).data || '{}')
-      adminUnreadCount.value = Number(data.admin || 0)
-      adminNotificationsAvailable.value = true
-    })
-    adminNotificationStream.onerror = () => {
-      adminNotificationsAvailable.value = false
-      adminNotificationStream?.close()
-      adminNotificationStream = null
-    }
-  } catch {
-    adminNotificationsAvailable.value = false
   }
 }
 
 function stopNotificationStreams() {
   userNotificationStream?.close()
-  adminNotificationStream?.close()
   userNotificationStream = null
-  adminNotificationStream = null
 }
 
 onBeforeUnmount(() => {
   if (notificationTimer !== null) {
     window.clearInterval(notificationTimer)
+  }
+  if (taskPulseTimer !== null) {
+    window.clearTimeout(taskPulseTimer)
   }
   stopNotificationStreams()
   stopWalletProviderWatch?.()
@@ -367,6 +382,52 @@ onBeforeUnmount(() => {
       <!-- 已登录 -->
       <el-popover
         v-if="isAuth"
+        v-model:visible="uploadTasksVisible"
+        placement="bottom-end"
+        width="760"
+        trigger="click"
+        popper-class="task-popover"
+      >
+        <template #reference>
+          <el-button class="task-button" :class="{ 'is-task-pulse': taskPulse }" title="任务" circle>
+            <el-badge
+              :value="uploadTaskSummary.total"
+              :hidden="uploadTaskSummary.total === 0"
+              :max="99"
+              class="task-badge"
+            >
+              <el-icon><Notebook /></el-icon>
+            </el-badge>
+          </el-button>
+        </template>
+        <div class="task-panel">
+          <div class="task-panel-head">
+            <div class="task-panel-title">任务</div>
+            <div class="task-panel-summary">
+              <span>总数：{{ uploadTaskSummary.total }}</span>
+              <span>等待中：{{ uploadTaskSummary.queued }}</span>
+              <span>进行中：{{ uploadTaskSummary.uploading }}</span>
+              <span>已完成：{{ uploadTaskSummary.success }}</span>
+              <span>失败：{{ uploadTaskSummary.failed }}</span>
+            </div>
+            <el-button size="small" :disabled="uploadTaskSummary.success === 0" @click="uploadTaskStore.clearFinished()">
+              清理已完成
+            </el-button>
+          </div>
+          <div class="task-panel-list">
+            <UploadTaskListView
+              :is-mobile="false"
+              :tasks="uploadTasks"
+              :format-size="formatTaskSize"
+              :format-time="formatTaskTime"
+              :retry-task="retryTask"
+              :open-task-location="openTaskLocation"
+            />
+          </div>
+        </div>
+      </el-popover>
+      <el-popover
+        v-if="isAuth"
         :visible="notificationOpen"
         placement="bottom-end"
         width="360"
@@ -389,7 +450,7 @@ onBeforeUnmount(() => {
                 偏好
               </el-button>
               <el-button
-                v-if="adminNotificationsAvailable"
+                v-if="canAnnounce"
                 size="small"
                 text
                 @click="notificationView = notificationView === 'announce' ? 'messages' : 'announce'"
@@ -408,14 +469,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <template v-if="notificationView === 'messages'">
-            <el-tabs v-model="notificationTab" class="notification-tabs">
-              <el-tab-pane :label="`我的 ${userUnreadCount ? `(${userUnreadCount})` : ''}`" name="user" />
-              <el-tab-pane
-                v-if="adminNotificationsAvailable"
-                :label="`管理员 ${adminUnreadCount ? `(${adminUnreadCount})` : ''}`"
-                name="admin"
-              />
-            </el-tabs>
             <div v-if="!currentNotifications().length" class="notification-empty">暂无消息</div>
             <div v-else class="notification-list">
               <button
@@ -424,7 +477,7 @@ onBeforeUnmount(() => {
                 type="button"
                 class="notification-item"
                 :class="[{ unread: !item.readAt }, notificationSeverityClass(item.severity)]"
-                @click="handleNotificationClick(item, notificationTab)"
+                @click="handleNotificationClick(item)"
               >
                 <span class="notification-dot" />
                 <span class="notification-main">
@@ -561,11 +614,84 @@ onBeforeUnmount(() => {
       height: 34px;
       padding: 0;
     }
+
+    .task-button {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+
+    .task-button.is-task-pulse {
+      animation: task-added-pulse 0.9s ease;
+    }
+
+    .task-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+    }
+  }
+}
+
+@keyframes task-added-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0.32);
+  }
+  35% {
+    transform: scale(1.12);
+    box-shadow: 0 0 0 8px rgba(64, 158, 255, 0.16);
+    border-color: #409eff;
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(64, 158, 255, 0);
   }
 }
 
 .notification-panel {
   min-height: 160px;
+}
+
+.task-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 320px;
+}
+
+.task-panel-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+.task-panel-title {
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.task-panel-summary {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  color: #606266;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.task-panel-list {
+  height: min(52vh, 420px);
+  min-height: 260px;
 }
 
 .notification-head {
