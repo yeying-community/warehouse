@@ -438,7 +438,7 @@ const searchKeyword = computed({
 const searchPlaceholder = computed(() => {
   if (showUploadTasks.value) return '搜索任务'
   if (showRecycle.value) return '搜索回收站'
-  if (showShare.value) return shareTab.value === 'link' ? '搜索链接分享' : '搜索指定对象分享'
+  if (showShare.value) return shareTab.value === 'link' ? '搜索分享链接' : '搜索分享对象'
   if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索分享给我'
   return '搜索文件或目录'
 })
@@ -722,12 +722,12 @@ const shareViewSummary = computed(() => {
   if (showShare.value) {
     if (shareTab.value === 'link') {
       return {
-        title: '链接分享',
+        title: '分享链接',
         description: '生成公开访问链接，适合临时下载或外部访问。创建后会直接得到可复制的链接地址。'
       }
     }
     return {
-      title: '指定对象分享',
+      title: '分享对象',
       description: '把目录或文件共享给当前账号体系下的用户、地址或分组，适合协作访问。'
     }
   }
@@ -4948,7 +4948,7 @@ onBeforeUnmount(() => {
                       :class="{ active: shareTab === 'link' }"
                       @click="switchShareTab('link')"
                     >
-                      链接分享
+                      分享链接
                     </button>
                     <button
                       type="button"
@@ -4956,7 +4956,7 @@ onBeforeUnmount(() => {
                       :class="{ active: shareTab === 'direct' }"
                       @click="switchShareTab('direct')"
                     >
-                      指定对象分享
+                      分享对象
                     </button>
                   </div>
                 </template>
