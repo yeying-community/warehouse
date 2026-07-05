@@ -22,8 +22,8 @@ const props = defineProps<{
 
 const linkRows = computed<ShareItem[]>(() => props.shareList)
 const directRows = computed<DirectShareItem[]>(() => props.directShareList)
-const linkEmptyText = '还没有创建任何链接分享'
-const directEmptyText = '还没有任何指定对象分享'
+const linkEmptyText = '还没有创建任何分享链接'
+const directEmptyText = '还没有任何分享对象'
 
 function getDirectRelationLabel(row: DirectShareItem): string {
   return props.isDirectShareOwner(row) ? '我分享的' : '分享我的'
