@@ -3,10 +3,10 @@ import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessageBox } from 'element-plus'
 import { ArrowLeft, Check, Close, Delete, DocumentCopy, Edit, Refresh } from '@element-plus/icons-vue'
-import { useAddressBookStore } from '@/stores/addressBookStore'
+import { useGroupManagementStore } from '@/stores/groupManagementStore'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
-import type { AddressGroup, GroupMember } from '@/api'
+import type { ManagedGroup, GroupMember } from '@/api'
 
 const props = withDefaults(defineProps<{
   embedded?: boolean
@@ -14,16 +14,16 @@ const props = withDefaults(defineProps<{
   embedded: false
 })
 
-const addressBookStore = useAddressBookStore()
+const groupManagementStore = useGroupManagementStore()
 const emit = defineEmits<{
   (event: 'refresh'): void
 }>()
 const {
-  addressGroups,
-  addressGroupCounts,
-  addressGroupFilter,
-  addressSearch,
-  addressBookLoading,
+  managedGroups,
+  groupMemberCounts,
+  selectedGroupId,
+  groupSearch,
+  groupManagementLoading,
   groupForm,
   groupSaving,
   memberForm,
@@ -32,9 +32,9 @@ const {
   activeGroupMembers,
   pendingGroupMembers,
   filteredGroupMembers
-} = storeToRefs(addressBookStore)
+} = storeToRefs(groupManagementStore)
 const {
-  selectAddressGroup,
+  selectGroup,
   createGroup,
   renameGroup,
   removeGroup,
@@ -45,19 +45,19 @@ const {
   removeMember,
   approveMember,
   rejectMember
-} = addressBookStore
+} = groupManagementStore
 
 const groupDialogVisible = ref(false)
 
 const selectedGroup = computed(() =>
-  addressGroups.value.find(group => group.id === addressGroupFilter.value) || null
+  managedGroups.value.find(group => group.id === selectedGroupId.value) || null
 )
 const inGroupDetail = computed(() => Boolean(selectedGroup.value))
-const groupListKeyword = computed(() => addressSearch.value.trim().toLowerCase())
+const groupListKeyword = computed(() => groupSearch.value.trim().toLowerCase())
 const visibleGroups = computed(() => {
   const keyword = groupListKeyword.value
-  if (!keyword) return addressGroups.value
-  return addressGroups.value.filter(group => group.name.toLowerCase().includes(keyword))
+  if (!keyword) return managedGroups.value
+  return managedGroups.value.filter(group => group.name.toLowerCase().includes(keyword))
 })
 const detailMembers = computed(() => [
   ...pendingGroupMembers.value,
@@ -67,7 +67,7 @@ const canManageSelectedGroup = computed(() => selectedGroup.value?.canManage ===
 const memberDialogTitle = computed(() => memberForm.value.id ? '编辑成员' : '添加成员')
 const memberDialogGroupName = computed(() => {
   const groupID = memberForm.value.groupId || selectedGroup.value?.id || ''
-  return addressGroups.value.find(group => group.id === groupID)?.name || selectedGroup.value?.name || '-'
+  return managedGroups.value.find(group => group.id === groupID)?.name || selectedGroup.value?.name || '-'
 })
 
 const memberAddressOptions = computed(() => {
@@ -132,7 +132,7 @@ function copyMemberAddress(member: GroupMember) {
 }
 
 function memberGroupName(member: GroupMember) {
-  return addressGroups.value.find(group => group.id === member.groupId)?.name || '-'
+  return managedGroups.value.find(group => group.id === member.groupId)?.name || '-'
 }
 
 function handleWalletAddressChange(value: string) {
@@ -161,12 +161,12 @@ async function submitCreateGroup() {
   }
 }
 
-function openGroupDetail(group: AddressGroup) {
-  selectAddressGroup(group.id)
+function openGroupDetail(group: ManagedGroup) {
+  selectGroup(group.id)
 }
 
 function backToGroupList() {
-  selectAddressGroup('all')
+  selectGroup('all')
 }
 
 function openAddMemberForCurrentGroup() {
@@ -175,12 +175,12 @@ function openAddMemberForCurrentGroup() {
   memberForm.value.groupId = selectedGroup.value.id
 }
 
-function groupActiveCount(group: AddressGroup) {
-  return addressGroupCounts.value.groups[group.id] || 0
+function groupActiveCount(group: ManagedGroup) {
+  return groupMemberCounts.value.groups[group.id] || 0
 }
 
-function groupPendingCount(group: AddressGroup) {
-  return addressGroupCounts.value.pendingGroups[group.id] || 0
+function groupPendingCount(group: ManagedGroup) {
+  return groupMemberCounts.value.pendingGroups[group.id] || 0
 }
 
 function memberStatusLabel(member: GroupMember) {
@@ -215,8 +215,8 @@ function canManageMember(member: GroupMember) {
               class="refresh-button"
               circle
               :icon="Refresh"
-              :disabled="addressBookLoading"
-              :class="{ 'is-refreshing': addressBookLoading }"
+              :disabled="groupManagementLoading"
+              :class="{ 'is-refreshing': groupManagementLoading }"
               @click="emit('refresh')"
             />
           </el-tooltip>
@@ -227,7 +227,7 @@ function canManageMember(member: GroupMember) {
     <div v-if="!inGroupDetail" class="address-list-page">
       <div class="address-toolbar">
         <div class="toolbar-left">
-          <el-input v-model="addressSearch" clearable placeholder="搜索分组" />
+          <el-input v-model="groupSearch" clearable placeholder="搜索分组" />
         </div>
       </div>
 
@@ -264,7 +264,7 @@ function canManageMember(member: GroupMember) {
     <div v-else class="address-detail-page">
       <div class="address-toolbar">
         <div class="toolbar-left">
-          <el-input v-model="addressSearch" clearable placeholder="搜索成员 / 钱包 / 标签" />
+          <el-input v-model="groupSearch" clearable placeholder="搜索成员 / 钱包 / 标签" />
         </div>
         <div class="toolbar-right">
           <el-button type="primary" @click="openAddMemberForCurrentGroup">添加成员</el-button>
@@ -273,8 +273,8 @@ function canManageMember(member: GroupMember) {
               class="refresh-button"
               circle
               :icon="Refresh"
-              :disabled="addressBookLoading"
-              :class="{ 'is-refreshing': addressBookLoading }"
+              :disabled="groupManagementLoading"
+              :class="{ 'is-refreshing': groupManagementLoading }"
               @click="emit('refresh')"
             />
           </el-tooltip>

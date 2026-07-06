@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { AddressGroup, DirectShareItem, GroupMember, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
+import type { ManagedGroup, DirectShareItem, GroupMember, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
 import type { FileItem } from '../types'
 import { shortenAddress } from '@/utils/address'
 
@@ -69,7 +69,7 @@ const props = defineProps<{
     expiresUnit: ShareExpiryUnit
   }
   groupMembers: GroupMember[]
-  addressGroups: AddressGroup[]
+  managedGroups: ManagedGroup[]
   selectedGroupMembers: GroupMember[]
   submitShareUser: () => void
   createFolderDialogVisible: boolean
@@ -732,7 +732,7 @@ onBeforeUnmount(() => {
           placeholder="选择一个或多个共享分组"
           style="width: 100%"
         >
-          <el-option v-for="group in addressGroups" :key="group.id" :label="group.name" :value="group.id" />
+          <el-option v-for="group in managedGroups" :key="group.id" :label="group.name" :value="group.id" />
         </el-select>
         <div class="share-group-meta">分组成员：{{ selectedGroupMembers.length }} 个</div>
       </el-form-item>

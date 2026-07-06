@@ -325,7 +325,7 @@ export interface DirectShareItem {
 
 export type ShareExpiryUnit = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year'
 
-export interface AddressGroup {
+export interface ManagedGroup {
   id: string
   name: string
   canManage?: boolean
@@ -481,12 +481,12 @@ export const webdavAccessKeyApi = {
   }
 }
 
-export const addressBookApi = {
+export const groupManagementApi = {
   listGroups() {
-    return request<{ items: AddressGroup[] }>('/api/v1/public/webdav/address/groups')
+    return request<{ items: ManagedGroup[] }>('/api/v1/public/webdav/address/groups')
   },
   createGroup(name: string) {
-    return request<AddressGroup>('/api/v1/public/webdav/address/groups/create', {
+    return request<ManagedGroup>('/api/v1/public/webdav/address/groups/create', {
       method: 'POST',
       body: { name }
     })

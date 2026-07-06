@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
 import { ElMessageBox } from 'element-plus'
-import { addressBookApi, type AddressGroup, type GroupMember } from '@/api'
+import { groupManagementApi, type ManagedGroup, type GroupMember } from '@/api'
 import { showSuccess } from '@/utils/toast'
 
-type AddressGroupFilter = 'all' | string
+type GroupSelectionFilter = 'all' | string
 type MemberStatus = 'active' | 'pending' | string
 
 function normalizeMemberStatus(status?: MemberStatus) {
@@ -44,10 +44,10 @@ function showError(message: string, title = '错误') {
   })
 }
 
-export const useAddressBookStore = defineStore('addressBook', {
+export const useGroupManagementStore = defineStore('groupManagement', {
   state: () => ({
-    addressBookLoading: false,
-    addressGroups: [] as AddressGroup[],
+    groupManagementLoading: false,
+    managedGroups: [] as ManagedGroup[],
     groupMembers: [] as GroupMember[],
     groupForm: { name: '' },
     groupSaving: false,
@@ -60,11 +60,11 @@ export const useAddressBookStore = defineStore('addressBook', {
     },
     memberSaving: false,
     memberDialogVisible: false,
-    addressSearch: '',
-    addressGroupFilter: 'all' as AddressGroupFilter
+    groupSearch: '',
+    selectedGroupId: 'all' as GroupSelectionFilter
   }),
   getters: {
-    addressGroupCounts(state) {
+    groupMemberCounts(state) {
       const groups: Record<string, number> = {}
       const pendingGroups: Record<string, number> = {}
       let activeTotal = 0
@@ -92,52 +92,52 @@ export const useAddressBookStore = defineStore('addressBook', {
     },
     pendingGroupMembers(state) {
       let items = state.groupMembers.filter(member => isPendingMember(member))
-      const filter = state.addressGroupFilter
+      const filter = state.selectedGroupId
       if (filter !== 'all') {
         items = items.filter(item => item.groupId === filter)
       }
-      const keyword = state.addressSearch.trim().toLowerCase()
+      const keyword = state.groupSearch.trim().toLowerCase()
       return items.filter(item => matchesMemberKeyword(item, keyword))
     },
-    addressGroupLabel(state) {
-      if (state.addressGroupFilter === 'all') return '全部'
-      return state.addressGroups.find(group => group.id === state.addressGroupFilter)?.name || '全部'
+    selectedGroupLabel(state) {
+      if (state.selectedGroupId === 'all') return '全部'
+      return state.managedGroups.find(group => group.id === state.selectedGroupId)?.name || '全部'
     },
     filteredGroupMembers(state) {
       let items = state.groupMembers.filter(member => !isPendingMember(member))
-      const filter = state.addressGroupFilter
+      const filter = state.selectedGroupId
       if (filter !== 'all') {
         items = items.filter(item => item.groupId === filter)
       }
-      const keyword = state.addressSearch.trim().toLowerCase()
+      const keyword = state.groupSearch.trim().toLowerCase()
       return items.filter(item => matchesMemberKeyword(item, keyword))
     }
   },
   actions: {
-    async fetchAddressBook() {
-      if (this.addressBookLoading) return
-      this.addressBookLoading = true
+    async fetchGroupManagement() {
+      if (this.groupManagementLoading) return
+      this.groupManagementLoading = true
       try {
         const [groups, members] = await Promise.all([
-          addressBookApi.listGroups(),
-          addressBookApi.listMembers()
+          groupManagementApi.listGroups(),
+          groupManagementApi.listMembers()
         ])
-        this.addressGroups = groups.items || []
+        this.managedGroups = groups.items || []
         this.groupMembers = members.items || []
-        if (this.addressGroupFilter !== 'all') {
-          const groupIds = new Set(this.addressGroups.map(group => group.id))
-          if (!groupIds.has(this.addressGroupFilter)) {
-            this.selectAddressGroup('all')
+        if (this.selectedGroupId !== 'all') {
+          const groupIds = new Set(this.managedGroups.map(group => group.id))
+          if (!groupIds.has(this.selectedGroupId)) {
+            this.selectGroup('all')
           }
         }
       } catch (error) {
         console.error('获取分组成员失败:', error)
       } finally {
-        this.addressBookLoading = false
+        this.groupManagementLoading = false
       }
     },
-    selectAddressGroup(groupId: AddressGroupFilter) {
-      this.addressGroupFilter = groupId
+    selectGroup(groupId: GroupSelectionFilter) {
+      this.selectedGroupId = groupId
       if (!this.memberForm.id) {
         this.memberForm.groupId = groupId !== 'all' ? groupId : ''
       }
@@ -150,9 +150,9 @@ export const useAddressBookStore = defineStore('addressBook', {
       }
       this.groupSaving = true
       try {
-        await addressBookApi.createGroup(name)
+        await groupManagementApi.createGroup(name)
         this.groupForm = { name: '' }
-        await this.fetchAddressBook()
+        await this.fetchGroupManagement()
         showSuccess('分组已创建')
         return true
       } catch (error: any) {
@@ -162,7 +162,7 @@ export const useAddressBookStore = defineStore('addressBook', {
         this.groupSaving = false
       }
     },
-    async renameGroup(group: AddressGroup) {
+    async renameGroup(group: ManagedGroup) {
       try {
         const { value } = await ElMessageBox.prompt('请输入新的分组名称', '重命名分组', {
           confirmButtonText: '保存',
@@ -171,23 +171,23 @@ export const useAddressBookStore = defineStore('addressBook', {
         })
         const name = String(value || '').trim()
         if (!name || name === group.name) return
-        await addressBookApi.updateGroup(group.id, name)
-        await this.fetchAddressBook()
+        await groupManagementApi.updateGroup(group.id, name)
+        await this.fetchGroupManagement()
       } catch {
         // ignore
       }
     },
-    async removeGroup(group: AddressGroup) {
+    async removeGroup(group: ManagedGroup) {
       if (!(await confirmAction(`确定删除分组 ${group.name} 吗？`, '删除分组'))) return
       try {
-        await addressBookApi.deleteGroup(group.id)
-        await this.fetchAddressBook()
+        await groupManagementApi.deleteGroup(group.id)
+        await this.fetchGroupManagement()
       } catch (error: any) {
         showError(error?.message || '删除分组失败')
       }
     },
     resetMemberForm() {
-      const filter = this.addressGroupFilter
+      const filter = this.selectedGroupId
       this.memberForm = {
         id: '',
         name: '',
@@ -197,13 +197,13 @@ export const useAddressBookStore = defineStore('addressBook', {
       }
     },
     openCreateMemberDialog() {
-      if (!this.addressGroups.length) {
+      if (!this.managedGroups.length) {
         showError('请先创建分组')
         return
       }
       this.resetMemberForm()
       if (!this.memberForm.groupId) {
-        this.memberForm.groupId = this.addressGroups[0]?.id || ''
+        this.memberForm.groupId = this.managedGroups[0]?.id || ''
       }
       this.memberDialogVisible = true
     },
@@ -221,7 +221,7 @@ export const useAddressBookStore = defineStore('addressBook', {
         let savedMember: GroupMember | null = null
         const isEditing = Boolean(this.memberForm.id)
         if (this.memberForm.id) {
-          await addressBookApi.updateMember({
+          await groupManagementApi.updateMember({
             id: this.memberForm.id,
             name,
             walletAddress,
@@ -229,7 +229,7 @@ export const useAddressBookStore = defineStore('addressBook', {
             tags
           })
         } else {
-          savedMember = await addressBookApi.createMember({
+          savedMember = await groupManagementApi.createMember({
             name,
             walletAddress,
             groupId,
@@ -238,7 +238,7 @@ export const useAddressBookStore = defineStore('addressBook', {
         }
         this.resetMemberForm()
         this.memberDialogVisible = false
-        await this.fetchAddressBook()
+        await this.fetchGroupManagement()
         if (savedMember && isPendingMember(savedMember)) {
           showSuccess('成员申请已提交，等待分组维护者审批')
         } else {
@@ -263,19 +263,19 @@ export const useAddressBookStore = defineStore('addressBook', {
     async removeMember(member: GroupMember) {
       if (!(await confirmAction(`确定删除成员 ${member.name} 吗？`, '删除成员'))) return
       try {
-        await addressBookApi.deleteMember(member.id)
+        await groupManagementApi.deleteMember(member.id)
         if (this.memberForm.id === member.id) {
           this.resetMemberForm()
         }
-        await this.fetchAddressBook()
+        await this.fetchGroupManagement()
       } catch (error: any) {
         showError(error?.message || '删除成员失败')
       }
     },
     async approveMember(member: GroupMember) {
       try {
-        await addressBookApi.approveMember(member.id)
-        await this.fetchAddressBook()
+        await groupManagementApi.approveMember(member.id)
+        await this.fetchGroupManagement()
         showSuccess('成员已通过')
       } catch (error: any) {
         showError(error?.message || '审批成员失败')
@@ -284,11 +284,11 @@ export const useAddressBookStore = defineStore('addressBook', {
     async rejectMember(member: GroupMember) {
       if (!(await confirmAction(`确定拒绝 ${member.name} 的加入申请吗？`, '拒绝申请'))) return
       try {
-        await addressBookApi.rejectMember(member.id)
+        await groupManagementApi.rejectMember(member.id)
         if (this.memberForm.id === member.id) {
           this.resetMemberForm()
         }
-        await this.fetchAddressBook()
+        await this.fetchGroupManagement()
         showSuccess('申请已拒绝')
       } catch (error: any) {
         showError(error?.message || '拒绝申请失败')
