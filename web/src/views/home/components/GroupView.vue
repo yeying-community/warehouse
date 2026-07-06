@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessageBox } from 'element-plus'
 import { ArrowLeft, Check, Close, Delete, DocumentCopy, Edit, Refresh } from '@element-plus/icons-vue'
-import { useGroupManagementStore } from '@/stores/groupManagementStore'
+import { useGroupStore } from '@/stores/groupStore'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
 import type { ManagedGroup, GroupMember } from '@/api'
@@ -14,7 +14,7 @@ const props = withDefaults(defineProps<{
   embedded: false
 })
 
-const groupManagementStore = useGroupManagementStore()
+const groupStore = useGroupStore()
 const emit = defineEmits<{
   (event: 'refresh'): void
 }>()
@@ -23,7 +23,7 @@ const {
   groupMemberCounts,
   selectedGroupId,
   groupSearch,
-  groupManagementLoading,
+  groupLoading,
   groupForm,
   groupSaving,
   memberForm,
@@ -32,7 +32,7 @@ const {
   activeGroupMembers,
   pendingGroupMembers,
   filteredGroupMembers
-} = storeToRefs(groupManagementStore)
+} = storeToRefs(groupStore)
 const {
   selectGroup,
   createGroup,
@@ -45,7 +45,7 @@ const {
   removeMember,
   approveMember,
   rejectMember
-} = groupManagementStore
+} = groupStore
 
 const groupDialogVisible = ref(false)
 
@@ -215,8 +215,8 @@ function canManageMember(member: GroupMember) {
               class="refresh-button"
               circle
               :icon="Refresh"
-              :disabled="groupManagementLoading"
-              :class="{ 'is-refreshing': groupManagementLoading }"
+              :disabled="groupLoading"
+              :class="{ 'is-refreshing': groupLoading }"
               @click="emit('refresh')"
             />
           </el-tooltip>
@@ -273,8 +273,8 @@ function canManageMember(member: GroupMember) {
               class="refresh-button"
               circle
               :icon="Refresh"
-              :disabled="groupManagementLoading"
-              :class="{ 'is-refreshing': groupManagementLoading }"
+              :disabled="groupLoading"
+              :class="{ 'is-refreshing': groupLoading }"
               @click="emit('refresh')"
             />
           </el-tooltip>

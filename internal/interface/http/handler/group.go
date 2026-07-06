@@ -5,24 +5,24 @@ import (
 	"net/http"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
-	"github.com/yeying-community/warehouse/internal/domain/groupmanagement"
+	"github.com/yeying-community/warehouse/internal/domain/group"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
-type GroupManagementHandler struct {
-	service *service.GroupManagementService
+type GroupHandler struct {
+	service *service.GroupService
 	logger  *zap.Logger
 }
 
-func NewGroupManagementHandler(service *service.GroupManagementService, logger *zap.Logger) *GroupManagementHandler {
-	return &GroupManagementHandler{
+func NewGroupHandler(service *service.GroupService, logger *zap.Logger) *GroupHandler {
+	return &GroupHandler{
 		service: service,
 		logger:  logger,
 	}
 }
 
-func (h *GroupManagementHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -59,7 +59,7 @@ func (h *GroupManagementHandler) HandleGroupList(w http.ResponseWriter, r *http.
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *GroupManagementHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -76,9 +76,9 @@ func (h *GroupManagementHandler) HandleGroupCreate(w http.ResponseWriter, r *htt
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	group, err := h.service.CreateGroup(r.Context(), u, req.Name)
+	createdGroup, err := h.service.CreateGroup(r.Context(), u, req.Name)
 	if err != nil {
-		if err == groupmanagement.ErrDuplicateGroupName {
+		if err == group.ErrDuplicateGroupName {
 			http.Error(w, "Group name already exists", http.StatusConflict)
 			return
 		}
@@ -87,14 +87,14 @@ func (h *GroupManagementHandler) HandleGroupCreate(w http.ResponseWriter, r *htt
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":        group.ID,
-		"name":      group.Name,
+		"id":        createdGroup.ID,
+		"name":      createdGroup.Name,
 		"canManage": true,
-		"createdAt": group.CreatedAt.Format(timeLayout),
+		"createdAt": createdGroup.CreatedAt.Format(timeLayout),
 	})
 }
 
-func (h *GroupManagementHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -117,11 +117,11 @@ func (h *GroupManagementHandler) HandleGroupUpdate(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.service.RenameGroup(r.Context(), u, req.ID, req.Name); err != nil {
-		if err == groupmanagement.ErrGroupNotFound {
+		if err == group.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
-		if err == groupmanagement.ErrDuplicateGroupName {
+		if err == group.ErrDuplicateGroupName {
 			http.Error(w, "Group name already exists", http.StatusConflict)
 			return
 		}
@@ -131,7 +131,7 @@ func (h *GroupManagementHandler) HandleGroupUpdate(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *GroupManagementHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -153,7 +153,7 @@ func (h *GroupManagementHandler) HandleGroupDelete(w http.ResponseWriter, r *htt
 		return
 	}
 	if err := h.service.DeleteGroup(r.Context(), u, req.ID); err != nil {
-		if err == groupmanagement.ErrGroupNotFound {
+		if err == group.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
@@ -163,7 +163,7 @@ func (h *GroupManagementHandler) HandleGroupDelete(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *GroupManagementHandler) HandleMemberList(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -208,7 +208,7 @@ func (h *GroupManagementHandler) HandleMemberList(w http.ResponseWriter, r *http
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *GroupManagementHandler) HandleMemberCreate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -230,11 +230,11 @@ func (h *GroupManagementHandler) HandleMemberCreate(w http.ResponseWriter, r *ht
 	}
 	member, err := h.service.CreateMember(r.Context(), u, req.Name, req.WalletAddress, req.GroupID, req.Tags)
 	if err != nil {
-		if err == groupmanagement.ErrDuplicateMember {
+		if err == group.ErrDuplicateMember {
 			http.Error(w, "Member already exists in group", http.StatusConflict)
 			return
 		}
-		if err == groupmanagement.ErrGroupNotFound {
+		if err == group.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
@@ -254,7 +254,7 @@ func (h *GroupManagementHandler) HandleMemberCreate(w http.ResponseWriter, r *ht
 	})
 }
 
-func (h *GroupManagementHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -281,15 +281,15 @@ func (h *GroupManagementHandler) HandleMemberUpdate(w http.ResponseWriter, r *ht
 	}
 	member, err := h.service.UpdateMember(r.Context(), u, req.ID, req.Name, req.WalletAddress, req.GroupID, req.Tags)
 	if err != nil {
-		if err == groupmanagement.ErrMemberNotFound {
+		if err == group.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
-		if err == groupmanagement.ErrDuplicateMember {
+		if err == group.ErrDuplicateMember {
 			http.Error(w, "Member already exists in group", http.StatusConflict)
 			return
 		}
-		if err == groupmanagement.ErrGroupNotFound {
+		if err == group.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
@@ -308,7 +308,7 @@ func (h *GroupManagementHandler) HandleMemberUpdate(w http.ResponseWriter, r *ht
 	})
 }
 
-func (h *GroupManagementHandler) HandleMemberApprove(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberApprove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -330,7 +330,7 @@ func (h *GroupManagementHandler) HandleMemberApprove(w http.ResponseWriter, r *h
 		return
 	}
 	if err := h.service.ApproveMember(r.Context(), u, req.ID); err != nil {
-		if err == groupmanagement.ErrMemberNotFound {
+		if err == group.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
@@ -340,7 +340,7 @@ func (h *GroupManagementHandler) HandleMemberApprove(w http.ResponseWriter, r *h
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *GroupManagementHandler) HandleMemberReject(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberReject(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -362,7 +362,7 @@ func (h *GroupManagementHandler) HandleMemberReject(w http.ResponseWriter, r *ht
 		return
 	}
 	if err := h.service.RejectMember(r.Context(), u, req.ID); err != nil {
-		if err == groupmanagement.ErrMemberNotFound {
+		if err == group.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
@@ -372,7 +372,7 @@ func (h *GroupManagementHandler) HandleMemberReject(w http.ResponseWriter, r *ht
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *GroupManagementHandler) HandleMemberDelete(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -394,7 +394,7 @@ func (h *GroupManagementHandler) HandleMemberDelete(w http.ResponseWriter, r *ht
 		return
 	}
 	if err := h.service.DeleteMember(r.Context(), u, req.ID); err != nil {
-		if err == groupmanagement.ErrMemberNotFound {
+		if err == group.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}

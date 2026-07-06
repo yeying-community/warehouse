@@ -18,9 +18,9 @@ import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
 import { showInfo, showSuccess } from '@/utils/toast'
-import { useGroupManagementStore } from '@/stores/groupManagementStore'
+import { useGroupStore } from '@/stores/groupStore'
 import { useUploadTaskStore } from '@/stores/uploadTaskStore'
-import GroupManagementView from './components/GroupManagementView.vue'
+import GroupView from './components/GroupView.vue'
 import HomeOverlays from './components/HomeOverlays.vue'
 import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
@@ -105,9 +105,9 @@ const adminUsersSubmitting = ref(false)
 const adminUsersEditTarget = ref<AdminUserItem | null>(null)
 const adminUsersEditValue = ref('')
 const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
-const showGroupManagement = ref(false)
+const showGroupView = ref(false)
 const showUploadTasks = ref(false)
-const managementSection = ref<'account' | 'keys' | 'adminUsers' | 'groupManagement' | 'uploadTasks'>('account')
+const managementSection = ref<'account' | 'keys' | 'adminUsers' | 'group' | 'uploadTasks'>('account')
 const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
@@ -146,8 +146,8 @@ const accessKeyBindTargetID = ref('')
 const accessKeys = ref<WebDAVAccessKeyItem[]>([])
 const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
-const groupManagementStore = useGroupManagementStore()
-const { groupManagementLoading, managedGroups, activeGroupMembers } = storeToRefs(groupManagementStore)
+const groupStore = useGroupStore()
+const { groupLoading, managedGroups, activeGroupMembers } = storeToRefs(groupStore)
 const uploadTaskStore = useUploadTaskStore()
 const editingUsername = ref(false)
 const usernameDraft = ref('')
@@ -225,7 +225,7 @@ const FILE_PATH_STORAGE_KEY = 'warehouse:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'warehouse:sharedActiveId'
 const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
-type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'groupManagement' | 'uploadTasks'
+type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group' | 'uploadTasks'
 type AssetSpace = AssetSpaceInfo
 type ShareExpiryForm = {
   expiresValue: string
@@ -286,7 +286,7 @@ const assetSpaceLoading = ref(false)
 const sidePanelCollapsed = ref(false)
 
 // 是否显示回收站列表
-const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupManagement.value && !showUploadTasks.value)
+const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value && !showUploadTasks.value)
 const canUpload = computed(() => {
   if (!isFileView.value && !showSharedWithMe.value) return false
   if (showSharedWithMe.value) return isSharedBrowse.value && sharedCanCreate.value
@@ -307,8 +307,8 @@ const userProfile = computed(() => {
   const hasPassword = Boolean(userInfo.value?.has_password)
   return { username, walletAddress, walletName, permissions, createdAt, hasPassword }
 })
-const showSearch = computed(() => !showQuotaManage.value && !showGroupManagement.value && !showUploadTasks.value)
-const showListHeader = computed(() => !showQuotaManage.value && !showGroupManagement.value)
+const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value && !showUploadTasks.value)
+const showListHeader = computed(() => !showQuotaManage.value && !showGroupView.value)
 type MobileAction = { command: string; label: string; disabled?: boolean }
 type MobileActionGroup = { title: string; items: MobileAction[] }
 
@@ -480,17 +480,17 @@ const fileBreadcrumbRoot = computed(() => {
 const managementSectionLabel = computed(() => {
   if (managementSection.value === 'keys') return '密钥管理'
   if (managementSection.value === 'adminUsers') return '用户管理'
-  if (managementSection.value === 'groupManagement') return '分组管理'
+  if (managementSection.value === 'group') return '分组管理'
   if (managementSection.value === 'uploadTasks') return '任务'
   return '我的资料'
 })
-const isManagementView = computed(() => showQuotaManage.value || showGroupManagement.value || showUploadTasks.value)
+const isManagementView = computed(() => showQuotaManage.value || showGroupView.value || showUploadTasks.value)
 const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
   if (showQuotaManage.value) return managementSectionLabel.value
-  if (showGroupManagement.value) return '分组管理'
+  if (showGroupView.value) return '分组管理'
   if (showUploadTasks.value) return '任务'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
@@ -2234,7 +2234,7 @@ function previewAdjacentImage(direction: 'prev' | 'next') {
 }
 
 function handleRowClick(row: FileItem | RecycleItem | ShareItem | DirectShareItem) {
-  if (showQuotaManage.value || showGroupManagement.value || showUploadTasks.value) return
+  if (showQuotaManage.value || showGroupView.value || showUploadTasks.value) return
   if (showRecycle.value) {
     openDetailDrawer('recycle', row as RecycleItem)
     return
@@ -2299,15 +2299,15 @@ async function refreshCurrentView() {
         await fetchSharedWithMe()
       }
     } else if (showQuotaManage.value) {
-      if (managementSection.value === 'groupManagement') {
-        await groupManagementStore.fetchGroupManagement()
+      if (managementSection.value === 'group') {
+        await groupStore.fetchGroups()
       } else if (managementSection.value === 'uploadTasks') {
         return
       } else {
         await fetchUserCenter()
       }
-    } else if (showGroupManagement.value) {
-      await groupManagementStore.fetchGroupManagement()
+    } else if (showGroupView.value) {
+      await groupStore.fetchGroups()
     } else {
       await fetchFiles(currentPath.value)
     }
@@ -2326,7 +2326,7 @@ async function copyCurrentPath() {
     } else {
       text = '定向分享'
     }
-  } else if (showGroupManagement.value) {
+  } else if (showGroupView.value) {
     text = '分组管理'
   }
   await copyText(text, '已复制当前路径')
@@ -3056,7 +3056,7 @@ async function retryUploadTask(task: UploadTask) {
     }
     return
   }
-  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupManagement.value && !showUploadTasks.value) {
+  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value && !showUploadTasks.value) {
     fetchFiles(currentPath.value)
   }
 }
@@ -3701,7 +3701,7 @@ function enterRecycle() {
   showShare.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showGroupManagement.value = false
+  showGroupView.value = false
   showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
@@ -3716,7 +3716,7 @@ function enterFiles(path: string = currentPath.value) {
   showShare.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showGroupManagement.value = false
+  showGroupView.value = false
   showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
@@ -3882,7 +3882,7 @@ function enterShare(type: 'link' | 'direct' = shareTab.value) {
   showRecycle.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showGroupManagement.value = false
+  showGroupView.value = false
   showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
@@ -3908,7 +3908,7 @@ function enterSharedRoot(item: DirectShareItem) {
   showShare.value = false
   showRecycle.value = false
   showQuotaManage.value = false
-  showGroupManagement.value = false
+  showGroupView.value = false
   showUploadTasks.value = false
   sharedActive.value = item
   sharedPath.value = '/'
@@ -3924,7 +3924,7 @@ function backToSharedList() {
   showShare.value = true
   showRecycle.value = false
   showQuotaManage.value = false
-  showGroupManagement.value = false
+  showGroupView.value = false
   showUploadTasks.value = false
   shareTab.value = 'direct'
   sharedActive.value = null
@@ -3941,7 +3941,7 @@ function enterSharedWithMeList() {
   showShare.value = false
   showRecycle.value = false
   showQuotaManage.value = false
-  showGroupManagement.value = false
+  showGroupView.value = false
   showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
@@ -4002,7 +4002,7 @@ function openShareUserDialog(item: FileItem) {
     ...createDefaultShareExpiryForm()
   }
   shareUserDialogVisible.value = true
-  groupManagementStore.fetchGroupManagement()
+  groupStore.fetchGroups()
 }
 
 async function submitShareUser() {
@@ -4082,9 +4082,9 @@ async function submitShareUser() {
   }
 }
 
-function enterGroupManagement() {
+function enterGroupView() {
   detailDrawerVisible.value = false
-  showGroupManagement.value = true
+  showGroupView.value = true
   showShare.value = false
   showRecycle.value = false
   showSharedWithMe.value = false
@@ -4092,25 +4092,25 @@ function enterGroupManagement() {
   showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
-  persistView('groupManagement')
-  groupManagementStore.fetchGroupManagement()
+  persistView('group')
+  groupStore.fetchGroups()
 }
 
 // 进入账户管理
-function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'groupManagement' | 'uploadTasks' = 'account') {
+function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'group' | 'uploadTasks' = 'account') {
   detailDrawerVisible.value = false
   managementSection.value = section
   showQuotaManage.value = true
   showShare.value = false
   showRecycle.value = false
   showSharedWithMe.value = false
-  showGroupManagement.value = false
+  showGroupView.value = false
   showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('quotaManage')
-  if (section === 'groupManagement') {
-    groupManagementStore.fetchGroupManagement()
+  if (section === 'group') {
+    groupStore.fetchGroups()
     return
   }
   if (section === 'uploadTasks') {
@@ -4422,8 +4422,8 @@ async function restoreView() {
     enterQuotaManage()
     return
   }
-  if (storedView === 'groupManagement' || storedView === 'addressBook') {
-    enterGroupManagement()
+  if (storedView === 'group' || storedView === 'addressBook') {
+    enterGroupView()
     return
   }
   if (storedView === 'uploadTasks') {
@@ -4526,12 +4526,12 @@ onMounted(() => {
 function handleExternalNavigate(event: Event) {
   const customEvent = event as CustomEvent<{
     view?: ViewKey | 'addressBook'
-    section?: 'account' | 'keys' | 'adminUsers' | 'groupManagement' | 'addressBook' | 'uploadTasks'
+    section?: 'account' | 'keys' | 'adminUsers' | 'group' | 'addressBook' | 'uploadTasks'
   }>
   const view = customEvent?.detail?.view
   if (!view) return
   if (view === 'quotaManage') {
-    const section = customEvent.detail?.section === 'addressBook' ? 'groupManagement' : customEvent.detail?.section
+    const section = customEvent.detail?.section === 'addressBook' ? 'group' : customEvent.detail?.section
     enterQuotaManage(section || 'account')
     return
   }
@@ -4539,8 +4539,8 @@ function handleExternalNavigate(event: Event) {
     enterSharedWithMeList()
     return
   }
-  if (view === 'groupManagement' || view === 'addressBook') {
-    enterGroupManagement()
+  if (view === 'group' || view === 'addressBook') {
+    enterGroupView()
     return
   }
   if (view === 'uploadTasks') {
@@ -4870,8 +4870,8 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   class="nav-item"
-                  :class="{ active: showQuotaManage && managementSection === 'groupManagement' }"
-                  @click="enterQuotaManage('groupManagement')"
+                  :class="{ active: showQuotaManage && managementSection === 'group' }"
+                  @click="enterQuotaManage('group')"
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
                   <span v-show="!sidePanelCollapsed">分组管理</span>
@@ -5558,13 +5558,13 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-              <div v-if="managementSection === 'groupManagement'" class="user-card user-card-full" v-loading="groupManagementLoading && !manualRefresh">
-                <GroupManagementView embedded @refresh="refreshCurrentView" />
+              <div v-if="managementSection === 'group'" class="user-card user-card-full" v-loading="groupLoading && !manualRefresh">
+                <GroupView embedded @refresh="refreshCurrentView" />
               </div>
             </div>
           </div>
-          <div v-else-if="showGroupManagement" class="content-body content-scroll" v-loading="groupManagementLoading && !manualRefresh">
-            <GroupManagementView @refresh="refreshCurrentView" />
+          <div v-else-if="showGroupView" class="content-body content-scroll" v-loading="groupLoading && !manualRefresh">
+            <GroupView @refresh="refreshCurrentView" />
           </div>
           <div v-else class="content-body table-wrapper">
             <div v-if="shareViewSummary" class="view-summary-bar">

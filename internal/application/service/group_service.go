@@ -5,25 +5,25 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yeying-community/warehouse/internal/domain/groupmanagement"
+	"github.com/yeying-community/warehouse/internal/domain/group"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
 )
 
-type GroupManagementService struct {
-	repo repository.GroupManagementRepository
+type GroupService struct {
+	repo repository.GroupRepository
 }
 
-func NewGroupManagementService(repo repository.GroupManagementRepository) *GroupManagementService {
-	return &GroupManagementService{repo: repo}
+func NewGroupService(repo repository.GroupRepository) *GroupService {
+	return &GroupService{repo: repo}
 }
 
-func (s *GroupManagementService) ListGroups(ctx context.Context, u *user.User) ([]*groupmanagement.Group, error) {
+func (s *GroupService) ListGroups(ctx context.Context, u *user.User) ([]*group.Group, error) {
 	return s.repo.ListVisibleGroups(ctx, u.ID, u.WalletAddress)
 }
 
-func (s *GroupManagementService) CreateGroup(ctx context.Context, u *user.User, name string) (*groupmanagement.Group, error) {
-	group, err := groupmanagement.NewGroup(u.ID, name)
+func (s *GroupService) CreateGroup(ctx context.Context, u *user.User, name string) (*group.Group, error) {
+	group, err := group.NewGroup(u.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +33,7 @@ func (s *GroupManagementService) CreateGroup(ctx context.Context, u *user.User, 
 	return group, nil
 }
 
-func (s *GroupManagementService) RenameGroup(ctx context.Context, u *user.User, groupID, name string) error {
+func (s *GroupService) RenameGroup(ctx context.Context, u *user.User, groupID, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("group name is required")
@@ -41,29 +41,29 @@ func (s *GroupManagementService) RenameGroup(ctx context.Context, u *user.User, 
 	return s.repo.UpdateGroupName(ctx, u.ID, groupID, name)
 }
 
-func (s *GroupManagementService) DeleteGroup(ctx context.Context, u *user.User, groupID string) error {
+func (s *GroupService) DeleteGroup(ctx context.Context, u *user.User, groupID string) error {
 	return s.repo.DeleteGroup(ctx, u.ID, groupID)
 }
 
-func (s *GroupManagementService) ListMembers(ctx context.Context, u *user.User) ([]*groupmanagement.Member, error) {
+func (s *GroupService) ListMembers(ctx context.Context, u *user.User) ([]*group.Member, error) {
 	return s.repo.ListVisibleMembers(ctx, u.ID, u.WalletAddress)
 }
 
-func (s *GroupManagementService) CreateMember(ctx context.Context, u *user.User, name, wallet, groupID string, tags []string) (*groupmanagement.Member, error) {
+func (s *GroupService) CreateMember(ctx context.Context, u *user.User, name, wallet, groupID string, tags []string) (*group.Member, error) {
 	groupID = strings.TrimSpace(groupID)
 	if groupID == "" {
 		return nil, fmt.Errorf("group id is required")
 	}
-	group, err := s.repo.GetVisibleGroupByID(ctx, u.ID, u.WalletAddress, groupID)
+	targetGroup, err := s.repo.GetVisibleGroupByID(ctx, u.ID, u.WalletAddress, groupID)
 	if err != nil {
 		return nil, err
 	}
-	member, err := groupmanagement.NewMember(group.UserID, groupID, name, wallet, sanitizeTags(tags))
+	member, err := group.NewMember(targetGroup.UserID, groupID, name, wallet, sanitizeTags(tags))
 	if err != nil {
 		return nil, err
 	}
-	if group.UserID != u.ID {
-		member.Status = groupmanagement.MemberStatusPending
+	if targetGroup.UserID != u.ID {
+		member.Status = group.MemberStatusPending
 	}
 	if err := s.repo.CreateMember(ctx, member); err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (s *GroupManagementService) CreateMember(ctx context.Context, u *user.User,
 	return member, nil
 }
 
-func (s *GroupManagementService) UpdateMember(ctx context.Context, u *user.User, id, name, wallet, groupID string, tags *[]string) (*groupmanagement.Member, error) {
+func (s *GroupService) UpdateMember(ctx context.Context, u *user.User, id, name, wallet, groupID string, tags *[]string) (*group.Member, error) {
 	member, err := s.repo.GetMemberByID(ctx, u.ID, id)
 	if err != nil {
 		return nil, err
@@ -115,14 +115,14 @@ func sanitizeTags(input []string) []string {
 	return result
 }
 
-func (s *GroupManagementService) DeleteMember(ctx context.Context, u *user.User, id string) error {
+func (s *GroupService) DeleteMember(ctx context.Context, u *user.User, id string) error {
 	return s.repo.DeleteMember(ctx, u.ID, id)
 }
 
-func (s *GroupManagementService) ApproveMember(ctx context.Context, u *user.User, id string) error {
-	return s.repo.UpdateMemberStatus(ctx, u.ID, id, groupmanagement.MemberStatusActive)
+func (s *GroupService) ApproveMember(ctx context.Context, u *user.User, id string) error {
+	return s.repo.UpdateMemberStatus(ctx, u.ID, id, group.MemberStatusActive)
 }
 
-func (s *GroupManagementService) RejectMember(ctx context.Context, u *user.User, id string) error {
+func (s *GroupService) RejectMember(ctx context.Context, u *user.User, id string) error {
 	return s.repo.DeleteMember(ctx, u.ID, id)
 }

@@ -1,4 +1,4 @@
-package groupmanagement
+package group
 
 import (
 	"errors"

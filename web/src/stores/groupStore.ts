@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ElMessageBox } from 'element-plus'
-import { groupManagementApi, type ManagedGroup, type GroupMember } from '@/api'
+import { groupApi, type ManagedGroup, type GroupMember } from '@/api'
 import { showSuccess } from '@/utils/toast'
 
 type GroupSelectionFilter = 'all' | string
@@ -44,9 +44,9 @@ function showError(message: string, title = '错误') {
   })
 }
 
-export const useGroupManagementStore = defineStore('groupManagement', {
+export const useGroupStore = defineStore('group', {
   state: () => ({
-    groupManagementLoading: false,
+    groupLoading: false,
     managedGroups: [] as ManagedGroup[],
     groupMembers: [] as GroupMember[],
     groupForm: { name: '' },
@@ -114,13 +114,13 @@ export const useGroupManagementStore = defineStore('groupManagement', {
     }
   },
   actions: {
-    async fetchGroupManagement() {
-      if (this.groupManagementLoading) return
-      this.groupManagementLoading = true
+    async fetchGroups() {
+      if (this.groupLoading) return
+      this.groupLoading = true
       try {
         const [groups, members] = await Promise.all([
-          groupManagementApi.listGroups(),
-          groupManagementApi.listMembers()
+          groupApi.listGroups(),
+          groupApi.listMembers()
         ])
         this.managedGroups = groups.items || []
         this.groupMembers = members.items || []
@@ -133,7 +133,7 @@ export const useGroupManagementStore = defineStore('groupManagement', {
       } catch (error) {
         console.error('获取分组成员失败:', error)
       } finally {
-        this.groupManagementLoading = false
+        this.groupLoading = false
       }
     },
     selectGroup(groupId: GroupSelectionFilter) {
@@ -150,9 +150,9 @@ export const useGroupManagementStore = defineStore('groupManagement', {
       }
       this.groupSaving = true
       try {
-        await groupManagementApi.createGroup(name)
+        await groupApi.createGroup(name)
         this.groupForm = { name: '' }
-        await this.fetchGroupManagement()
+        await this.fetchGroups()
         showSuccess('分组已创建')
         return true
       } catch (error: any) {
@@ -171,8 +171,8 @@ export const useGroupManagementStore = defineStore('groupManagement', {
         })
         const name = String(value || '').trim()
         if (!name || name === group.name) return
-        await groupManagementApi.updateGroup(group.id, name)
-        await this.fetchGroupManagement()
+        await groupApi.updateGroup(group.id, name)
+        await this.fetchGroups()
       } catch {
         // ignore
       }
@@ -180,8 +180,8 @@ export const useGroupManagementStore = defineStore('groupManagement', {
     async removeGroup(group: ManagedGroup) {
       if (!(await confirmAction(`确定删除分组 ${group.name} 吗？`, '删除分组'))) return
       try {
-        await groupManagementApi.deleteGroup(group.id)
-        await this.fetchGroupManagement()
+        await groupApi.deleteGroup(group.id)
+        await this.fetchGroups()
       } catch (error: any) {
         showError(error?.message || '删除分组失败')
       }
@@ -221,7 +221,7 @@ export const useGroupManagementStore = defineStore('groupManagement', {
         let savedMember: GroupMember | null = null
         const isEditing = Boolean(this.memberForm.id)
         if (this.memberForm.id) {
-          await groupManagementApi.updateMember({
+          await groupApi.updateMember({
             id: this.memberForm.id,
             name,
             walletAddress,
@@ -229,7 +229,7 @@ export const useGroupManagementStore = defineStore('groupManagement', {
             tags
           })
         } else {
-          savedMember = await groupManagementApi.createMember({
+          savedMember = await groupApi.createMember({
             name,
             walletAddress,
             groupId,
@@ -238,7 +238,7 @@ export const useGroupManagementStore = defineStore('groupManagement', {
         }
         this.resetMemberForm()
         this.memberDialogVisible = false
-        await this.fetchGroupManagement()
+        await this.fetchGroups()
         if (savedMember && isPendingMember(savedMember)) {
           showSuccess('成员申请已提交，等待分组维护者审批')
         } else {
@@ -263,19 +263,19 @@ export const useGroupManagementStore = defineStore('groupManagement', {
     async removeMember(member: GroupMember) {
       if (!(await confirmAction(`确定删除成员 ${member.name} 吗？`, '删除成员'))) return
       try {
-        await groupManagementApi.deleteMember(member.id)
+        await groupApi.deleteMember(member.id)
         if (this.memberForm.id === member.id) {
           this.resetMemberForm()
         }
-        await this.fetchGroupManagement()
+        await this.fetchGroups()
       } catch (error: any) {
         showError(error?.message || '删除成员失败')
       }
     },
     async approveMember(member: GroupMember) {
       try {
-        await groupManagementApi.approveMember(member.id)
-        await this.fetchGroupManagement()
+        await groupApi.approveMember(member.id)
+        await this.fetchGroups()
         showSuccess('成员已通过')
       } catch (error: any) {
         showError(error?.message || '审批成员失败')
@@ -284,11 +284,11 @@ export const useGroupManagementStore = defineStore('groupManagement', {
     async rejectMember(member: GroupMember) {
       if (!(await confirmAction(`确定拒绝 ${member.name} 的加入申请吗？`, '拒绝申请'))) return
       try {
-        await groupManagementApi.rejectMember(member.id)
+        await groupApi.rejectMember(member.id)
         if (this.memberForm.id === member.id) {
           this.resetMemberForm()
         }
-        await this.fetchGroupManagement()
+        await this.fetchGroups()
         showSuccess('申请已拒绝')
       } catch (error: any) {
         showError(error?.message || '拒绝申请失败')

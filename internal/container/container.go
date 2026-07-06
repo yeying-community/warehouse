@@ -33,18 +33,18 @@ type Container struct {
 	DB *database.PostgresDB
 
 	// Repositories
-	UserRepository            user.Repository
-	RecycleRepository         repository.RecycleRepository
-	ShareRepository           repository.ShareRepository
-	UserShareRepository       repository.UserShareRepository
-	GroupManagementRepository repository.GroupManagementRepository
-	WebDAVAccessKeyRepo       repository.WebDAVAccessKeyRepository
-	NotificationRepo          repository.NotificationRepository
-	ReplicationOutboxRepo     repository.ReplicationOutboxRepository
-	ReplicationOffsetRepo     repository.ReplicationOffsetRepository
-	ReconcileRepo             repository.ReplicationReconcileRepository
-	ClusterNodeRepo           repository.ClusterNodeRepository
-	ClusterAssignmentRepo     repository.ClusterReplicationAssignmentRepository
+	UserRepository        user.Repository
+	RecycleRepository     repository.RecycleRepository
+	ShareRepository       repository.ShareRepository
+	UserShareRepository   repository.UserShareRepository
+	GroupRepository       repository.GroupRepository
+	WebDAVAccessKeyRepo   repository.WebDAVAccessKeyRepository
+	NotificationRepo      repository.NotificationRepository
+	ReplicationOutboxRepo repository.ReplicationOutboxRepository
+	ReplicationOffsetRepo repository.ReplicationOffsetRepository
+	ReconcileRepo         repository.ReplicationReconcileRepository
+	ClusterNodeRepo       repository.ClusterNodeRepository
+	ClusterAssignmentRepo repository.ClusterReplicationAssignmentRepository
 
 	// Services
 	QuotaService           quota.Service
@@ -60,7 +60,7 @@ type Container struct {
 	RecycleService         *service.RecycleService
 	ShareService           *service.ShareService
 	ShareUserService       *service.ShareUserService
-	GroupManagementService *service.GroupManagementService
+	GroupService           *service.GroupService
 	WebDAVAccessKeyService *service.WebDAVAccessKeyService
 	NotificationService    *service.NotificationService
 
@@ -84,7 +84,7 @@ type Container struct {
 	ShareHandler               *handler.ShareHandler
 	ShareUserHandler           *handler.ShareUserHandler
 	WebDAVAccessKeyHandler     *handler.WebDAVAccessKeyHandler
-	GroupManagementHandler     *handler.GroupManagementHandler
+	GroupHandler               *handler.GroupHandler
 	NotificationHandler        *handler.NotificationHandler
 
 	// HTTP
@@ -192,7 +192,7 @@ func (c *Container) initRepositories() error {
 	// 定向分享仓储
 	c.UserShareRepository = repository.NewPostgresUserShareRepository(c.DB.DB)
 	// 分组管理仓储
-	c.GroupManagementRepository = repository.NewPostgresGroupManagementRepository(c.DB.DB)
+	c.GroupRepository = repository.NewPostgresGroupRepository(c.DB.DB)
 	// WebDAV 访问密钥仓储
 	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
 	// 站内消息仓储
@@ -265,7 +265,7 @@ func (c *Container) initServices() error {
 		c.Logger,
 	)
 	// 分组管理服务
-	c.GroupManagementService = service.NewGroupManagementService(c.GroupManagementRepository)
+	c.GroupService = service.NewGroupService(c.GroupRepository)
 	// WebDAV 访问密钥服务
 	c.WebDAVAccessKeyService = service.NewWebDAVAccessKeyService(c.WebDAVAccessKeyRepo)
 	// 站内消息服务
@@ -274,7 +274,7 @@ func (c *Container) initServices() error {
 	c.ShareUserService = service.NewShareUserService(
 		c.UserShareRepository,
 		c.UserRepository,
-		c.GroupManagementService,
+		c.GroupService,
 		c.NotificationService,
 		c.Config,
 		c.Logger,
@@ -432,8 +432,8 @@ func (c *Container) initHandlers() error {
 		c.Logger,
 	)
 	// 分组管理处理器
-	c.GroupManagementHandler = handler.NewGroupManagementHandler(
-		c.GroupManagementService,
+	c.GroupHandler = handler.NewGroupHandler(
+		c.GroupService,
 		c.Logger,
 	)
 	// WebDAV 访问密钥处理器
@@ -471,7 +471,7 @@ func (c *Container) initHTTP() error {
 		c.ShareHandler,
 		c.ShareUserHandler,
 		c.WebDAVAccessKeyHandler,
-		c.GroupManagementHandler,
+		c.GroupHandler,
 		c.NotificationHandler,
 		c.Logger,
 	)

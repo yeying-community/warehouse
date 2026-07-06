@@ -481,7 +481,7 @@ export const webdavAccessKeyApi = {
   }
 }
 
-export const groupManagementApi = {
+export const groupApi = {
   listGroups() {
     return request<{ items: ManagedGroup[] }>('/api/v1/public/webdav/group/groups')
   },
