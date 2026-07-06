@@ -141,7 +141,7 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/webdav/recycle/permanent", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleRemove)))
 	mux.Handle("/api/v1/public/webdav/recycle/clear", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleClear)))
 
-	// 好友地址簿
+	// 分组管理
 	mux.Handle("/api/v1/public/webdav/address/groups", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleGroupList)))
 	mux.Handle("/api/v1/public/webdav/address/groups/create", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleGroupCreate)))
 	mux.Handle("/api/v1/public/webdav/address/groups/update", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleGroupUpdate)))

@@ -32,7 +32,7 @@ export const useAddressBookStore = defineStore('addressBook', {
     addressBookLoading: false,
     addressGroups: [] as AddressGroup[],
     addressContacts: [] as AddressContact[],
-    groupForm: { name: '' },
+    groupForm: { name: '', type: 'personal' as 'personal' | 'team' },
     groupSaving: false,
     contactForm: {
       id: '',
@@ -123,8 +123,8 @@ export const useAddressBookStore = defineStore('addressBook', {
       }
       this.groupSaving = true
       try {
-        await addressBookApi.createGroup(name)
-        this.groupForm.name = ''
+        await addressBookApi.createGroup(name, this.groupForm.type)
+        this.groupForm = { name: '', type: 'personal' }
         await this.fetchAddressBook()
         showSuccess('分组已创建')
         return true
@@ -144,13 +144,17 @@ export const useAddressBookStore = defineStore('addressBook', {
         })
         const name = String(value || '').trim()
         if (!name || name === group.name) return
-        await addressBookApi.updateGroup(group.id, name)
+        await addressBookApi.updateGroup(group.id, name, group.type)
         await this.fetchAddressBook()
       } catch {
         // ignore
       }
     },
     async removeGroup(group: AddressGroup) {
+      if (group.canManage === false) {
+        showError('只能删除自己维护的分组')
+        return
+      }
       if (!(await confirmAction(`确定删除分组 ${group.name} 吗？`, '删除分组'))) return
       try {
         await addressBookApi.deleteGroup(group.id)
@@ -170,6 +174,11 @@ export const useAddressBookStore = defineStore('addressBook', {
       }
     },
     openCreateContactDialog() {
+      const selectedGroup = this.addressGroups.find(group => group.id === this.addressGroupFilter)
+      if (selectedGroup && selectedGroup.canManage === false) {
+        showError('只能向自己维护的分组添加成员')
+        return
+      }
       this.resetContactForm()
       this.contactDialogVisible = true
     },
@@ -209,6 +218,10 @@ export const useAddressBookStore = defineStore('addressBook', {
       }
     },
     editContact(contact: AddressContact) {
+      if (contact.canManage === false) {
+        showError('只能编辑自己维护的成员')
+        return
+      }
       this.contactForm = {
         id: contact.id,
         name: contact.name,
@@ -219,6 +232,10 @@ export const useAddressBookStore = defineStore('addressBook', {
       this.contactDialogVisible = true
     },
     async removeContact(contact: AddressContact) {
+      if (contact.canManage === false) {
+        showError('只能删除自己维护的成员')
+        return
+      }
       if (!(await confirmAction(`确定删除成员 ${contact.name} 吗？`, '删除成员'))) return
       try {
         await addressBookApi.deleteContact(contact.id)

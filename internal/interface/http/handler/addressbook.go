@@ -41,6 +41,9 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 	type item struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
+		Type      string `json:"type"`
+		Role      string `json:"role"`
+		CanManage bool   `json:"canManage"`
 		CreatedAt string `json:"createdAt"`
 	}
 	resp := struct {
@@ -50,6 +53,9 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 		resp.Items = append(resp.Items, item{
 			ID:        g.ID,
 			Name:      g.Name,
+			Type:      g.Type,
+			Role:      g.Role,
+			CanManage: g.CanManage,
 			CreatedAt: g.CreatedAt.Format(timeLayout),
 		})
 	}
@@ -69,12 +75,13 @@ func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Re
 	}
 	var req struct {
 		Name string `json:"name"`
+		Type string `json:"type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	group, err := h.service.CreateGroup(r.Context(), u, req.Name)
+	group, err := h.service.CreateGroup(r.Context(), u, req.Name, req.Type)
 	if err != nil {
 		if err == addressbook.ErrDuplicateGroupName {
 			http.Error(w, "Group name already exists", http.StatusConflict)
@@ -87,6 +94,9 @@ func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":        group.ID,
 		"name":      group.Name,
+		"type":      group.Type,
+		"role":      group.Role,
+		"canManage": group.CanManage,
 		"createdAt": group.CreatedAt.Format(timeLayout),
 	})
 }
@@ -104,6 +114,7 @@ func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Re
 	var req struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
+		Type string `json:"type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -113,7 +124,7 @@ func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Re
 		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
-	if err := h.service.RenameGroup(r.Context(), u, req.ID, req.Name); err != nil {
+	if err := h.service.UpdateGroup(r.Context(), u, req.ID, req.Name, req.Type); err != nil {
 		if err == addressbook.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
@@ -182,6 +193,8 @@ func (h *AddressBookHandler) HandleContactList(w http.ResponseWriter, r *http.Re
 		WalletAddress string   `json:"walletAddress"`
 		GroupID       string   `json:"groupId,omitempty"`
 		Tags          []string `json:"tags"`
+		GroupType     string   `json:"groupType"`
+		CanManage     bool     `json:"canManage"`
 		CreatedAt     string   `json:"createdAt"`
 	}
 	resp := struct {
@@ -194,6 +207,8 @@ func (h *AddressBookHandler) HandleContactList(w http.ResponseWriter, r *http.Re
 			WalletAddress: c.WalletAddress,
 			GroupID:       c.GroupID,
 			Tags:          c.Tags,
+			GroupType:     c.GroupType,
+			CanManage:     c.CanManage,
 			CreatedAt:     c.CreatedAt.Format(timeLayout),
 		})
 	}

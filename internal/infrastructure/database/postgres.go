@@ -156,11 +156,12 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
-		// 好友地址分组
+		// 分组：personal 为个人分组，team 为成员可见的团队分组
 		`CREATE TABLE IF NOT EXISTS address_groups (
 			id VARCHAR(50) PRIMARY KEY,
 			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			name VARCHAR(255) NOT NULL,
+			group_type VARCHAR(20) NOT NULL DEFAULT 'personal',
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
@@ -175,7 +176,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
-		// 好友地址
+		// 分组成员
 		`CREATE TABLE IF NOT EXISTS address_contacts (
 			id VARCHAR(50) PRIMARY KEY,
 			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -347,14 +348,22 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON internal_share_audiences(share_id, audience_type)
 			WHERE audience_type = 'all_users'`,
 
-		// 好友地址分组索引
+		// 兼容已有分组表
+		`ALTER TABLE address_groups ADD COLUMN IF NOT EXISTS group_type VARCHAR(20) NOT NULL DEFAULT 'personal'`,
+		`ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,
+
+		// 分组索引
 		`CREATE INDEX IF NOT EXISTS idx_address_groups_user_id ON address_groups(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_address_groups_type ON address_groups(group_type)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_groups_user_name ON address_groups(user_id, name)`,
 
-		// 好友地址索引
+		// 分组成员索引
 		`CREATE INDEX IF NOT EXISTS idx_address_contacts_user_id ON address_contacts(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_address_contacts_group_id ON address_contacts(group_id)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_contacts_user_wallet ON address_contacts(user_id, wallet_address)`,
+		`CREATE INDEX IF NOT EXISTS idx_address_contacts_wallet_lower ON address_contacts(LOWER(wallet_address))`,
+		`DROP INDEX IF EXISTS idx_address_contacts_user_wallet`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_contacts_user_group_wallet
+			ON address_contacts(user_id, COALESCE(group_id, ''), wallet_address)`,
 
 		// 复制 outbox 索引
 		`CREATE INDEX IF NOT EXISTS idx_replication_outbox_pair_pending
@@ -391,9 +400,6 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			WHERE dedupe_key IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_notification_preferences_user
 			ON notification_preferences(user_id)`,
-
-		// 兼容已有地址簿表
-		`ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,
 
 		// 创建钱包地址索引
 		`CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address) WHERE wallet_address IS NOT NULL`,

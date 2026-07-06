@@ -191,7 +191,7 @@ func (c *Container) initRepositories() error {
 	c.ShareRepository = repository.NewPostgresShareRepository(c.DB.DB)
 	// 定向分享仓储
 	c.UserShareRepository = repository.NewPostgresUserShareRepository(c.DB.DB)
-	// 地址簿仓储
+	// 分组管理仓储
 	c.AddressBookRepository = repository.NewPostgresAddressBookRepository(c.DB.DB)
 	// WebDAV 访问密钥仓储
 	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
@@ -264,7 +264,7 @@ func (c *Container) initServices() error {
 		c.Config,
 		c.Logger,
 	)
-	// 地址簿服务
+	// 分组管理服务
 	c.AddressBookService = service.NewAddressBookService(c.AddressBookRepository)
 	// WebDAV 访问密钥服务
 	c.WebDAVAccessKeyService = service.NewWebDAVAccessKeyService(c.WebDAVAccessKeyRepo)
@@ -431,7 +431,7 @@ func (c *Container) initHandlers() error {
 		c.MutationRecorder,
 		c.Logger,
 	)
-	// 地址簿处理器
+	// 分组管理处理器
 	c.AddressBookHandler = handler.NewAddressBookHandler(
 		c.AddressBookService,
 		c.Logger,

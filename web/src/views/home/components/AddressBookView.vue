@@ -67,14 +67,20 @@ function contactGroupName(contact: AddressContact) {
   return addressGroups.value.find(group => group.id === contact.groupId)?.name || '未分组'
 }
 
+function groupTypeLabel(type?: string) {
+  return type === 'team' ? '团队' : '个人'
+}
+
 function openCreateGroupDialog() {
   groupForm.value.name = ''
+  groupForm.value.type = 'personal'
   groupDialogVisible.value = true
 }
 
 function closeCreateGroupDialog() {
   groupDialogVisible.value = false
   groupForm.value.name = ''
+  groupForm.value.type = 'personal'
 }
 
 async function submitCreateGroup() {
@@ -150,9 +156,13 @@ async function submitCreateGroup() {
             <div v-for="group in addressGroups" :key="group.id" class="group-row" :class="{ active: addressGroupFilter === group.id }">
               <button type="button" class="group-chip" @click="selectAddressGroup(group.id)">
                 <span>{{ group.name }}</span>
+                <el-tag size="small" effect="plain" :type="group.type === 'team' ? 'success' : 'info'">
+                  {{ groupTypeLabel(group.type) }}
+                </el-tag>
+                <el-tag v-if="group.canManage === false" size="small" effect="plain" type="warning">成员</el-tag>
                 <span class="count">{{ addressGroupCounts.groups[group.id] || 0 }}</span>
               </button>
-              <div class="actions">
+              <div v-if="group.canManage !== false" class="actions">
                 <el-button size="small" text @click="renameGroup(group)">重命名</el-button>
                 <el-button size="small" text type="danger" @click="removeGroup(group)">删除</el-button>
               </div>
@@ -187,6 +197,8 @@ async function submitCreateGroup() {
                 <div class="contact-top">
                   <div class="contact-name">{{ contact.name }}</div>
                   <el-tag size="small" effect="plain">{{ contactGroupName(contact) }}</el-tag>
+                  <el-tag v-if="contact.groupType === 'team'" size="small" effect="plain" type="success">团队</el-tag>
+                  <el-tag v-if="contact.canManage === false" size="small" effect="plain" type="warning">只读</el-tag>
                 </div>
                 <div class="contact-wallet">
                   <span class="contact-label">钱包地址</span>
@@ -211,7 +223,7 @@ async function submitCreateGroup() {
                   <span v-if="!contact.tags || !contact.tags.length" class="address-tag-empty">无标签</span>
                 </div>
               </div>
-              <div class="contact-actions">
+              <div v-if="contact.canManage !== false" class="contact-actions">
                 <el-tooltip content="编辑" placement="top">
                   <el-button class="icon-button" link :icon="Edit" @click="editContact(contact)" />
                 </el-tooltip>
@@ -238,6 +250,13 @@ async function submitCreateGroup() {
           size="small"
           @keyup.enter="submitCreateGroup"
         />
+        <el-radio-group v-model="groupForm.type" size="small">
+          <el-radio-button value="personal">个人分组</el-radio-button>
+          <el-radio-button value="team">团队分组</el-radio-button>
+        </el-radio-group>
+        <div class="group-type-hint">
+          团队分组对组内成员可见，个人分组仅自己可见。
+        </div>
       </div>
       <template #footer>
         <el-button @click="closeCreateGroupDialog">取消</el-button>
@@ -256,7 +275,12 @@ async function submitCreateGroup() {
         <el-input v-model="contactForm.walletAddress" placeholder="钱包地址" size="small" />
         <el-select v-model="contactForm.groupId" placeholder="选择分组" size="small">
           <el-option label="未分组" value="" />
-          <el-option v-for="group in addressGroups" :key="group.id" :label="group.name" :value="group.id" />
+          <el-option
+            v-for="group in addressGroups.filter(item => item.canManage !== false)"
+            :key="group.id"
+            :label="`${group.name}（${groupTypeLabel(group.type)}）`"
+            :value="group.id"
+          />
         </el-select>
         <el-select
           v-model="contactForm.tags"
@@ -477,6 +501,12 @@ async function submitCreateGroup() {
   border-radius: 999px;
   padding: 2px 6px;
   font-size: 11px;
+}
+
+.group-type-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
 }
 
 .address-toolbar {

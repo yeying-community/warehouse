@@ -19,11 +19,11 @@ func NewAddressBookService(repo repository.AddressBookRepository) *AddressBookSe
 }
 
 func (s *AddressBookService) ListGroups(ctx context.Context, u *user.User) ([]*addressbook.Group, error) {
-	return s.repo.ListGroupsByUser(ctx, u.ID)
+	return s.repo.ListVisibleGroups(ctx, u.ID, u.WalletAddress)
 }
 
-func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name string) (*addressbook.Group, error) {
-	group, err := addressbook.NewGroup(u.ID, name)
+func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name string, groupType string) (*addressbook.Group, error) {
+	group, err := addressbook.NewGroup(u.ID, name, groupType)
 	if err != nil {
 		return nil, err
 	}
@@ -34,11 +34,23 @@ func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name
 }
 
 func (s *AddressBookService) RenameGroup(ctx context.Context, u *user.User, groupID, name string) error {
+	return s.UpdateGroup(ctx, u, groupID, name, "")
+}
+
+func (s *AddressBookService) UpdateGroup(ctx context.Context, u *user.User, groupID, name, groupType string) error {
 	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("group name is required")
+	groupType = strings.TrimSpace(groupType)
+	if name == "" && groupType == "" {
+		return fmt.Errorf("group name or type is required")
 	}
-	return s.repo.UpdateGroupName(ctx, u.ID, groupID, name)
+	if groupType != "" {
+		normalized, err := addressbook.NormalizeGroupType(groupType)
+		if err != nil {
+			return err
+		}
+		groupType = normalized
+	}
+	return s.repo.UpdateGroup(ctx, u.ID, groupID, name, groupType)
 }
 
 func (s *AddressBookService) DeleteGroup(ctx context.Context, u *user.User, groupID string) error {
@@ -46,7 +58,7 @@ func (s *AddressBookService) DeleteGroup(ctx context.Context, u *user.User, grou
 }
 
 func (s *AddressBookService) ListContacts(ctx context.Context, u *user.User) ([]*addressbook.Contact, error) {
-	return s.repo.ListContactsByUser(ctx, u.ID)
+	return s.repo.ListVisibleContacts(ctx, u.ID, u.WalletAddress)
 }
 
 func (s *AddressBookService) CreateContact(ctx context.Context, u *user.User, name, wallet, groupID string, tags []string) (*addressbook.Contact, error) {

@@ -328,6 +328,9 @@ export type ShareExpiryUnit = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'ye
 export interface AddressGroup {
   id: string
   name: string
+  type?: 'personal' | 'team'
+  role?: 'owner' | 'member'
+  canManage?: boolean
   createdAt?: string
 }
 
@@ -337,6 +340,8 @@ export interface AddressContact {
   walletAddress: string
   groupId?: string
   tags?: string[]
+  groupType?: 'personal' | 'team'
+  canManage?: boolean
   createdAt?: string
 }
 
@@ -482,16 +487,16 @@ export const addressBookApi = {
   listGroups() {
     return request<{ items: AddressGroup[] }>('/api/v1/public/webdav/address/groups')
   },
-  createGroup(name: string) {
+  createGroup(name: string, type?: 'personal' | 'team') {
     return request<AddressGroup>('/api/v1/public/webdav/address/groups/create', {
       method: 'POST',
-      body: { name }
+      body: { name, type }
     })
   },
-  updateGroup(id: string, name: string) {
+  updateGroup(id: string, name: string, type?: 'personal' | 'team') {
     return request('/api/v1/public/webdav/address/groups/update', {
       method: 'PUT',
-      body: { id, name }
+      body: { id, name, type }
     })
   },
   deleteGroup(id: string) {
