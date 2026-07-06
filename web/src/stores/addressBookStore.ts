@@ -4,6 +4,23 @@ import { addressBookApi, type AddressGroup, type GroupMember } from '@/api'
 import { showSuccess } from '@/utils/toast'
 
 type AddressGroupFilter = 'all' | string
+type MemberStatus = 'active' | 'pending' | string
+
+function normalizeMemberStatus(status?: MemberStatus) {
+  return String(status || 'active').trim().toLowerCase()
+}
+
+function isPendingMember(member: GroupMember) {
+  return normalizeMemberStatus(member.status) === 'pending'
+}
+
+function matchesMemberKeyword(member: GroupMember, keyword: string) {
+  if (!keyword) return true
+  if (member.name.toLowerCase().includes(keyword)) return true
+  if (member.walletAddress.toLowerCase().includes(keyword)) return true
+  if ((member.tags || []).some(tag => tag.toLowerCase().includes(keyword))) return true
+  return false
+}
 
 async function confirmAction(message: string, title = '提示') {
   try {
@@ -49,32 +66,51 @@ export const useAddressBookStore = defineStore('addressBook', {
   getters: {
     addressGroupCounts(state) {
       const groups: Record<string, number> = {}
+      const pendingGroups: Record<string, number> = {}
+      let activeTotal = 0
+      let pendingTotal = 0
       for (const member of state.groupMembers) {
-        groups[member.groupId] = (groups[member.groupId] || 0) + 1
+        if (isPendingMember(member)) {
+          pendingTotal += 1
+          pendingGroups[member.groupId] = (pendingGroups[member.groupId] || 0) + 1
+        } else {
+          activeTotal += 1
+          groups[member.groupId] = (groups[member.groupId] || 0) + 1
+        }
       }
       return {
-        total: state.groupMembers.length,
-        groups
+        total: activeTotal,
+        active: activeTotal,
+        pending: pendingTotal,
+        all: state.groupMembers.length,
+        groups,
+        pendingGroups
       }
+    },
+    activeGroupMembers(state) {
+      return state.groupMembers.filter(member => !isPendingMember(member))
+    },
+    pendingGroupMembers(state) {
+      let items = state.groupMembers.filter(member => isPendingMember(member))
+      const filter = state.addressGroupFilter
+      if (filter !== 'all') {
+        items = items.filter(item => item.groupId === filter)
+      }
+      const keyword = state.addressSearch.trim().toLowerCase()
+      return items.filter(item => matchesMemberKeyword(item, keyword))
     },
     addressGroupLabel(state) {
       if (state.addressGroupFilter === 'all') return '全部'
       return state.addressGroups.find(group => group.id === state.addressGroupFilter)?.name || '全部'
     },
     filteredGroupMembers(state) {
-      let items = state.groupMembers
+      let items = state.groupMembers.filter(member => !isPendingMember(member))
       const filter = state.addressGroupFilter
       if (filter !== 'all') {
         items = items.filter(item => item.groupId === filter)
       }
       const keyword = state.addressSearch.trim().toLowerCase()
-      if (!keyword) return items
-      return items.filter(item => {
-        if (item.name.toLowerCase().includes(keyword)) return true
-        if (item.walletAddress.toLowerCase().includes(keyword)) return true
-        if ((item.tags || []).some(tag => tag.toLowerCase().includes(keyword))) return true
-        return false
-      })
+      return items.filter(item => matchesMemberKeyword(item, keyword))
     }
   },
   actions: {
@@ -182,6 +218,8 @@ export const useAddressBookStore = defineStore('addressBook', {
       }
       this.memberSaving = true
       try {
+        let savedMember: GroupMember | null = null
+        const isEditing = Boolean(this.memberForm.id)
         if (this.memberForm.id) {
           await addressBookApi.updateMember({
             id: this.memberForm.id,
@@ -191,7 +229,7 @@ export const useAddressBookStore = defineStore('addressBook', {
             tags
           })
         } else {
-          await addressBookApi.createMember({
+          savedMember = await addressBookApi.createMember({
             name,
             walletAddress,
             groupId,
@@ -201,6 +239,11 @@ export const useAddressBookStore = defineStore('addressBook', {
         this.resetMemberForm()
         this.memberDialogVisible = false
         await this.fetchAddressBook()
+        if (savedMember && isPendingMember(savedMember)) {
+          showSuccess('成员申请已提交，等待分组维护者审批')
+        } else {
+          showSuccess(isEditing ? '成员已保存' : '成员已添加')
+        }
       } catch (error: any) {
         showError(error?.message || '保存成员失败')
       } finally {
@@ -228,6 +271,30 @@ export const useAddressBookStore = defineStore('addressBook', {
       } catch (error: any) {
         showError(error?.message || '删除成员失败')
       }
+    },
+    async approveMember(member: GroupMember) {
+      try {
+        await addressBookApi.approveMember(member.id)
+        await this.fetchAddressBook()
+        showSuccess('成员已通过')
+      } catch (error: any) {
+        showError(error?.message || '审批成员失败')
+      }
+    },
+    async rejectMember(member: GroupMember) {
+      if (!(await confirmAction(`确定拒绝 ${member.name} 的加入申请吗？`, '拒绝申请'))) return
+      try {
+        await addressBookApi.rejectMember(member.id)
+        if (this.memberForm.id === member.id) {
+          this.resetMemberForm()
+        }
+        await this.fetchAddressBook()
+        showSuccess('申请已拒绝')
+      } catch (error: any) {
+        showError(error?.message || '拒绝申请失败')
+      }
     }
   }
 })
+
+export { isPendingMember }

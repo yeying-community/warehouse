@@ -15,6 +15,11 @@ var (
 	ErrDuplicateMember    = errors.New("member already exists in group")
 )
 
+const (
+	MemberStatusActive  = "active"
+	MemberStatusPending = "pending"
+)
+
 type Group struct {
 	ID        string
 	UserID    string
@@ -29,6 +34,7 @@ type Member struct {
 	Name          string
 	WalletAddress string
 	Tags          []string
+	Status        string
 	CreatedAt     time.Time
 }
 
@@ -67,6 +73,17 @@ func NewMember(userID, groupID, name, walletAddress string, tags []string) (*Mem
 		Name:          name,
 		WalletAddress: strings.ToLower(walletAddress),
 		Tags:          tags,
+		Status:        MemberStatusActive,
 		CreatedAt:     now,
 	}, nil
+}
+
+func NormalizeMemberStatus(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch status {
+	case MemberStatusPending:
+		return MemberStatusPending
+	default:
+		return MemberStatusActive
+	}
 }

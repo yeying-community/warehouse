@@ -183,6 +183,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			name VARCHAR(255) NOT NULL,
 			wallet_address VARCHAR(255) NOT NULL,
 			tags TEXT[] NOT NULL DEFAULT '{}',
+			status VARCHAR(20) NOT NULL DEFAULT 'active',
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
@@ -347,13 +348,16 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON internal_share_audiences(share_id, audience_type)
 			WHERE audience_type = 'all_users'`,
 
+		// 兼容历史库：旧版 group_members 表缺少审批状态列，必须先补列再执行数据迁移
+		`ALTER TABLE group_members ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`,
+
 		// 兼容历史库：如果旧版成员表存在，则迁移到 group_members
 		`DO $$
 		BEGIN
 			IF to_regclass('public.address_contacts') IS NOT NULL THEN
 				ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
-				INSERT INTO group_members (id, user_id, group_id, name, wallet_address, tags, created_at)
-				SELECT id, user_id, group_id, name, wallet_address, tags, created_at
+				INSERT INTO group_members (id, user_id, group_id, name, wallet_address, tags, status, created_at)
+				SELECT id, user_id, group_id, name, wallet_address, tags, 'active', created_at
 				FROM address_contacts
 				WHERE group_id IS NOT NULL
 				ON CONFLICT DO NOTHING;
@@ -367,6 +371,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		// 分组成员索引
 		`CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_members_group_status ON group_members(group_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_group_members_wallet_lower ON group_members(LOWER(wallet_address))`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_group_members_user_group_wallet
 			ON group_members(user_id, group_id, wallet_address)`,

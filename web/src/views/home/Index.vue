@@ -20,7 +20,7 @@ import { shortenAddress } from '@/utils/address'
 import { showInfo, showSuccess } from '@/utils/toast'
 import { useAddressBookStore } from '@/stores/addressBookStore'
 import { useUploadTaskStore } from '@/stores/uploadTaskStore'
-import AddressBookView from './components/AddressBookView.vue'
+import GroupManagementView from './components/GroupManagementView.vue'
 import HomeOverlays from './components/HomeOverlays.vue'
 import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
@@ -147,7 +147,7 @@ const accessKeys = ref<WebDAVAccessKeyItem[]>([])
 const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const addressBookStore = useAddressBookStore()
-const { addressBookLoading, addressGroups, groupMembers } = storeToRefs(addressBookStore)
+const { addressBookLoading, addressGroups, activeGroupMembers } = storeToRefs(addressBookStore)
 const uploadTaskStore = useUploadTaskStore()
 const editingUsername = ref(false)
 const usernameDraft = ref('')
@@ -535,7 +535,7 @@ const selectedGroupMembers = computed(() => {
     shareUserForm.value.groupIds.map(item => String(item || '').trim())
   )
   if (!groupSet.size) return []
-  return groupMembers.value.filter(item => groupSet.has(String(item.groupId || '').trim()))
+  return activeGroupMembers.value.filter(item => groupSet.has(String(item.groupId || '').trim()))
 })
 const quotaAvailable = computed(() => {
   if (quota.value.unlimited) return null
@@ -5555,22 +5555,12 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <div v-if="managementSection === 'addressBook'" class="user-card user-card-full" v-loading="addressBookLoading && !manualRefresh">
-                <div class="card-head">
-                  <div class="card-title">分组管理</div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="addressBookStore.fetchAddressBook()">刷新</el-button>
-                  </div>
-                </div>
-                <div class="key-summary">
-                  <span>成员：{{ addressBookStore.addressGroupCounts.total }}</span>
-                  <span>分组：{{ addressBookStore.addressGroups.length }}</span>
-                </div>
-                <AddressBookView embedded @refresh="refreshCurrentView" />
+                <GroupManagementView embedded @refresh="refreshCurrentView" />
               </div>
             </div>
           </div>
           <div v-else-if="showAddressBook" class="content-body content-scroll" v-loading="addressBookLoading && !manualRefresh">
-            <AddressBookView @refresh="refreshCurrentView" />
+            <GroupManagementView @refresh="refreshCurrentView" />
           </div>
           <div v-else class="content-body table-wrapper">
             <div v-if="shareViewSummary" class="view-summary-bar">
@@ -5752,7 +5742,7 @@ onBeforeUnmount(() => {
         :share-user-submitting="shareUserSubmitting"
         :share-user-target="shareUserTarget"
         :share-user-form="shareUserForm"
-        :group-members="groupMembers"
+        :group-members="activeGroupMembers"
         :address-groups="addressGroups"
         :selected-group-members="selectedGroupMembers"
         :submit-share-user="submitShareUser"

@@ -54,12 +54,16 @@ func (s *AddressBookService) CreateMember(ctx context.Context, u *user.User, nam
 	if groupID == "" {
 		return nil, fmt.Errorf("group id is required")
 	}
-	if _, err := s.repo.GetGroupByID(ctx, u.ID, groupID); err != nil {
-		return nil, err
-	}
-	member, err := addressbook.NewMember(u.ID, groupID, name, wallet, sanitizeTags(tags))
+	group, err := s.repo.GetVisibleGroupByID(ctx, u.ID, u.WalletAddress, groupID)
 	if err != nil {
 		return nil, err
+	}
+	member, err := addressbook.NewMember(group.UserID, groupID, name, wallet, sanitizeTags(tags))
+	if err != nil {
+		return nil, err
+	}
+	if group.UserID != u.ID {
+		member.Status = addressbook.MemberStatusPending
 	}
 	if err := s.repo.CreateMember(ctx, member); err != nil {
 		return nil, err
@@ -112,5 +116,13 @@ func sanitizeTags(input []string) []string {
 }
 
 func (s *AddressBookService) DeleteMember(ctx context.Context, u *user.User, id string) error {
+	return s.repo.DeleteMember(ctx, u.ID, id)
+}
+
+func (s *AddressBookService) ApproveMember(ctx context.Context, u *user.User, id string) error {
+	return s.repo.UpdateMemberStatus(ctx, u.ID, id, addressbook.MemberStatusActive)
+}
+
+func (s *AddressBookService) RejectMember(ctx context.Context, u *user.User, id string) error {
 	return s.repo.DeleteMember(ctx, u.ID, id)
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yeying-community/warehouse/internal/domain/addressbook"
 	"github.com/yeying-community/warehouse/internal/domain/shareuser"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
@@ -236,6 +237,9 @@ func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner
 	wallets := make([]string, 0)
 	groupByWallet := make(map[string]string)
 	for _, member := range members {
+		if addressbook.NormalizeMemberStatus(member.Status) != addressbook.MemberStatusActive {
+			continue
+		}
 		groupID := strings.TrimSpace(member.GroupID)
 		if groupID == "" {
 			continue

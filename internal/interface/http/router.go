@@ -149,6 +149,8 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/webdav/address/members", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberList)))
 	mux.Handle("/api/v1/public/webdav/address/members/create", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberCreate)))
 	mux.Handle("/api/v1/public/webdav/address/members/update", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberUpdate)))
+	mux.Handle("/api/v1/public/webdav/address/members/approve", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberApprove)))
+	mux.Handle("/api/v1/public/webdav/address/members/reject", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberReject)))
 	mux.Handle("/api/v1/public/webdav/address/members/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberDelete)))
 	if r.webdavAccessKeyHandler != nil {
 		mux.Handle("/api/v1/public/webdav/access-keys/list", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleList)))

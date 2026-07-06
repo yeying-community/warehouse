@@ -41,6 +41,7 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 	type item struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
+		CanManage bool   `json:"canManage"`
 		CreatedAt string `json:"createdAt"`
 	}
 	resp := struct {
@@ -50,6 +51,7 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 		resp.Items = append(resp.Items, item{
 			ID:        g.ID,
 			Name:      g.Name,
+			CanManage: g.UserID == u.ID,
 			CreatedAt: g.CreatedAt.Format(timeLayout),
 		})
 	}
@@ -87,6 +89,7 @@ func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Re
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":        group.ID,
 		"name":      group.Name,
+		"canManage": true,
 		"createdAt": group.CreatedAt.Format(timeLayout),
 	})
 }
@@ -182,6 +185,8 @@ func (h *AddressBookHandler) HandleMemberList(w http.ResponseWriter, r *http.Req
 		WalletAddress string   `json:"walletAddress"`
 		GroupID       string   `json:"groupId"`
 		Tags          []string `json:"tags"`
+		Status        string   `json:"status"`
+		CanManage     bool     `json:"canManage"`
 		CreatedAt     string   `json:"createdAt"`
 	}
 	resp := struct {
@@ -194,6 +199,8 @@ func (h *AddressBookHandler) HandleMemberList(w http.ResponseWriter, r *http.Req
 			WalletAddress: m.WalletAddress,
 			GroupID:       m.GroupID,
 			Tags:          m.Tags,
+			Status:        m.Status,
+			CanManage:     m.UserID == u.ID,
 			CreatedAt:     m.CreatedAt.Format(timeLayout),
 		})
 	}
@@ -241,6 +248,8 @@ func (h *AddressBookHandler) HandleMemberCreate(w http.ResponseWriter, r *http.R
 		"walletAddress": member.WalletAddress,
 		"groupId":       member.GroupID,
 		"tags":          member.Tags,
+		"status":        member.Status,
+		"canManage":     member.UserID == u.ID,
 		"createdAt":     member.CreatedAt.Format(timeLayout),
 	})
 }
@@ -294,7 +303,73 @@ func (h *AddressBookHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.R
 		"walletAddress": member.WalletAddress,
 		"groupId":       member.GroupID,
 		"tags":          member.Tags,
+		"status":        member.Status,
+		"canManage":     member.UserID == u.ID,
 	})
+}
+
+func (h *AddressBookHandler) HandleMemberApprove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.service.ApproveMember(r.Context(), u, req.ID); err != nil {
+		if err == addressbook.ErrMemberNotFound {
+			http.Error(w, "Member not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *AddressBookHandler) HandleMemberReject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.service.RejectMember(r.Context(), u, req.ID); err != nil {
+		if err == addressbook.ErrMemberNotFound {
+			http.Error(w, "Member not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *AddressBookHandler) HandleMemberDelete(w http.ResponseWriter, r *http.Request) {
