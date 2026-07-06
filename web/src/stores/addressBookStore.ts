@@ -172,12 +172,12 @@ export const useAddressBookStore = defineStore('addressBook', {
       this.memberDialogVisible = true
     },
     async submitMember() {
-      const name = this.memberForm.name.trim()
       const walletAddress = this.memberForm.walletAddress.trim()
+      const name = this.memberForm.name.trim() || walletAddress
       const groupId = this.memberForm.groupId.trim()
       const tags = Array.isArray(this.memberForm.tags) ? this.memberForm.tags : []
-      if (!name || !walletAddress || !groupId) {
-        showError('请输入成员名称、钱包地址并选择分组')
+      if (!walletAddress || !groupId) {
+        showError('请输入钱包地址并选择分组')
         return
       }
       this.memberSaving = true

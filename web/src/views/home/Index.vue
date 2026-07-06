@@ -7098,6 +7098,10 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
+.user-card-full:has(.address-page.embedded) {
+  padding: 16px;
+}
+
 .key-summary {
   display: flex;
   flex-wrap: wrap;

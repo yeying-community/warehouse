@@ -242,8 +242,8 @@ async function submitCreateGroup() {
       @closed="resetMemberForm"
     >
       <div class="member-form">
-        <el-input v-model="memberForm.name" placeholder="成员名称 / 备注" size="small" />
         <el-input v-model="memberForm.walletAddress" placeholder="钱包地址" size="small" />
+        <el-input v-model="memberForm.name" placeholder="分组内显示名（可选）" size="small" />
         <el-select v-model="memberForm.groupId" placeholder="选择分组" size="small">
           <el-option
             v-for="group in addressGroups"
@@ -285,6 +285,8 @@ async function submitCreateGroup() {
 
 .address-page.embedded {
   padding: 0;
+  width: 100%;
+  flex: 1;
 }
 
 .card-title {
@@ -398,7 +400,7 @@ async function submitCreateGroup() {
 
 .address-page.embedded .address-sidebar,
 .address-page.embedded .address-main {
-  gap: 10px;
+  gap: 12px;
 }
 
 .address-card {
@@ -413,7 +415,17 @@ async function submitCreateGroup() {
 }
 
 .address-page.embedded .address-card {
-  background: #f7f9fc;
+  background: #fff;
+}
+
+.address-page.embedded .address-layout {
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.address-page.embedded .group-list,
+.address-page.embedded .member-list {
+  max-height: 620px;
 }
 
 .group-list {

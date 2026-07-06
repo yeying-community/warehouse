@@ -52,12 +52,12 @@ func NewMember(userID, groupID, name, walletAddress string, tags []string) (*Mem
 		return nil, errors.New("group id is required")
 	}
 	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, errors.New("member name is required")
-	}
 	walletAddress = strings.TrimSpace(walletAddress)
 	if walletAddress == "" {
 		return nil, errors.New("wallet address is required")
+	}
+	if name == "" {
+		name = strings.ToLower(walletAddress)
 	}
 	now := time.Now()
 	return &Member{
