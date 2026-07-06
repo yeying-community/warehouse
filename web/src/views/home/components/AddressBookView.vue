@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { ElMessageBox } from 'element-plus'
 import { Delete, DocumentCopy, Edit, Refresh } from '@element-plus/icons-vue'
@@ -25,6 +25,7 @@ const {
   addressGroupFilter,
   addressSearch,
   addressBookLoading,
+  groupMembers,
   groupForm,
   groupSaving,
   memberForm,
@@ -45,6 +46,49 @@ const {
 } = addressBookStore
 
 const groupDialogVisible = ref(false)
+const memberAddressOptions = computed(() => {
+  const byWallet = new Map<string, {
+    walletAddress: string
+    names: Set<string>
+    groups: Set<string>
+  }>()
+  for (const member of groupMembers.value) {
+    const walletAddress = member.walletAddress?.trim()
+    if (!walletAddress) continue
+    const key = walletAddress.toLowerCase()
+    let option = byWallet.get(key)
+    if (!option) {
+      option = {
+        walletAddress,
+        names: new Set<string>(),
+        groups: new Set<string>()
+      }
+      byWallet.set(key, option)
+    }
+    if (member.name?.trim() && member.name.trim().toLowerCase() !== key) {
+      option.names.add(member.name.trim())
+    }
+    const groupName = memberGroupName(member)
+    if (groupName && groupName !== '-') {
+      option.groups.add(groupName)
+    }
+  }
+  return Array.from(byWallet.values()).map(option => {
+    const names = Array.from(option.names)
+    const groups = Array.from(option.groups)
+    const title = names[0] || shortenAddress(option.walletAddress)
+    const subtitleParts = [
+      option.walletAddress,
+      groups.length ? groups.join(' / ') : ''
+    ].filter(Boolean)
+    return {
+      value: option.walletAddress,
+      label: [names.join(' '), option.walletAddress, groups.join(' ')].filter(Boolean).join(' '),
+      title,
+      subtitle: subtitleParts.join(' · ')
+    }
+  })
+})
 
 function showError(message: string, title = '错误') {
   void ElMessageBox.alert(message, title, {
@@ -65,6 +109,15 @@ function copyMemberAddress(member: GroupMember) {
 
 function memberGroupName(member: GroupMember) {
   return addressGroups.value.find(group => group.id === member.groupId)?.name || '-'
+}
+
+function handleWalletAddressChange(value: string) {
+  const walletAddress = String(value || '').trim()
+  if (!walletAddress || memberForm.value.name.trim()) return
+  const matched = groupMembers.value.find(member => member.walletAddress?.toLowerCase() === walletAddress.toLowerCase())
+  if (matched && matched.name && matched.name.toLowerCase() !== walletAddress.toLowerCase()) {
+    memberForm.value.name = matched.name
+  }
 }
 
 function openCreateGroupDialog() {
@@ -242,7 +295,28 @@ async function submitCreateGroup() {
       @closed="resetMemberForm"
     >
       <div class="member-form">
-        <el-input v-model="memberForm.walletAddress" placeholder="钱包地址" size="small" />
+        <el-select
+          v-model="memberForm.walletAddress"
+          filterable
+          allow-create
+          default-first-option
+          clearable
+          placeholder="搜索名称 / 地址，或粘贴钱包地址"
+          size="small"
+          @change="handleWalletAddressChange"
+        >
+          <el-option
+            v-for="option in memberAddressOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          >
+            <div class="member-address-option" :title="option.subtitle">
+              <span class="member-address-title">{{ option.title }}</span>
+              <span class="member-address-subtitle mono">{{ option.subtitle }}</span>
+            </div>
+          </el-option>
+        </el-select>
         <el-input v-model="memberForm.name" placeholder="分组内显示名（可选）" size="small" />
         <el-select v-model="memberForm.groupId" placeholder="选择分组" size="small">
           <el-option
@@ -525,6 +599,10 @@ async function submitCreateGroup() {
   gap: 10px;
 }
 
+.member-form :deep(.el-select) {
+  width: 100%;
+}
+
 .group-dialog-body {
   padding-top: 4px;
 }
@@ -612,6 +690,26 @@ async function submitCreateGroup() {
   justify-content: flex-start;
   flex-shrink: 0;
   padding-top: 2px;
+}
+
+.member-address-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.member-address-title {
+  font-size: 13px;
+  color: #1f2d3d;
+  font-weight: 500;
+}
+
+.member-address-subtitle {
+  color: #909399;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .icon-button {
