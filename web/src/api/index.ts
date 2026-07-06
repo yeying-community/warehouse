@@ -483,55 +483,55 @@ export const webdavAccessKeyApi = {
 
 export const groupManagementApi = {
   listGroups() {
-    return request<{ items: ManagedGroup[] }>('/api/v1/public/webdav/address/groups')
+    return request<{ items: ManagedGroup[] }>('/api/v1/public/webdav/group/groups')
   },
   createGroup(name: string) {
-    return request<ManagedGroup>('/api/v1/public/webdav/address/groups/create', {
+    return request<ManagedGroup>('/api/v1/public/webdav/group/groups/create', {
       method: 'POST',
       body: { name }
     })
   },
   updateGroup(id: string, name: string) {
-    return request('/api/v1/public/webdav/address/groups/update', {
+    return request('/api/v1/public/webdav/group/groups/update', {
       method: 'PUT',
       body: { id, name }
     })
   },
   deleteGroup(id: string) {
-    return request('/api/v1/public/webdav/address/groups/delete', {
+    return request('/api/v1/public/webdav/group/groups/delete', {
       method: 'DELETE',
       body: { id }
     })
   },
   listMembers() {
-    return request<{ items: GroupMember[] }>('/api/v1/public/webdav/address/members')
+    return request<{ items: GroupMember[] }>('/api/v1/public/webdav/group/members')
   },
   createMember(payload: { name: string; walletAddress: string; groupId: string; tags?: string[] }) {
-    return request<GroupMember>('/api/v1/public/webdav/address/members/create', {
+    return request<GroupMember>('/api/v1/public/webdav/group/members/create', {
       method: 'POST',
       body: payload
     })
   },
   updateMember(payload: { id: string; name?: string; walletAddress?: string; groupId?: string; tags?: string[] }) {
-    return request<GroupMember>('/api/v1/public/webdav/address/members/update', {
+    return request<GroupMember>('/api/v1/public/webdav/group/members/update', {
       method: 'PUT',
       body: payload
     })
   },
   approveMember(id: string) {
-    return request('/api/v1/public/webdav/address/members/approve', {
+    return request('/api/v1/public/webdav/group/members/approve', {
       method: 'POST',
       body: { id }
     })
   },
   rejectMember(id: string) {
-    return request('/api/v1/public/webdav/address/members/reject', {
+    return request('/api/v1/public/webdav/group/members/reject', {
       method: 'POST',
       body: { id }
     })
   },
   deleteMember(id: string) {
-    return request('/api/v1/public/webdav/address/members/delete', {
+    return request('/api/v1/public/webdav/group/members/delete', {
       method: 'DELETE',
       body: { id }
     })

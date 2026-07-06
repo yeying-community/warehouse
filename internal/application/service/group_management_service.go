@@ -5,25 +5,25 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yeying-community/warehouse/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/domain/groupmanagement"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
 )
 
-type AddressBookService struct {
-	repo repository.AddressBookRepository
+type GroupManagementService struct {
+	repo repository.GroupManagementRepository
 }
 
-func NewAddressBookService(repo repository.AddressBookRepository) *AddressBookService {
-	return &AddressBookService{repo: repo}
+func NewGroupManagementService(repo repository.GroupManagementRepository) *GroupManagementService {
+	return &GroupManagementService{repo: repo}
 }
 
-func (s *AddressBookService) ListGroups(ctx context.Context, u *user.User) ([]*addressbook.Group, error) {
+func (s *GroupManagementService) ListGroups(ctx context.Context, u *user.User) ([]*groupmanagement.Group, error) {
 	return s.repo.ListVisibleGroups(ctx, u.ID, u.WalletAddress)
 }
 
-func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name string) (*addressbook.Group, error) {
-	group, err := addressbook.NewGroup(u.ID, name)
+func (s *GroupManagementService) CreateGroup(ctx context.Context, u *user.User, name string) (*groupmanagement.Group, error) {
+	group, err := groupmanagement.NewGroup(u.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -33,7 +33,7 @@ func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name
 	return group, nil
 }
 
-func (s *AddressBookService) RenameGroup(ctx context.Context, u *user.User, groupID, name string) error {
+func (s *GroupManagementService) RenameGroup(ctx context.Context, u *user.User, groupID, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("group name is required")
@@ -41,15 +41,15 @@ func (s *AddressBookService) RenameGroup(ctx context.Context, u *user.User, grou
 	return s.repo.UpdateGroupName(ctx, u.ID, groupID, name)
 }
 
-func (s *AddressBookService) DeleteGroup(ctx context.Context, u *user.User, groupID string) error {
+func (s *GroupManagementService) DeleteGroup(ctx context.Context, u *user.User, groupID string) error {
 	return s.repo.DeleteGroup(ctx, u.ID, groupID)
 }
 
-func (s *AddressBookService) ListMembers(ctx context.Context, u *user.User) ([]*addressbook.Member, error) {
+func (s *GroupManagementService) ListMembers(ctx context.Context, u *user.User) ([]*groupmanagement.Member, error) {
 	return s.repo.ListVisibleMembers(ctx, u.ID, u.WalletAddress)
 }
 
-func (s *AddressBookService) CreateMember(ctx context.Context, u *user.User, name, wallet, groupID string, tags []string) (*addressbook.Member, error) {
+func (s *GroupManagementService) CreateMember(ctx context.Context, u *user.User, name, wallet, groupID string, tags []string) (*groupmanagement.Member, error) {
 	groupID = strings.TrimSpace(groupID)
 	if groupID == "" {
 		return nil, fmt.Errorf("group id is required")
@@ -58,12 +58,12 @@ func (s *AddressBookService) CreateMember(ctx context.Context, u *user.User, nam
 	if err != nil {
 		return nil, err
 	}
-	member, err := addressbook.NewMember(group.UserID, groupID, name, wallet, sanitizeTags(tags))
+	member, err := groupmanagement.NewMember(group.UserID, groupID, name, wallet, sanitizeTags(tags))
 	if err != nil {
 		return nil, err
 	}
 	if group.UserID != u.ID {
-		member.Status = addressbook.MemberStatusPending
+		member.Status = groupmanagement.MemberStatusPending
 	}
 	if err := s.repo.CreateMember(ctx, member); err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (s *AddressBookService) CreateMember(ctx context.Context, u *user.User, nam
 	return member, nil
 }
 
-func (s *AddressBookService) UpdateMember(ctx context.Context, u *user.User, id, name, wallet, groupID string, tags *[]string) (*addressbook.Member, error) {
+func (s *GroupManagementService) UpdateMember(ctx context.Context, u *user.User, id, name, wallet, groupID string, tags *[]string) (*groupmanagement.Member, error) {
 	member, err := s.repo.GetMemberByID(ctx, u.ID, id)
 	if err != nil {
 		return nil, err
@@ -115,14 +115,14 @@ func sanitizeTags(input []string) []string {
 	return result
 }
 
-func (s *AddressBookService) DeleteMember(ctx context.Context, u *user.User, id string) error {
+func (s *GroupManagementService) DeleteMember(ctx context.Context, u *user.User, id string) error {
 	return s.repo.DeleteMember(ctx, u.ID, id)
 }
 
-func (s *AddressBookService) ApproveMember(ctx context.Context, u *user.User, id string) error {
-	return s.repo.UpdateMemberStatus(ctx, u.ID, id, addressbook.MemberStatusActive)
+func (s *GroupManagementService) ApproveMember(ctx context.Context, u *user.User, id string) error {
+	return s.repo.UpdateMemberStatus(ctx, u.ID, id, groupmanagement.MemberStatusActive)
 }
 
-func (s *AddressBookService) RejectMember(ctx context.Context, u *user.User, id string) error {
+func (s *GroupManagementService) RejectMember(ctx context.Context, u *user.User, id string) error {
 	return s.repo.DeleteMember(ctx, u.ID, id)
 }

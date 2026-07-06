@@ -1,6 +1,6 @@
 # WebDAV 与相关接口 API（简明版）
 
-本文档面向调用方，汇总 WebDAV 文件操作以及与之配套的认证、用户、分享、地址簿、访问密钥等常用接口。
+本文档面向调用方，汇总 WebDAV 文件操作以及与之配套的认证、用户、分享、分组管理、访问密钥等常用接口。
 
 ## 1. 基本信息
 
@@ -244,10 +244,10 @@ Body：
 
 认证接口统一返回以下字段：
 
-- `code`：业务码。当前实现中 **成功固定为 0**，错误时通常等于 **HTTP 状态码**（例如 400/401/404/500）。  
-- `message`：人类可读信息（失败原因）。  
-- `data`：成功数据体，失败时为 `null`。  
-- `timestamp`：服务端毫秒时间戳。  
+- `code`：业务码。当前实现中 **成功固定为 0**，错误时通常等于 **HTTP 状态码**（例如 400/401/404/500）。
+- `message`：人类可读信息（失败原因）。
+- `data`：成功数据体，失败时为 `null`。
+- `timestamp`：服务端毫秒时间戳。
 
 ### 3.7 错误码示例
 
@@ -298,8 +298,8 @@ Body：
 
 2) **错误响应**
 
-- 用户信息/配额接口：`{"error":"...","code":400,"success":false}`  
-- 分享/地址簿等接口：多为 `http.Error`，返回 **纯文本** 错误信息  
+- 用户信息/配额接口：`{"error":"...","code":400,"success":false}`
+- 分享/分组管理等接口：多为 `http.Error`，返回 **纯文本** 错误信息
 
 因此建议客户端兼容：**先看 HTTP 状态码，再尝试 JSON 解析**。
 
@@ -604,16 +604,18 @@ Body：
 { "username": "alice", "password": "newStrongPassword" }
 ```
 
-## 9. 地址簿 API
+## 9. 分组管理 API
 
 以下接口均需要鉴权（Bearer 或 Basic）。
 
 ### 9.1 分组
 
-- `GET /api/v1/public/webdav/address/groups`
-- `POST /api/v1/public/webdav/address/groups/create`
-- `PUT /api/v1/public/webdav/address/groups/update`
-- `DELETE /api/v1/public/webdav/address/groups/delete`
+- `GET /api/v1/public/webdav/group/groups`
+- `POST /api/v1/public/webdav/group/groups/create`
+- `PUT /api/v1/public/webdav/group/groups/update`
+- `DELETE /api/v1/public/webdav/group/groups/delete`
+
+兼容路径 `/api/v1/public/webdav/address/groups*` 暂时保留给旧客户端使用。
 
 创建分组示例：
 
@@ -621,7 +623,7 @@ Body：
 curl -X POST -u alice:password123 \
   -H "Content-Type: application/json" \
   -d '{"name":"合作伙伴"}' \
-  http://127.0.0.1:6065/api/v1/public/webdav/address/groups/create
+  http://127.0.0.1:6065/api/v1/public/webdav/group/groups/create
 ```
 
 列表响应示例：
@@ -635,22 +637,26 @@ curl -X POST -u alice:password123 \
 ```
 
 更新/删除说明：
-- `PUT /api/v1/public/webdav/address/groups/update` 与 `DELETE /api/v1/public/webdav/address/groups/delete` 成功时返回 `200`，通常无响应体。
+- `PUT /api/v1/public/webdav/group/groups/update` 与 `DELETE /api/v1/public/webdav/group/groups/delete` 成功时返回 `200`，通常无响应体。
 
-### 9.2 联系人
+### 9.2 成员
 
-- `GET /api/v1/public/webdav/address/contacts`
-- `POST /api/v1/public/webdav/address/contacts/create`
-- `PUT /api/v1/public/webdav/address/contacts/update`
-- `DELETE /api/v1/public/webdav/address/contacts/delete`
+- `GET /api/v1/public/webdav/group/members`
+- `POST /api/v1/public/webdav/group/members/create`
+- `PUT /api/v1/public/webdav/group/members/update`
+- `POST /api/v1/public/webdav/group/members/approve`
+- `POST /api/v1/public/webdav/group/members/reject`
+- `DELETE /api/v1/public/webdav/group/members/delete`
 
-创建联系人示例：
+兼容路径 `/api/v1/public/webdav/address/members*` 暂时保留给旧客户端使用。
+
+创建成员示例：
 
 ```bash
 curl -X POST -u alice:password123 \
   -H "Content-Type: application/json" \
   -d '{"name":"Bob","walletAddress":"0x1234...","groupId":"<groupId>","tags":["team"]}' \
-  http://127.0.0.1:6065/api/v1/public/webdav/address/contacts/create
+  http://127.0.0.1:6065/api/v1/public/webdav/group/members/create
 ```
 
 列表响应示例：
@@ -670,7 +676,7 @@ curl -X POST -u alice:password123 \
 }
 ```
 
-更新联系人响应示例：
+更新成员响应示例：
 
 ```json
 {
@@ -682,8 +688,10 @@ curl -X POST -u alice:password123 \
 }
 ```
 
-删除联系人说明：
-- `DELETE /api/v1/public/webdav/address/contacts/delete` 成功时返回 `200`，通常无响应体。
+审批/拒绝/删除成员说明：
+- `POST /api/v1/public/webdav/group/members/approve` 将待审批成员置为已通过。
+- `POST /api/v1/public/webdav/group/members/reject` 拒绝待审批成员。
+- `DELETE /api/v1/public/webdav/group/members/delete` 成功时返回 `200`，通常无响应体。
 
 ## 10. 公开分享链接 API
 
@@ -810,7 +818,7 @@ Body：
 - `expiresValue=0` 表示永不过期。
 - `expiresUnit` 支持 `minute`、`hour`、`day`、`week`、`month`、`year`。
 - `targetMode` 支持：`addresses`、`groups`、`all_users`。
-- 地址簿分组展开、全员共享语义、站内共享模型边界，见：[共享能力演进方案.md](./共享能力演进方案.md)
+- 共享分组展开、全员共享语义、站内共享模型边界，见：[共享能力演进方案.md](./共享能力演进方案.md)
 - 当前站内共享实现与数据落点，见：[分享与回收站设计.md](./分享与回收站设计.md)
 
 创建响应常用字段：

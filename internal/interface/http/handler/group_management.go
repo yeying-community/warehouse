@@ -5,24 +5,24 @@ import (
 	"net/http"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
-	"github.com/yeying-community/warehouse/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/domain/groupmanagement"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
-type AddressBookHandler struct {
-	service *service.AddressBookService
+type GroupManagementHandler struct {
+	service *service.GroupManagementService
 	logger  *zap.Logger
 }
 
-func NewAddressBookHandler(service *service.AddressBookService, logger *zap.Logger) *AddressBookHandler {
-	return &AddressBookHandler{
+func NewGroupManagementHandler(service *service.GroupManagementService, logger *zap.Logger) *GroupManagementHandler {
+	return &GroupManagementHandler{
 		service: service,
 		logger:  logger,
 	}
 }
 
-func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -59,7 +59,7 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -78,7 +78,7 @@ func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Re
 	}
 	group, err := h.service.CreateGroup(r.Context(), u, req.Name)
 	if err != nil {
-		if err == addressbook.ErrDuplicateGroupName {
+		if err == groupmanagement.ErrDuplicateGroupName {
 			http.Error(w, "Group name already exists", http.StatusConflict)
 			return
 		}
@@ -94,7 +94,7 @@ func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Re
 	})
 }
 
-func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -117,11 +117,11 @@ func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.service.RenameGroup(r.Context(), u, req.ID, req.Name); err != nil {
-		if err == addressbook.ErrGroupNotFound {
+		if err == groupmanagement.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
-		if err == addressbook.ErrDuplicateGroupName {
+		if err == groupmanagement.ErrDuplicateGroupName {
 			http.Error(w, "Group name already exists", http.StatusConflict)
 			return
 		}
@@ -131,7 +131,7 @@ func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *AddressBookHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -153,7 +153,7 @@ func (h *AddressBookHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.service.DeleteGroup(r.Context(), u, req.ID); err != nil {
-		if err == addressbook.ErrGroupNotFound {
+		if err == groupmanagement.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
@@ -163,7 +163,7 @@ func (h *AddressBookHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *AddressBookHandler) HandleMemberList(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleMemberList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -208,7 +208,7 @@ func (h *AddressBookHandler) HandleMemberList(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *AddressBookHandler) HandleMemberCreate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleMemberCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -230,11 +230,11 @@ func (h *AddressBookHandler) HandleMemberCreate(w http.ResponseWriter, r *http.R
 	}
 	member, err := h.service.CreateMember(r.Context(), u, req.Name, req.WalletAddress, req.GroupID, req.Tags)
 	if err != nil {
-		if err == addressbook.ErrDuplicateMember {
+		if err == groupmanagement.ErrDuplicateMember {
 			http.Error(w, "Member already exists in group", http.StatusConflict)
 			return
 		}
-		if err == addressbook.ErrGroupNotFound {
+		if err == groupmanagement.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
@@ -254,7 +254,7 @@ func (h *AddressBookHandler) HandleMemberCreate(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (h *AddressBookHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -281,15 +281,15 @@ func (h *AddressBookHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.R
 	}
 	member, err := h.service.UpdateMember(r.Context(), u, req.ID, req.Name, req.WalletAddress, req.GroupID, req.Tags)
 	if err != nil {
-		if err == addressbook.ErrMemberNotFound {
+		if err == groupmanagement.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
-		if err == addressbook.ErrDuplicateMember {
+		if err == groupmanagement.ErrDuplicateMember {
 			http.Error(w, "Member already exists in group", http.StatusConflict)
 			return
 		}
-		if err == addressbook.ErrGroupNotFound {
+		if err == groupmanagement.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
@@ -308,7 +308,7 @@ func (h *AddressBookHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.R
 	})
 }
 
-func (h *AddressBookHandler) HandleMemberApprove(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleMemberApprove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -330,7 +330,7 @@ func (h *AddressBookHandler) HandleMemberApprove(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := h.service.ApproveMember(r.Context(), u, req.ID); err != nil {
-		if err == addressbook.ErrMemberNotFound {
+		if err == groupmanagement.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
@@ -340,7 +340,7 @@ func (h *AddressBookHandler) HandleMemberApprove(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *AddressBookHandler) HandleMemberReject(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleMemberReject(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -362,7 +362,7 @@ func (h *AddressBookHandler) HandleMemberReject(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := h.service.RejectMember(r.Context(), u, req.ID); err != nil {
-		if err == addressbook.ErrMemberNotFound {
+		if err == groupmanagement.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
@@ -372,7 +372,7 @@ func (h *AddressBookHandler) HandleMemberReject(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *AddressBookHandler) HandleMemberDelete(w http.ResponseWriter, r *http.Request) {
+func (h *GroupManagementHandler) HandleMemberDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -394,7 +394,7 @@ func (h *AddressBookHandler) HandleMemberDelete(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := h.service.DeleteMember(r.Context(), u, req.ID); err != nil {
-		if err == addressbook.ErrMemberNotFound {
+		if err == groupmanagement.ErrMemberNotFound {
 			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}

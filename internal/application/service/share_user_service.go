@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yeying-community/warehouse/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/domain/groupmanagement"
 	"github.com/yeying-community/warehouse/internal/domain/shareuser"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
@@ -19,12 +19,12 @@ import (
 
 // ShareUserService 定向分享服务
 type ShareUserService struct {
-	repo               repository.UserShareRepository
-	userRepo           user.Repository
-	addressBookService *AddressBookService
-	notification       *NotificationService
-	config             *config.Config
-	logger             *zap.Logger
+	repo                   repository.UserShareRepository
+	userRepo               user.Repository
+	groupManagementService *GroupManagementService
+	notification           *NotificationService
+	config                 *config.Config
+	logger                 *zap.Logger
 }
 
 func (s *ShareUserService) Repository() repository.UserShareRepository {
@@ -45,18 +45,18 @@ func (s *ShareUserService) Config() *config.Config {
 func NewShareUserService(
 	repo repository.UserShareRepository,
 	userRepo user.Repository,
-	addressBookService *AddressBookService,
+	groupManagementService *GroupManagementService,
 	notificationService *NotificationService,
 	cfg *config.Config,
 	logger *zap.Logger,
 ) *ShareUserService {
 	return &ShareUserService{
-		repo:               repo,
-		userRepo:           userRepo,
-		addressBookService: addressBookService,
-		notification:       notificationService,
-		config:             cfg,
-		logger:             logger,
+		repo:                   repo,
+		userRepo:               userRepo,
+		groupManagementService: groupManagementService,
+		notification:           notificationService,
+		config:                 cfg,
+		logger:                 logger,
 	}
 }
 
@@ -212,13 +212,13 @@ func (s *ShareUserService) resolveTargetUsers(ctx context.Context, wallets []str
 }
 
 func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner *user.User, groupIDs []string) ([]repository.UserShareAudience, error) {
-	if s.addressBookService == nil {
-		return nil, fmt.Errorf("address book service is not available")
+	if s.groupManagementService == nil {
+		return nil, fmt.Errorf("group management service is not available")
 	}
 	if len(groupIDs) == 0 {
 		return nil, fmt.Errorf("no target groups provided")
 	}
-	members, err := s.addressBookService.ListMembers(ctx, owner)
+	members, err := s.groupManagementService.ListMembers(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner
 	wallets := make([]string, 0)
 	groupByWallet := make(map[string]string)
 	for _, member := range members {
-		if addressbook.NormalizeMemberStatus(member.Status) != addressbook.MemberStatusActive {
+		if groupmanagement.NormalizeMemberStatus(member.Status) != groupmanagement.MemberStatusActive {
 			continue
 		}
 		groupID := strings.TrimSpace(member.GroupID)

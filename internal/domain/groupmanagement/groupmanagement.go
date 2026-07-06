@@ -1,4 +1,4 @@
-package addressbook
+package groupmanagement
 
 import (
 	"errors"

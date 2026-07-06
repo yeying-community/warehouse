@@ -401,8 +401,8 @@ function canManageMember(member: GroupMember) {
                 :value="option.value"
               >
                 <div class="member-address-option" :title="option.subtitle">
-                  <span class="member-group-management-title">{{ option.title }}</span>
-                  <span class="member-group-management-subtitle mono">{{ option.subtitle }}</span>
+                  <span class="member-address-title">{{ option.title }}</span>
+                  <span class="member-address-subtitle mono">{{ option.subtitle }}</span>
                 </div>
               </el-option>
             </el-select>
@@ -728,13 +728,13 @@ function canManageMember(member: GroupMember) {
   min-width: 0;
 }
 
-.member-group-management-title {
+.member-address-title {
   font-size: 13px;
   color: #1f2d3d;
   font-weight: 500;
 }
 
-.member-group-management-subtitle {
+.member-address-subtitle {
   color: #909399;
   overflow: hidden;
   text-overflow: ellipsis;

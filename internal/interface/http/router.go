@@ -28,7 +28,7 @@ type Router struct {
 	shareHandler               *handler.ShareHandler
 	shareUserHandler           *handler.ShareUserHandler
 	webdavAccessKeyHandler     *handler.WebDAVAccessKeyHandler
-	addressBookHandler         *handler.AddressBookHandler
+	groupManagementHandler     *handler.GroupManagementHandler
 	notificationHandler        *handler.NotificationHandler
 	logger                     *zap.Logger
 }
@@ -50,7 +50,7 @@ func NewRouter(
 	shareHandler *handler.ShareHandler,
 	shareUserHandler *handler.ShareUserHandler,
 	webdavAccessKeyHandler *handler.WebDAVAccessKeyHandler,
-	addressBookHandler *handler.AddressBookHandler,
+	groupManagementHandler *handler.GroupManagementHandler,
 	notificationHandler *handler.NotificationHandler,
 	logger *zap.Logger,
 ) *Router {
@@ -70,7 +70,7 @@ func NewRouter(
 		shareHandler:               shareHandler,
 		shareUserHandler:           shareUserHandler,
 		webdavAccessKeyHandler:     webdavAccessKeyHandler,
-		addressBookHandler:         addressBookHandler,
+		groupManagementHandler:     groupManagementHandler,
 		notificationHandler:        notificationHandler,
 		logger:                     logger,
 	}
@@ -142,16 +142,26 @@ func (r *Router) Setup() http.Handler {
 	mux.Handle("/api/v1/public/webdav/recycle/clear", r.createAuthenticatedHandler(http.HandlerFunc(r.recycleHandler.HandleClear)))
 
 	// 分组管理
-	mux.Handle("/api/v1/public/webdav/address/groups", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleGroupList)))
-	mux.Handle("/api/v1/public/webdav/address/groups/create", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleGroupCreate)))
-	mux.Handle("/api/v1/public/webdav/address/groups/update", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleGroupUpdate)))
-	mux.Handle("/api/v1/public/webdav/address/groups/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleGroupDelete)))
-	mux.Handle("/api/v1/public/webdav/address/members", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberList)))
-	mux.Handle("/api/v1/public/webdav/address/members/create", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberCreate)))
-	mux.Handle("/api/v1/public/webdav/address/members/update", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberUpdate)))
-	mux.Handle("/api/v1/public/webdav/address/members/approve", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberApprove)))
-	mux.Handle("/api/v1/public/webdav/address/members/reject", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberReject)))
-	mux.Handle("/api/v1/public/webdav/address/members/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.addressBookHandler.HandleMemberDelete)))
+	mux.Handle("/api/v1/public/webdav/group/groups", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupList)))
+	mux.Handle("/api/v1/public/webdav/group/groups/create", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupCreate)))
+	mux.Handle("/api/v1/public/webdav/group/groups/update", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupUpdate)))
+	mux.Handle("/api/v1/public/webdav/group/groups/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupDelete)))
+	mux.Handle("/api/v1/public/webdav/group/members", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberList)))
+	mux.Handle("/api/v1/public/webdav/group/members/create", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberCreate)))
+	mux.Handle("/api/v1/public/webdav/group/members/update", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberUpdate)))
+	mux.Handle("/api/v1/public/webdav/group/members/approve", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberApprove)))
+	mux.Handle("/api/v1/public/webdav/group/members/reject", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberReject)))
+	mux.Handle("/api/v1/public/webdav/group/members/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberDelete)))
+	mux.Handle("/api/v1/public/webdav/address/groups", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupList)))
+	mux.Handle("/api/v1/public/webdav/address/groups/create", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupCreate)))
+	mux.Handle("/api/v1/public/webdav/address/groups/update", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupUpdate)))
+	mux.Handle("/api/v1/public/webdav/address/groups/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleGroupDelete)))
+	mux.Handle("/api/v1/public/webdav/address/members", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberList)))
+	mux.Handle("/api/v1/public/webdav/address/members/create", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberCreate)))
+	mux.Handle("/api/v1/public/webdav/address/members/update", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberUpdate)))
+	mux.Handle("/api/v1/public/webdav/address/members/approve", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberApprove)))
+	mux.Handle("/api/v1/public/webdav/address/members/reject", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberReject)))
+	mux.Handle("/api/v1/public/webdav/address/members/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.groupManagementHandler.HandleMemberDelete)))
 	if r.webdavAccessKeyHandler != nil {
 		mux.Handle("/api/v1/public/webdav/access-keys/list", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleList)))
 		mux.Handle("/api/v1/public/webdav/access-keys/create", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleCreate)))
