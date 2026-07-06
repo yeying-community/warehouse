@@ -4401,7 +4401,7 @@ async function restoreSharedWithMeView() {
 }
 
 async function restoreView() {
-  const storedView = localStorage.getItem(VIEW_STORAGE_KEY) as ViewKey | 'addressBook' | null
+  const storedView = localStorage.getItem(VIEW_STORAGE_KEY) as ViewKey | null
   if (storedView === 'recycle') {
     enterRecycle()
     return
@@ -4422,7 +4422,7 @@ async function restoreView() {
     enterQuotaManage()
     return
   }
-  if (storedView === 'group' || storedView === 'addressBook') {
+  if (storedView === 'group') {
     enterGroupView()
     return
   }
@@ -4525,21 +4525,20 @@ onMounted(() => {
 
 function handleExternalNavigate(event: Event) {
   const customEvent = event as CustomEvent<{
-    view?: ViewKey | 'addressBook'
-    section?: 'account' | 'keys' | 'adminUsers' | 'group' | 'addressBook' | 'uploadTasks'
+    view?: ViewKey
+    section?: 'account' | 'keys' | 'adminUsers' | 'group' | 'uploadTasks'
   }>
   const view = customEvent?.detail?.view
   if (!view) return
   if (view === 'quotaManage') {
-    const section = customEvent.detail?.section === 'addressBook' ? 'group' : customEvent.detail?.section
-    enterQuotaManage(section || 'account')
+    enterQuotaManage(customEvent.detail?.section || 'account')
     return
   }
   if (view === 'sharedWithMe') {
     enterSharedWithMeList()
     return
   }
-  if (view === 'group' || view === 'addressBook') {
+  if (view === 'group') {
     enterGroupView()
     return
   }
