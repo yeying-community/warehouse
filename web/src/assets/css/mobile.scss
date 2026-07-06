@@ -216,20 +216,20 @@
   }
 
 
-  .address-page {
+  .group-management-page {
     padding: 0 !important;
     gap: 12px !important;
   }
 
-  .address-stats {
+  .group-management-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 
-  .address-layout {
+  .group-management-layout {
     grid-template-columns: 1fr !important;
   }
 
-  .address-card {
+  .group-management-card {
     padding: 10px !important;
   }
 
@@ -239,7 +239,7 @@
     overflow: visible !important;
   }
 
-  .address-toolbar {
+  .group-management-toolbar {
     flex-direction: column !important;
     align-items: stretch !important;
   }
@@ -417,7 +417,7 @@
     grid-template-columns: 1fr !important;
   }
 
-  .address-stats {
+  .group-management-stats {
     grid-template-columns: 1fr !important;
   }
 }

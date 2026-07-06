@@ -7092,7 +7092,7 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
-.user-card-full:has(.address-page.embedded) {
+.user-card-full:has(.group-management-page.embedded) {
   padding: 16px;
 }
 

@@ -197,18 +197,18 @@ function canManageMember(member: GroupMember) {
 </script>
 
 <template>
-  <div class="address-page" :class="{ embedded: props.embedded }">
-    <div class="address-hero">
-      <div class="address-title-row" :class="{ 'is-detail': inGroupDetail }">
-        <div class="address-hero-main">
-          <div class="address-title">分组管理</div>
-          <div v-if="!inGroupDetail" class="address-sub">维护共享分组、成员准入和审批，用于安全地控制协作范围。</div>
+  <div class="group-management-page" :class="{ embedded: props.embedded }">
+    <div class="group-management-hero">
+      <div class="group-management-title-row" :class="{ 'is-detail': inGroupDetail }">
+        <div class="group-management-hero-main">
+          <div class="group-management-title">分组管理</div>
+          <div v-if="!inGroupDetail" class="group-management-sub">维护共享分组、成员准入和审批，用于安全地控制协作范围。</div>
         </div>
         <div v-if="inGroupDetail" class="detail-group-title">{{ selectedGroup?.name }}</div>
-        <div v-if="inGroupDetail" class="address-hero-actions">
+        <div v-if="inGroupDetail" class="group-management-hero-actions">
           <el-button :icon="ArrowLeft" @click="backToGroupList">返回分组列表</el-button>
         </div>
-        <div v-else class="address-hero-actions">
+        <div v-else class="group-management-hero-actions">
           <el-button type="primary" @click="openCreateGroupDialog">新建分组</el-button>
           <el-tooltip content="刷新" placement="top">
             <el-button
@@ -224,14 +224,14 @@ function canManageMember(member: GroupMember) {
       </div>
     </div>
 
-    <div v-if="!inGroupDetail" class="address-list-page">
-      <div class="address-toolbar">
+    <div v-if="!inGroupDetail" class="group-management-list-page">
+      <div class="group-management-toolbar">
         <div class="toolbar-left">
           <el-input v-model="groupSearch" clearable placeholder="搜索分组" />
         </div>
       </div>
 
-      <div v-if="!visibleGroups.length" class="address-empty">暂无分组</div>
+      <div v-if="!visibleGroups.length" class="group-management-empty">暂无分组</div>
       <div v-else class="group-table">
         <button
           v-for="group in visibleGroups"
@@ -255,14 +255,14 @@ function canManageMember(member: GroupMember) {
             <el-button size="small" text type="danger" @click="removeGroup(group)">删除</el-button>
           </div>
           <div v-else class="group-list-actions" @click.stop>
-            <span class="address-tag-empty">无操作</span>
+            <span class="group-management-tag-empty">无操作</span>
           </div>
         </button>
       </div>
     </div>
 
-    <div v-else class="address-detail-page">
-      <div class="address-toolbar">
+    <div v-else class="group-management-detail-page">
+      <div class="group-management-toolbar">
         <div class="toolbar-left">
           <el-input v-model="groupSearch" clearable placeholder="搜索成员 / 钱包 / 标签" />
         </div>
@@ -281,7 +281,7 @@ function canManageMember(member: GroupMember) {
         </div>
       </div>
 
-      <div v-if="!detailMembers.length" class="address-empty">暂无成员</div>
+      <div v-if="!detailMembers.length" class="group-management-empty">暂无成员</div>
       <div v-else class="member-table">
         <div class="member-table-head">
           <span>成员</span>
@@ -312,7 +312,7 @@ function canManageMember(member: GroupMember) {
             <el-tag v-for="tag in member.tags || []" :key="tag" size="small" type="info">
               {{ tag }}
             </el-tag>
-            <span v-if="!member.tags || !member.tags.length" class="address-tag-empty">无标签</span>
+            <span v-if="!member.tags || !member.tags.length" class="group-management-tag-empty">无标签</span>
           </div>
           <div>
             <el-tag size="small" :type="memberStatusType(member)" effect="plain">
@@ -345,7 +345,7 @@ function canManageMember(member: GroupMember) {
                 <el-button class="icon-button" type="danger" link :icon="Delete" @click="removeMember(member)" />
               </el-tooltip>
             </template>
-            <span v-else class="address-tag-empty">无操作</span>
+            <span v-else class="group-management-tag-empty">无操作</span>
           </div>
         </div>
       </div>
@@ -401,8 +401,8 @@ function canManageMember(member: GroupMember) {
                 :value="option.value"
               >
                 <div class="member-address-option" :title="option.subtitle">
-                  <span class="member-address-title">{{ option.title }}</span>
-                  <span class="member-address-subtitle mono">{{ option.subtitle }}</span>
+                  <span class="member-group-management-title">{{ option.title }}</span>
+                  <span class="member-group-management-subtitle mono">{{ option.subtitle }}</span>
                 </div>
               </el-option>
             </el-select>
@@ -431,7 +431,7 @@ function canManageMember(member: GroupMember) {
 </template>
 
 <style lang="scss" scoped>
-.address-page {
+.group-management-page {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -439,7 +439,7 @@ function canManageMember(member: GroupMember) {
   min-height: 0;
 }
 
-.address-page.embedded {
+.group-management-page.embedded {
   padding: 0;
   width: 100%;
   flex: 1;
@@ -462,18 +462,18 @@ function canManageMember(member: GroupMember) {
   font-size: 12px;
 }
 
-.address-hero,
-.address-list-page,
-.address-detail-page {
+.group-management-hero,
+.group-management-list-page,
+.group-management-detail-page {
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
 }
 
-.address-title-row,
+.group-management-title-row,
 .detail-header,
-.address-toolbar,
+.group-management-toolbar,
 .list-title-row {
   display: flex;
   align-items: center;
@@ -481,21 +481,21 @@ function canManageMember(member: GroupMember) {
   gap: 12px;
 }
 
-.address-title-row.is-detail {
+.group-management-title-row.is-detail {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 }
 
-.address-title-row.is-detail .address-hero-actions {
+.group-management-title-row.is-detail .group-management-hero-actions {
   justify-content: flex-end;
 }
 
-.address-hero-main,
+.group-management-hero-main,
 .detail-title-side {
   min-width: 0;
 }
 
-.address-hero-actions,
+.group-management-hero-actions,
 .detail-actions,
 .toolbar-left,
 .toolbar-right,
@@ -509,7 +509,7 @@ function canManageMember(member: GroupMember) {
   flex: 1;
 }
 
-.address-title {
+.group-management-title {
   font-size: 20px;
   font-weight: 600;
   color: #1f2d3d;
@@ -527,12 +527,12 @@ function canManageMember(member: GroupMember) {
   text-align: center;
 }
 
-.address-sub {
+.group-management-sub {
   font-size: 13px;
   color: #909399;
 }
 
-.address-card {
+.group-management-card {
   background: #fff;
   border-radius: 12px;
   padding: 12px;
@@ -585,7 +585,7 @@ function canManageMember(member: GroupMember) {
 }
 
 .group-list-meta,
-.address-total {
+.group-management-total {
   font-size: 12px;
   color: #606266;
 }
@@ -728,13 +728,13 @@ function canManageMember(member: GroupMember) {
   min-width: 0;
 }
 
-.member-address-title {
+.member-group-management-title {
   font-size: 13px;
   color: #1f2d3d;
   font-weight: 500;
 }
 
-.member-address-subtitle {
+.member-group-management-subtitle {
   color: #909399;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -753,13 +753,13 @@ function canManageMember(member: GroupMember) {
   padding: 0;
 }
 
-.address-tag-empty,
-.address-empty {
+.group-management-tag-empty,
+.group-management-empty {
   font-size: 12px;
   color: #909399;
 }
 
-.address-empty {
+.group-management-empty {
   padding: 8px;
 }
 
@@ -770,9 +770,9 @@ function canManageMember(member: GroupMember) {
     grid-template-columns: 1fr;
   }
 
-  .address-title-row,
+  .group-management-title-row,
   .detail-header,
-  .address-toolbar,
+  .group-management-toolbar,
   .list-title-row,
   .detail-title-side {
     flex-direction: column;
@@ -781,11 +781,11 @@ function canManageMember(member: GroupMember) {
 
   .toolbar-right,
   .detail-actions,
-  .address-hero-actions {
+  .group-management-hero-actions {
     justify-content: flex-start;
   }
 
-  .address-title-row.is-detail {
+  .group-management-title-row.is-detail {
     display: flex;
   }
 
