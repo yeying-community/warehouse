@@ -6,7 +6,7 @@ import { Delete, DocumentCopy, Edit, Refresh } from '@element-plus/icons-vue'
 import { useAddressBookStore } from '@/stores/addressBookStore'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
-import type { AddressContact } from '@/api'
+import type { GroupMember } from '@/api'
 
 const props = withDefaults(defineProps<{
   embedded?: boolean
@@ -27,21 +27,21 @@ const {
   addressBookLoading,
   groupForm,
   groupSaving,
-  contactForm,
-  contactSaving,
-  contactDialogVisible,
-  filteredAddressContacts
+  memberForm,
+  memberSaving,
+  memberDialogVisible,
+  filteredGroupMembers
 } = storeToRefs(addressBookStore)
 const {
   selectAddressGroup,
   createGroup,
   renameGroup,
   removeGroup,
-  openCreateContactDialog,
-  submitContact,
-  resetContactForm,
-  editContact,
-  removeContact
+  openCreateMemberDialog,
+  submitMember,
+  resetMemberForm,
+  editMember,
+  removeMember
 } = addressBookStore
 
 const groupDialogVisible = ref(false)
@@ -54,8 +54,8 @@ function showError(message: string, title = '错误') {
   })
 }
 
-function copyContactAddress(contact: AddressContact) {
-  const address = contact.walletAddress?.trim()
+function copyMemberAddress(member: GroupMember) {
+  const address = member.walletAddress?.trim()
   if (!address) {
     showError('暂无钱包地址')
     return
@@ -63,24 +63,18 @@ function copyContactAddress(contact: AddressContact) {
   copyText(address, '钱包地址已复制')
 }
 
-function contactGroupName(contact: AddressContact) {
-  return addressGroups.value.find(group => group.id === contact.groupId)?.name || '未分组'
-}
-
-function groupTypeLabel(type?: string) {
-  return type === 'team' ? '团队' : '个人'
+function memberGroupName(member: GroupMember) {
+  return addressGroups.value.find(group => group.id === member.groupId)?.name || '-'
 }
 
 function openCreateGroupDialog() {
   groupForm.value.name = ''
-  groupForm.value.type = 'personal'
   groupDialogVisible.value = true
 }
 
 function closeCreateGroupDialog() {
   groupDialogVisible.value = false
   groupForm.value.name = ''
-  groupForm.value.type = 'personal'
 }
 
 async function submitCreateGroup() {
@@ -100,7 +94,7 @@ async function submitCreateGroup() {
           <div class="address-sub">维护共享分组与成员，用于快速、安全地选择共享对象。</div>
         </div>
         <div class="address-hero-actions">
-          <el-button type="primary" @click="openCreateContactDialog">添加成员</el-button>
+          <el-button type="primary" @click="openCreateMemberDialog">添加成员</el-button>
           <el-tooltip content="刷新" placement="top">
             <el-button
               class="refresh-button"
@@ -122,10 +116,6 @@ async function submitCreateGroup() {
           <span class="stat-label">分组</span>
           <span class="stat-value">{{ addressGroups.length }}</span>
         </div>
-        <div class="stat-card">
-          <span class="stat-label">未分组</span>
-          <span class="stat-value">{{ addressGroupCounts.ungrouped }}</span>
-        </div>
       </div>
     </div>
 
@@ -146,23 +136,13 @@ async function submitCreateGroup() {
                 <span class="count">{{ addressGroupCounts.total }}</span>
               </button>
             </div>
-            <div class="group-row" :class="{ active: addressGroupFilter === 'ungrouped' }">
-              <button type="button" class="group-chip" @click="selectAddressGroup('ungrouped')">
-                <span>未分组</span>
-                <span class="count">{{ addressGroupCounts.ungrouped }}</span>
-              </button>
-            </div>
             <div v-if="!addressGroups.length" class="address-empty">暂无分组</div>
             <div v-for="group in addressGroups" :key="group.id" class="group-row" :class="{ active: addressGroupFilter === group.id }">
               <button type="button" class="group-chip" @click="selectAddressGroup(group.id)">
                 <span>{{ group.name }}</span>
-                <el-tag size="small" effect="plain" :type="group.type === 'team' ? 'success' : 'info'">
-                  {{ groupTypeLabel(group.type) }}
-                </el-tag>
-                <el-tag v-if="group.canManage === false" size="small" effect="plain" type="warning">成员</el-tag>
                 <span class="count">{{ addressGroupCounts.groups[group.id] || 0 }}</span>
               </button>
-              <div v-if="group.canManage !== false" class="actions">
+              <div class="actions">
                 <el-button size="small" text @click="renameGroup(group)">重命名</el-button>
                 <el-button size="small" text type="danger" @click="removeGroup(group)">删除</el-button>
               </div>
@@ -178,8 +158,8 @@ async function submitCreateGroup() {
             <span class="address-filter">当前分组：{{ addressGroupLabel }}</span>
           </div>
           <div class="toolbar-right">
-            <el-button v-if="props.embedded" type="primary" size="small" @click="openCreateContactDialog">添加成员</el-button>
-            <span class="address-total">共 {{ filteredAddressContacts.length }} 位成员</span>
+            <el-button v-if="props.embedded" type="primary" size="small" @click="openCreateMemberDialog">添加成员</el-button>
+            <span class="address-total">共 {{ filteredGroupMembers.length }} 位成员</span>
           </div>
         </div>
 
@@ -190,45 +170,43 @@ async function submitCreateGroup() {
               <div class="card-subtitle">按名称、钱包地址或标签快速定位成员。</div>
             </div>
           </div>
-          <div class="contact-list">
-            <div v-if="!filteredAddressContacts.length" class="address-empty">暂无成员</div>
-            <div v-for="contact in filteredAddressContacts" :key="contact.id" class="contact-row">
-              <div class="contact-main">
-                <div class="contact-top">
-                  <div class="contact-name">{{ contact.name }}</div>
-                  <el-tag size="small" effect="plain">{{ contactGroupName(contact) }}</el-tag>
-                  <el-tag v-if="contact.groupType === 'team'" size="small" effect="plain" type="success">团队</el-tag>
-                  <el-tag v-if="contact.canManage === false" size="small" effect="plain" type="warning">只读</el-tag>
+          <div class="member-list">
+            <div v-if="!filteredGroupMembers.length" class="address-empty">暂无成员</div>
+            <div v-for="member in filteredGroupMembers" :key="member.id" class="member-row">
+              <div class="member-main">
+                <div class="member-top">
+                  <div class="member-name">{{ member.name }}</div>
+                  <el-tag size="small" effect="plain">{{ memberGroupName(member) }}</el-tag>
                 </div>
-                <div class="contact-wallet">
-                  <span class="contact-label">钱包地址</span>
-                  <span class="mono wallet-text" :title="contact.walletAddress">
-                    {{ shortenAddress(contact.walletAddress) }}
+                <div class="member-wallet">
+                  <span class="member-label">钱包地址</span>
+                  <span class="mono wallet-text" :title="member.walletAddress">
+                    {{ shortenAddress(member.walletAddress) }}
                   </span>
                   <el-tooltip content="复制钱包地址" placement="top">
                     <el-button
                       class="icon-button icon-button-inline"
                       link
                       :icon="DocumentCopy"
-                      :disabled="!contact.walletAddress"
-                      @click="copyContactAddress(contact)"
+                      :disabled="!member.walletAddress"
+                      @click="copyMemberAddress(member)"
                     />
                   </el-tooltip>
                 </div>
-                <div class="contact-tags">
-                  <span class="contact-label">标签</span>
-                  <el-tag v-for="tag in contact.tags || []" :key="tag" size="small" type="info">
+                <div class="member-tags">
+                  <span class="member-label">标签</span>
+                  <el-tag v-for="tag in member.tags || []" :key="tag" size="small" type="info">
                     {{ tag }}
                   </el-tag>
-                  <span v-if="!contact.tags || !contact.tags.length" class="address-tag-empty">无标签</span>
+                  <span v-if="!member.tags || !member.tags.length" class="address-tag-empty">无标签</span>
                 </div>
               </div>
-              <div v-if="contact.canManage !== false" class="contact-actions">
+              <div class="member-actions">
                 <el-tooltip content="编辑" placement="top">
-                  <el-button class="icon-button" link :icon="Edit" @click="editContact(contact)" />
+                  <el-button class="icon-button" link :icon="Edit" @click="editMember(member)" />
                 </el-tooltip>
                 <el-tooltip content="删除" placement="top">
-                  <el-button class="icon-button" type="danger" link :icon="Delete" @click="removeContact(contact)" />
+                  <el-button class="icon-button" type="danger" link :icon="Delete" @click="removeMember(member)" />
                 </el-tooltip>
               </div>
             </div>
@@ -250,13 +228,6 @@ async function submitCreateGroup() {
           size="small"
           @keyup.enter="submitCreateGroup"
         />
-        <el-radio-group v-model="groupForm.type" size="small">
-          <el-radio-button value="personal">个人分组</el-radio-button>
-          <el-radio-button value="team">团队分组</el-radio-button>
-        </el-radio-group>
-        <div class="group-type-hint">
-          团队分组对组内成员可见，个人分组仅自己可见。
-        </div>
       </div>
       <template #footer>
         <el-button @click="closeCreateGroupDialog">取消</el-button>
@@ -265,25 +236,24 @@ async function submitCreateGroup() {
     </el-dialog>
 
     <el-dialog
-      v-model="contactDialogVisible"
-      :title="contactForm.id ? '编辑成员' : '添加成员'"
+      v-model="memberDialogVisible"
+      :title="memberForm.id ? '编辑成员' : '添加成员'"
       width="520px"
-      @closed="resetContactForm"
+      @closed="resetMemberForm"
     >
-      <div class="contact-form">
-        <el-input v-model="contactForm.name" placeholder="成员名称 / 备注" size="small" />
-        <el-input v-model="contactForm.walletAddress" placeholder="钱包地址" size="small" />
-        <el-select v-model="contactForm.groupId" placeholder="选择分组" size="small">
-          <el-option label="未分组" value="" />
+      <div class="member-form">
+        <el-input v-model="memberForm.name" placeholder="成员名称 / 备注" size="small" />
+        <el-input v-model="memberForm.walletAddress" placeholder="钱包地址" size="small" />
+        <el-select v-model="memberForm.groupId" placeholder="选择分组" size="small">
           <el-option
-            v-for="group in addressGroups.filter(item => item.canManage !== false)"
+            v-for="group in addressGroups"
             :key="group.id"
-            :label="`${group.name}（${groupTypeLabel(group.type)}）`"
+            :label="group.name"
             :value="group.id"
           />
         </el-select>
         <el-select
-          v-model="contactForm.tags"
+          v-model="memberForm.tags"
           multiple
           filterable
           allow-create
@@ -294,10 +264,10 @@ async function submitCreateGroup() {
         />
       </div>
       <template #footer>
-        <el-button @click="contactDialogVisible = false">取消</el-button>
-        <el-button @click="resetContactForm">清空</el-button>
-        <el-button type="primary" :loading="contactSaving" @click="submitContact">
-          {{ contactForm.id ? '保存' : '添加' }}
+        <el-button @click="memberDialogVisible = false">取消</el-button>
+        <el-button @click="resetMemberForm">清空</el-button>
+        <el-button type="primary" :loading="memberSaving" @click="submitMember">
+          {{ memberForm.id ? '保存' : '添加' }}
         </el-button>
       </template>
     </el-dialog>
@@ -386,7 +356,7 @@ async function submitCreateGroup() {
 
 .address-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -503,12 +473,6 @@ async function submitCreateGroup() {
   font-size: 11px;
 }
 
-.group-type-hint {
-  font-size: 12px;
-  line-height: 1.5;
-  color: #909399;
-}
-
 .address-toolbar {
   display: flex;
   align-items: center;
@@ -543,7 +507,7 @@ async function submitCreateGroup() {
   color: #606266;
 }
 
-.contact-form {
+.member-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -560,7 +524,7 @@ async function submitCreateGroup() {
   gap: 12px;
 }
 
-.contact-list {
+.member-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -568,7 +532,7 @@ async function submitCreateGroup() {
   max-height: 480px;
 }
 
-.contact-row {
+.member-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -579,7 +543,7 @@ async function submitCreateGroup() {
   border: 1px solid #eef1f4;
 }
 
-.contact-main {
+.member-main {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -587,14 +551,14 @@ async function submitCreateGroup() {
   flex: 1;
 }
 
-.contact-top {
+.member-top {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
-.contact-wallet {
+.member-wallet {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -603,7 +567,7 @@ async function submitCreateGroup() {
   flex-wrap: wrap;
 }
 
-.contact-label {
+.member-label {
   font-size: 12px;
   color: #909399;
   flex-shrink: 0;
@@ -616,21 +580,21 @@ async function submitCreateGroup() {
   white-space: nowrap;
 }
 
-.contact-name {
+.member-name {
   font-weight: 600;
   color: #1f2d3d;
   font-size: 14px;
   min-width: 0;
 }
 
-.contact-tags {
+.member-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
 
-.contact-actions {
+.member-actions {
   display: flex;
   gap: 6px;
   justify-content: flex-start;
@@ -691,7 +655,7 @@ async function submitCreateGroup() {
     align-items: stretch;
   }
 
-  .contact-form {
+  .member-form {
     grid-template-columns: 1fr;
   }
 
@@ -704,11 +668,11 @@ async function submitCreateGroup() {
     justify-content: space-between;
   }
 
-  .contact-row {
+  .member-row {
     flex-direction: column;
   }
 
-  .contact-actions {
+  .member-actions {
     justify-content: flex-start;
   }
 }

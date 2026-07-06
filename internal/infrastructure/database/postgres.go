@@ -156,12 +156,11 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
-		// 分组：personal 为个人分组，team 为成员可见的团队分组
+		// 分组
 		`CREATE TABLE IF NOT EXISTS address_groups (
 			id VARCHAR(50) PRIMARY KEY,
 			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			name VARCHAR(255) NOT NULL,
-			group_type VARCHAR(20) NOT NULL DEFAULT 'personal',
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
@@ -177,10 +176,10 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		)`,
 
 		// 分组成员
-		`CREATE TABLE IF NOT EXISTS address_contacts (
+		`CREATE TABLE IF NOT EXISTS group_members (
 			id VARCHAR(50) PRIMARY KEY,
 			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			group_id VARCHAR(50) NULL REFERENCES address_groups(id) ON DELETE SET NULL,
+			group_id VARCHAR(50) NOT NULL REFERENCES address_groups(id) ON DELETE CASCADE,
 			name VARCHAR(255) NOT NULL,
 			wallet_address VARCHAR(255) NOT NULL,
 			tags TEXT[] NOT NULL DEFAULT '{}',
@@ -348,22 +347,29 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON internal_share_audiences(share_id, audience_type)
 			WHERE audience_type = 'all_users'`,
 
-		// 兼容已有分组表
-		`ALTER TABLE address_groups ADD COLUMN IF NOT EXISTS group_type VARCHAR(20) NOT NULL DEFAULT 'personal'`,
-		`ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,
+		// 兼容历史库：如果旧版成员表存在，则迁移到 group_members
+		`DO $$
+		BEGIN
+			IF to_regclass('public.address_contacts') IS NOT NULL THEN
+				ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+				INSERT INTO group_members (id, user_id, group_id, name, wallet_address, tags, created_at)
+				SELECT id, user_id, group_id, name, wallet_address, tags, created_at
+				FROM address_contacts
+				WHERE group_id IS NOT NULL
+				ON CONFLICT DO NOTHING;
+			END IF;
+		END $$`,
 
 		// 分组索引
 		`CREATE INDEX IF NOT EXISTS idx_address_groups_user_id ON address_groups(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_address_groups_type ON address_groups(group_type)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_groups_user_name ON address_groups(user_id, name)`,
 
 		// 分组成员索引
-		`CREATE INDEX IF NOT EXISTS idx_address_contacts_user_id ON address_contacts(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_address_contacts_group_id ON address_contacts(group_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_address_contacts_wallet_lower ON address_contacts(LOWER(wallet_address))`,
-		`DROP INDEX IF EXISTS idx_address_contacts_user_wallet`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_contacts_user_group_wallet
-			ON address_contacts(user_id, COALESCE(group_id, ''), wallet_address)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_members_wallet_lower ON group_members(LOWER(wallet_address))`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_group_members_user_group_wallet
+			ON group_members(user_id, group_id, wallet_address)`,
 
 		// 复制 outbox 索引
 		`CREATE INDEX IF NOT EXISTS idx_replication_outbox_pair_pending

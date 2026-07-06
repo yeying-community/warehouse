@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { AddressContact, AddressGroup, DirectShareItem, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
+import type { AddressGroup, DirectShareItem, GroupMember, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
 import type { FileItem } from '../types'
 import { shortenAddress } from '@/utils/address'
 
@@ -68,9 +68,9 @@ const props = defineProps<{
     expiresValue: string
     expiresUnit: ShareExpiryUnit
   }
-  addressContacts: AddressContact[]
+  groupMembers: GroupMember[]
   addressGroups: AddressGroup[]
-  groupedContacts: AddressContact[]
+  selectedGroupMembers: GroupMember[]
   submitShareUser: () => void
   createFolderDialogVisible: boolean
   createFolderSubmitting: boolean
@@ -710,14 +710,14 @@ onBeforeUnmount(() => {
           style="width: 100%"
         >
           <el-option
-            v-for="contact in addressContacts"
-            :key="contact.id"
-            :label="contact.walletAddress"
-            :value="contact.walletAddress"
+            v-for="member in groupMembers"
+            :key="member.id"
+            :label="member.walletAddress"
+            :value="member.walletAddress"
           >
-            <div class="contact-option" :title="contact.walletAddress">
-              <span v-if="contact.name" class="contact-name">{{ contact.name }}</span>
-              <span class="contact-address mono">{{ shortenAddress(contact.walletAddress) }}</span>
+            <div class="member-option" :title="member.walletAddress">
+              <span v-if="member.name" class="member-name">{{ member.name }}</span>
+              <span class="member-address mono">{{ shortenAddress(member.walletAddress) }}</span>
             </div>
           </el-option>
         </el-select>
@@ -734,11 +734,11 @@ onBeforeUnmount(() => {
         >
           <el-option v-for="group in addressGroups" :key="group.id" :label="group.name" :value="group.id" />
         </el-select>
-        <div class="share-group-meta">分组成员：{{ groupedContacts.length }} 个</div>
+        <div class="share-group-meta">分组成员：{{ selectedGroupMembers.length }} 个</div>
       </el-form-item>
-      <el-form-item v-if="shareUserForm.targetMode === 'groups' && groupedContacts.length">
+      <el-form-item v-if="shareUserForm.targetMode === 'groups' && selectedGroupMembers.length">
         <div class="share-group-list">
-          <span v-for="item in groupedContacts" :key="item.id" class="mono">
+          <span v-for="item in selectedGroupMembers" :key="item.id" class="mono">
             {{ shortenAddress(item.walletAddress) }}
           </span>
         </div>
@@ -953,20 +953,20 @@ onBeforeUnmount(() => {
   color: #909399;
 }
 
-.contact-option {
+.member-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.contact-name {
+.member-name {
   font-size: 13px;
   color: #1f2d3d;
   font-weight: 500;
 }
 
-.contact-address {
+.member-address {
   font-size: 12px;
   color: #909399;
 }

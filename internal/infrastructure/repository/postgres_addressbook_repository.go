@@ -14,14 +14,14 @@ type AddressBookRepository interface {
 	CreateGroup(ctx context.Context, group *addressbook.Group) error
 	GetGroupByID(ctx context.Context, userID, groupID string) (*addressbook.Group, error)
 	ListVisibleGroups(ctx context.Context, userID, walletAddress string) ([]*addressbook.Group, error)
-	UpdateGroup(ctx context.Context, userID, groupID, name, groupType string) error
+	UpdateGroupName(ctx context.Context, userID, groupID, name string) error
 	DeleteGroup(ctx context.Context, userID, groupID string) error
 
-	CreateContact(ctx context.Context, contact *addressbook.Contact) error
-	GetContactByID(ctx context.Context, userID, contactID string) (*addressbook.Contact, error)
-	ListVisibleContacts(ctx context.Context, userID, walletAddress string) ([]*addressbook.Contact, error)
-	UpdateContact(ctx context.Context, contact *addressbook.Contact) error
-	DeleteContact(ctx context.Context, userID, contactID string) error
+	CreateMember(ctx context.Context, member *addressbook.Member) error
+	GetMemberByID(ctx context.Context, userID, memberID string) (*addressbook.Member, error)
+	ListVisibleMembers(ctx context.Context, userID, walletAddress string) ([]*addressbook.Member, error)
+	UpdateMember(ctx context.Context, member *addressbook.Member) error
+	DeleteMember(ctx context.Context, userID, memberID string) error
 }
 
 type PostgresAddressBookRepository struct {
@@ -34,10 +34,10 @@ func NewPostgresAddressBookRepository(db *sql.DB) *PostgresAddressBookRepository
 
 func (r *PostgresAddressBookRepository) CreateGroup(ctx context.Context, group *addressbook.Group) error {
 	query := `
-		INSERT INTO address_groups (id, user_id, name, group_type, created_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO address_groups (id, user_id, name, created_at)
+		VALUES ($1, $2, $3, $4)
 	`
-	_, err := r.db.ExecContext(ctx, query, group.ID, group.UserID, group.Name, group.Type, group.CreatedAt)
+	_, err := r.db.ExecContext(ctx, query, group.ID, group.UserID, group.Name, group.CreatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "idx_address_groups_user_name") {
 			return addressbook.ErrDuplicateGroupName
@@ -49,7 +49,7 @@ func (r *PostgresAddressBookRepository) CreateGroup(ctx context.Context, group *
 
 func (r *PostgresAddressBookRepository) GetGroupByID(ctx context.Context, userID, groupID string) (*addressbook.Group, error) {
 	query := `
-		SELECT id, user_id, name, group_type, created_at
+		SELECT id, user_id, name, created_at
 		FROM address_groups
 		WHERE id = $1 AND user_id = $2
 	`
@@ -58,7 +58,6 @@ func (r *PostgresAddressBookRepository) GetGroupByID(ctx context.Context, userID
 		&group.ID,
 		&group.UserID,
 		&group.Name,
-		&group.Type,
 		&group.CreatedAt,
 	)
 	if err != nil {
@@ -67,34 +66,21 @@ func (r *PostgresAddressBookRepository) GetGroupByID(ctx context.Context, userID
 		}
 		return nil, fmt.Errorf("failed to get group: %w", err)
 	}
-	group.Role = "owner"
-	group.CanManage = true
 	return group, nil
 }
 
 func (r *PostgresAddressBookRepository) ListVisibleGroups(ctx context.Context, userID, walletAddress string) ([]*addressbook.Group, error) {
 	query := `
-		SELECT DISTINCT
-			g.id,
-			g.user_id,
-			g.name,
-			g.group_type,
-			g.created_at,
-			CASE WHEN g.user_id = $1 THEN 'owner' ELSE 'member' END AS role,
-			(g.user_id = $1) AS can_manage
+		SELECT DISTINCT g.id, g.user_id, g.name, g.created_at
 		FROM address_groups g
-		LEFT JOIN address_contacts member
+		LEFT JOIN group_members member
 			ON member.group_id = g.id
 			AND LOWER(member.wallet_address) = LOWER($2)
 		WHERE g.user_id = $1
-			OR (
-				g.group_type = $3
-				AND $2 <> ''
-				AND member.id IS NOT NULL
-			)
+			OR ($2 <> '' AND member.id IS NOT NULL)
 		ORDER BY g.created_at DESC
 	`
-	rows, err := r.db.QueryContext(ctx, query, userID, strings.TrimSpace(walletAddress), addressbook.GroupTypeTeam)
+	rows, err := r.db.QueryContext(ctx, query, userID, strings.TrimSpace(walletAddress))
 	if err != nil {
 		return nil, fmt.Errorf("failed to query groups: %w", err)
 	}
@@ -103,7 +89,7 @@ func (r *PostgresAddressBookRepository) ListVisibleGroups(ctx context.Context, u
 	var groups []*addressbook.Group
 	for rows.Next() {
 		group := &addressbook.Group{}
-		if err := rows.Scan(&group.ID, &group.UserID, &group.Name, &group.Type, &group.CreatedAt, &group.Role, &group.CanManage); err != nil {
+		if err := rows.Scan(&group.ID, &group.UserID, &group.Name, &group.CreatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan group: %w", err)
 		}
 		groups = append(groups, group)
@@ -114,15 +100,9 @@ func (r *PostgresAddressBookRepository) ListVisibleGroups(ctx context.Context, u
 	return groups, nil
 }
 
-func (r *PostgresAddressBookRepository) UpdateGroup(ctx context.Context, userID, groupID, name, groupType string) error {
-	query := `
-		UPDATE address_groups
-		SET
-			name = CASE WHEN $1 <> '' THEN $1 ELSE name END,
-			group_type = CASE WHEN $2 <> '' THEN $2 ELSE group_type END
-		WHERE id = $3 AND user_id = $4
-	`
-	result, err := r.db.ExecContext(ctx, query, name, groupType, groupID, userID)
+func (r *PostgresAddressBookRepository) UpdateGroupName(ctx context.Context, userID, groupID, name string) error {
+	query := `UPDATE address_groups SET name = $1 WHERE id = $2 AND user_id = $3`
+	result, err := r.db.ExecContext(ctx, query, name, groupID, userID)
 	if err != nil {
 		if strings.Contains(err.Error(), "idx_address_groups_user_name") {
 			return addressbook.ErrDuplicateGroupName
@@ -155,181 +135,141 @@ func (r *PostgresAddressBookRepository) DeleteGroup(ctx context.Context, userID,
 	return nil
 }
 
-func (r *PostgresAddressBookRepository) CreateContact(ctx context.Context, contact *addressbook.Contact) error {
+func (r *PostgresAddressBookRepository) CreateMember(ctx context.Context, member *addressbook.Member) error {
 	query := `
-		INSERT INTO address_contacts (id, user_id, group_id, name, wallet_address, tags, created_at)
+		INSERT INTO group_members (id, user_id, group_id, name, wallet_address, tags, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
-	var groupID interface{}
-	if strings.TrimSpace(contact.GroupID) != "" {
-		groupID = contact.GroupID
-	} else {
-		groupID = nil
-	}
 	_, err := r.db.ExecContext(ctx, query,
-		contact.ID,
-		contact.UserID,
-		groupID,
-		contact.Name,
-		contact.WalletAddress,
-		pq.Array(contact.Tags),
-		contact.CreatedAt,
+		member.ID,
+		member.UserID,
+		member.GroupID,
+		member.Name,
+		member.WalletAddress,
+		pq.Array(member.Tags),
+		member.CreatedAt,
 	)
 	if err != nil {
-		if isDuplicateContactWalletError(err) {
-			return addressbook.ErrDuplicateWallet
+		if isDuplicateMemberError(err) {
+			return addressbook.ErrDuplicateMember
 		}
-		return fmt.Errorf("failed to create contact: %w", err)
+		return fmt.Errorf("failed to create member: %w", err)
 	}
 	return nil
 }
 
-func (r *PostgresAddressBookRepository) GetContactByID(ctx context.Context, userID, contactID string) (*addressbook.Contact, error) {
+func (r *PostgresAddressBookRepository) GetMemberByID(ctx context.Context, userID, memberID string) (*addressbook.Member, error) {
 	query := `
 		SELECT id, user_id, group_id, name, wallet_address, tags, created_at
-		FROM address_contacts
+		FROM group_members
 		WHERE id = $1 AND user_id = $2
 	`
-	contact := &addressbook.Contact{}
-	var groupID sql.NullString
+	member := &addressbook.Member{}
 	var tags []string
-	err := r.db.QueryRowContext(ctx, query, contactID, userID).Scan(
-		&contact.ID,
-		&contact.UserID,
-		&groupID,
-		&contact.Name,
-		&contact.WalletAddress,
+	err := r.db.QueryRowContext(ctx, query, memberID, userID).Scan(
+		&member.ID,
+		&member.UserID,
+		&member.GroupID,
+		&member.Name,
+		&member.WalletAddress,
 		pq.Array(&tags),
-		&contact.CreatedAt,
+		&member.CreatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, addressbook.ErrContactNotFound
+			return nil, addressbook.ErrMemberNotFound
 		}
-		return nil, fmt.Errorf("failed to get contact: %w", err)
+		return nil, fmt.Errorf("failed to get member: %w", err)
 	}
-	if groupID.Valid {
-		contact.GroupID = groupID.String
-	}
-	contact.Tags = tags
-	return contact, nil
+	member.Tags = tags
+	return member, nil
 }
 
-func (r *PostgresAddressBookRepository) ListContactsByUser(ctx context.Context, userID string) ([]*addressbook.Contact, error) {
-	return r.ListVisibleContacts(ctx, userID, "")
-}
-
-func (r *PostgresAddressBookRepository) ListVisibleContacts(ctx context.Context, userID, walletAddress string) ([]*addressbook.Contact, error) {
+func (r *PostgresAddressBookRepository) ListVisibleMembers(ctx context.Context, userID, walletAddress string) ([]*addressbook.Member, error) {
 	query := `
-		SELECT DISTINCT
-			c.id,
-			c.user_id,
-			c.group_id,
-			c.name,
-			c.wallet_address,
-			c.tags,
-			c.created_at,
-			COALESCE(g.group_type, $3) AS group_type,
-			(c.user_id = $1) AS can_manage
-		FROM address_contacts c
-		LEFT JOIN address_groups g ON g.id = c.group_id
-		LEFT JOIN address_contacts member
-			ON member.group_id = g.id
-			AND LOWER(member.wallet_address) = LOWER($2)
-		WHERE c.user_id = $1
-			OR (
-				g.group_type = $4
-				AND $2 <> ''
-				AND member.id IS NOT NULL
-			)
-		ORDER BY c.created_at DESC
+		SELECT DISTINCT m.id, m.user_id, m.group_id, m.name, m.wallet_address, m.tags, m.created_at
+		FROM group_members m
+		JOIN address_groups g ON g.id = m.group_id
+		LEFT JOIN group_members current_member
+			ON current_member.group_id = g.id
+			AND LOWER(current_member.wallet_address) = LOWER($2)
+		WHERE g.user_id = $1
+			OR ($2 <> '' AND current_member.id IS NOT NULL)
+		ORDER BY m.created_at DESC
 	`
-	rows, err := r.db.QueryContext(ctx, query, userID, strings.TrimSpace(walletAddress), addressbook.GroupTypePersonal, addressbook.GroupTypeTeam)
+	rows, err := r.db.QueryContext(ctx, query, userID, strings.TrimSpace(walletAddress))
 	if err != nil {
-		return nil, fmt.Errorf("failed to query contacts: %w", err)
+		return nil, fmt.Errorf("failed to query members: %w", err)
 	}
 	defer rows.Close()
 
-	var contacts []*addressbook.Contact
+	var members []*addressbook.Member
 	for rows.Next() {
-		contact := &addressbook.Contact{}
-		var groupID sql.NullString
+		member := &addressbook.Member{}
 		var tags []string
 		if err := rows.Scan(
-			&contact.ID,
-			&contact.UserID,
-			&groupID,
-			&contact.Name,
-			&contact.WalletAddress,
+			&member.ID,
+			&member.UserID,
+			&member.GroupID,
+			&member.Name,
+			&member.WalletAddress,
 			pq.Array(&tags),
-			&contact.CreatedAt,
-			&contact.GroupType,
-			&contact.CanManage,
+			&member.CreatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan contact: %w", err)
+			return nil, fmt.Errorf("failed to scan member: %w", err)
 		}
-		if groupID.Valid {
-			contact.GroupID = groupID.String
-		}
-		contact.Tags = tags
-		contacts = append(contacts, contact)
+		member.Tags = tags
+		members = append(members, member)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate contacts: %w", err)
+		return nil, fmt.Errorf("failed to iterate members: %w", err)
 	}
-	return contacts, nil
+	return members, nil
 }
 
-func (r *PostgresAddressBookRepository) UpdateContact(ctx context.Context, contact *addressbook.Contact) error {
+func (r *PostgresAddressBookRepository) UpdateMember(ctx context.Context, member *addressbook.Member) error {
 	query := `
-		UPDATE address_contacts
+		UPDATE group_members
 		SET group_id = $1, name = $2, wallet_address = $3, tags = $4
 		WHERE id = $5 AND user_id = $6
 	`
-	var groupID interface{}
-	if strings.TrimSpace(contact.GroupID) != "" {
-		groupID = contact.GroupID
-	} else {
-		groupID = nil
-	}
-	result, err := r.db.ExecContext(ctx, query, groupID, contact.Name, contact.WalletAddress, pq.Array(contact.Tags), contact.ID, contact.UserID)
+	result, err := r.db.ExecContext(ctx, query, member.GroupID, member.Name, member.WalletAddress, pq.Array(member.Tags), member.ID, member.UserID)
 	if err != nil {
-		if isDuplicateContactWalletError(err) {
-			return addressbook.ErrDuplicateWallet
+		if isDuplicateMemberError(err) {
+			return addressbook.ErrDuplicateMember
 		}
-		return fmt.Errorf("failed to update contact: %w", err)
+		return fmt.Errorf("failed to update member: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get affected rows: %w", err)
 	}
 	if rows == 0 {
-		return addressbook.ErrContactNotFound
+		return addressbook.ErrMemberNotFound
 	}
 	return nil
 }
 
-func (r *PostgresAddressBookRepository) DeleteContact(ctx context.Context, userID, contactID string) error {
-	query := `DELETE FROM address_contacts WHERE id = $1 AND user_id = $2`
-	result, err := r.db.ExecContext(ctx, query, contactID, userID)
+func (r *PostgresAddressBookRepository) DeleteMember(ctx context.Context, userID, memberID string) error {
+	query := `DELETE FROM group_members WHERE id = $1 AND user_id = $2`
+	result, err := r.db.ExecContext(ctx, query, memberID, userID)
 	if err != nil {
-		return fmt.Errorf("failed to delete contact: %w", err)
+		return fmt.Errorf("failed to delete member: %w", err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to get affected rows: %w", err)
 	}
 	if rows == 0 {
-		return addressbook.ErrContactNotFound
+		return addressbook.ErrMemberNotFound
 	}
 	return nil
 }
 
-func isDuplicateContactWalletError(err error) bool {
+func isDuplicateMemberError(err error) bool {
 	if err == nil {
 		return false
 	}
 	message := err.Error()
-	return strings.Contains(message, "idx_address_contacts_user_group_wallet") ||
-		strings.Contains(message, "idx_address_contacts_user_wallet")
+	return strings.Contains(message, "idx_group_members_user_group_wallet")
 }

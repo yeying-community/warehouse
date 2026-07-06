@@ -22,8 +22,8 @@ func (s *AddressBookService) ListGroups(ctx context.Context, u *user.User) ([]*a
 	return s.repo.ListVisibleGroups(ctx, u.ID, u.WalletAddress)
 }
 
-func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name string, groupType string) (*addressbook.Group, error) {
-	group, err := addressbook.NewGroup(u.ID, name, groupType)
+func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name string) (*addressbook.Group, error) {
+	group, err := addressbook.NewGroup(u.ID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -34,75 +34,63 @@ func (s *AddressBookService) CreateGroup(ctx context.Context, u *user.User, name
 }
 
 func (s *AddressBookService) RenameGroup(ctx context.Context, u *user.User, groupID, name string) error {
-	return s.UpdateGroup(ctx, u, groupID, name, "")
-}
-
-func (s *AddressBookService) UpdateGroup(ctx context.Context, u *user.User, groupID, name, groupType string) error {
 	name = strings.TrimSpace(name)
-	groupType = strings.TrimSpace(groupType)
-	if name == "" && groupType == "" {
-		return fmt.Errorf("group name or type is required")
+	if name == "" {
+		return fmt.Errorf("group name is required")
 	}
-	if groupType != "" {
-		normalized, err := addressbook.NormalizeGroupType(groupType)
-		if err != nil {
-			return err
-		}
-		groupType = normalized
-	}
-	return s.repo.UpdateGroup(ctx, u.ID, groupID, name, groupType)
+	return s.repo.UpdateGroupName(ctx, u.ID, groupID, name)
 }
 
 func (s *AddressBookService) DeleteGroup(ctx context.Context, u *user.User, groupID string) error {
 	return s.repo.DeleteGroup(ctx, u.ID, groupID)
 }
 
-func (s *AddressBookService) ListContacts(ctx context.Context, u *user.User) ([]*addressbook.Contact, error) {
-	return s.repo.ListVisibleContacts(ctx, u.ID, u.WalletAddress)
+func (s *AddressBookService) ListMembers(ctx context.Context, u *user.User) ([]*addressbook.Member, error) {
+	return s.repo.ListVisibleMembers(ctx, u.ID, u.WalletAddress)
 }
 
-func (s *AddressBookService) CreateContact(ctx context.Context, u *user.User, name, wallet, groupID string, tags []string) (*addressbook.Contact, error) {
-	if strings.TrimSpace(groupID) != "" {
-		if _, err := s.repo.GetGroupByID(ctx, u.ID, groupID); err != nil {
-			return nil, err
-		}
+func (s *AddressBookService) CreateMember(ctx context.Context, u *user.User, name, wallet, groupID string, tags []string) (*addressbook.Member, error) {
+	groupID = strings.TrimSpace(groupID)
+	if groupID == "" {
+		return nil, fmt.Errorf("group id is required")
 	}
-	contact, err := addressbook.NewContact(u.ID, groupID, name, wallet, sanitizeTags(tags))
+	if _, err := s.repo.GetGroupByID(ctx, u.ID, groupID); err != nil {
+		return nil, err
+	}
+	member, err := addressbook.NewMember(u.ID, groupID, name, wallet, sanitizeTags(tags))
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.CreateContact(ctx, contact); err != nil {
+	if err := s.repo.CreateMember(ctx, member); err != nil {
 		return nil, err
 	}
-	return contact, nil
+	return member, nil
 }
 
-func (s *AddressBookService) UpdateContact(ctx context.Context, u *user.User, id, name, wallet, groupID string, tags *[]string) (*addressbook.Contact, error) {
-	contact, err := s.repo.GetContactByID(ctx, u.ID, id)
+func (s *AddressBookService) UpdateMember(ctx context.Context, u *user.User, id, name, wallet, groupID string, tags *[]string) (*addressbook.Member, error) {
+	member, err := s.repo.GetMemberByID(ctx, u.ID, id)
 	if err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(name) != "" {
-		contact.Name = strings.TrimSpace(name)
+		member.Name = strings.TrimSpace(name)
 	}
 	if strings.TrimSpace(wallet) != "" {
-		contact.WalletAddress = strings.ToLower(strings.TrimSpace(wallet))
+		member.WalletAddress = strings.ToLower(strings.TrimSpace(wallet))
 	}
-	if groupID != "" {
+	if strings.TrimSpace(groupID) != "" {
 		if _, err := s.repo.GetGroupByID(ctx, u.ID, groupID); err != nil {
 			return nil, err
 		}
-		contact.GroupID = groupID
-	} else {
-		contact.GroupID = ""
+		member.GroupID = groupID
 	}
 	if tags != nil {
-		contact.Tags = sanitizeTags(*tags)
+		member.Tags = sanitizeTags(*tags)
 	}
-	if err := s.repo.UpdateContact(ctx, contact); err != nil {
+	if err := s.repo.UpdateMember(ctx, member); err != nil {
 		return nil, err
 	}
-	return contact, nil
+	return member, nil
 }
 
 func sanitizeTags(input []string) []string {
@@ -123,6 +111,6 @@ func sanitizeTags(input []string) []string {
 	return result
 }
 
-func (s *AddressBookService) DeleteContact(ctx context.Context, u *user.User, id string) error {
-	return s.repo.DeleteContact(ctx, u.ID, id)
+func (s *AddressBookService) DeleteMember(ctx context.Context, u *user.User, id string) error {
+	return s.repo.DeleteMember(ctx, u.ID, id)
 }

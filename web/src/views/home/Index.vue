@@ -147,7 +147,7 @@ const accessKeys = ref<WebDAVAccessKeyItem[]>([])
 const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const addressBookStore = useAddressBookStore()
-const { addressBookLoading, addressGroups, addressContacts } = storeToRefs(addressBookStore)
+const { addressBookLoading, addressGroups, groupMembers } = storeToRefs(addressBookStore)
 const uploadTaskStore = useUploadTaskStore()
 const editingUsername = ref(false)
 const usernameDraft = ref('')
@@ -529,13 +529,13 @@ const previewTitle = computed(() => {
 const previewDirty = computed(
   () => previewMode.value === 'text' && !previewReadOnly.value && previewContent.value !== previewOrigin.value
 )
-const groupedContacts = computed(() => {
+const selectedGroupMembers = computed(() => {
   if (shareUserForm.value.targetMode !== 'groups') return []
   const groupSet = new Set(
     shareUserForm.value.groupIds.map(item => String(item || '').trim())
   )
   if (!groupSet.size) return []
-  return addressContacts.value.filter(item => groupSet.has(String(item.groupId || '').trim()))
+  return groupMembers.value.filter(item => groupSet.has(String(item.groupId || '').trim()))
 })
 const quotaAvailable = computed(() => {
   if (quota.value.unlimited) return null
@@ -4028,7 +4028,7 @@ async function submitShareUser() {
         showError('请至少选择一个分组')
         return
       }
-      if (!groupedContacts.value.length) {
+      if (!selectedGroupMembers.value.length) {
         showError('所选分组没有可用地址')
         return
       }
@@ -4039,7 +4039,7 @@ async function submitShareUser() {
         permissions: shareUserForm.value.permissions,
         ...expiryPayload
       })
-      showSuccess(`已共享给所选分组内 ${groupedContacts.value.length} 位用户`)
+      showSuccess(`已共享给所选分组内 ${selectedGroupMembers.value.length} 位用户`)
     } else if (shareUserForm.value.targetMode === 'all_users') {
       await directShareApi.create({
         path: rawPath,
@@ -5564,7 +5564,6 @@ onBeforeUnmount(() => {
                 <div class="key-summary">
                   <span>成员：{{ addressBookStore.addressGroupCounts.total }}</span>
                   <span>分组：{{ addressBookStore.addressGroups.length }}</span>
-                  <span>未分组：{{ addressBookStore.addressGroupCounts.ungrouped }}</span>
                 </div>
                 <AddressBookView embedded @refresh="refreshCurrentView" />
               </div>
@@ -5753,9 +5752,9 @@ onBeforeUnmount(() => {
         :share-user-submitting="shareUserSubmitting"
         :share-user-target="shareUserTarget"
         :share-user-form="shareUserForm"
-        :address-contacts="addressContacts"
+        :group-members="groupMembers"
         :address-groups="addressGroups"
-        :grouped-contacts="groupedContacts"
+        :selected-group-members="selectedGroupMembers"
         :submit-share-user="submitShareUser"
         v-model:create-folder-dialog-visible="createFolderDialogVisible"
         :create-folder-submitting="createFolderSubmitting"

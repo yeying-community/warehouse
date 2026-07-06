@@ -217,7 +217,7 @@ func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner
 	if len(groupIDs) == 0 {
 		return nil, fmt.Errorf("no target groups provided")
 	}
-	contacts, err := s.addressBookService.ListContacts(ctx, owner)
+	members, err := s.addressBookService.ListMembers(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -235,16 +235,16 @@ func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner
 
 	wallets := make([]string, 0)
 	groupByWallet := make(map[string]string)
-	for _, contact := range contacts {
-		groupID := strings.TrimSpace(contact.GroupID)
+	for _, member := range members {
+		groupID := strings.TrimSpace(member.GroupID)
 		if groupID == "" {
 			continue
 		}
 		if _, ok := selected[groupID]; !ok {
 			continue
 		}
-		wallets = append(wallets, contact.WalletAddress)
-		walletKey := strings.ToLower(strings.TrimSpace(contact.WalletAddress))
+		wallets = append(wallets, member.WalletAddress)
+		walletKey := strings.ToLower(strings.TrimSpace(member.WalletAddress))
 		if walletKey != "" {
 			groupByWallet[walletKey] = groupID
 		}
