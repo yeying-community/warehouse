@@ -90,11 +90,11 @@ async function submitCreateGroup() {
     <div v-if="!props.embedded" class="address-hero">
       <div class="address-title-row">
         <div class="address-hero-main">
-          <div class="address-title">我的好友</div>
-          <div class="address-sub">管理分享过的好友地址与分组，仅自己可见。</div>
+          <div class="address-title">分组管理</div>
+          <div class="address-sub">维护共享分组与成员，用于快速、安全地选择共享对象。</div>
         </div>
         <div class="address-hero-actions">
-          <el-button type="primary" @click="openCreateContactDialog">新建联系人</el-button>
+          <el-button type="primary" @click="openCreateContactDialog">添加成员</el-button>
           <el-tooltip content="刷新" placement="top">
             <el-button
               class="refresh-button"
@@ -109,7 +109,7 @@ async function submitCreateGroup() {
       </div>
       <div class="address-stats">
         <div class="stat-card">
-          <span class="stat-label">联系人</span>
+          <span class="stat-label">成员</span>
           <span class="stat-value">{{ addressGroupCounts.total }}</span>
         </div>
         <div class="stat-card">
@@ -129,7 +129,7 @@ async function submitCreateGroup() {
           <div class="section-header">
             <div>
               <div class="card-title">分组筛选</div>
-              <div class="card-subtitle">先筛选，再看联系人，避免列表过长。</div>
+              <div class="card-subtitle">按分组筛选成员，方便批量共享。</div>
             </div>
             <el-button size="small" @click="openCreateGroupDialog">新建分组</el-button>
           </div>
@@ -164,24 +164,24 @@ async function submitCreateGroup() {
       <div class="address-main">
         <div class="address-toolbar">
           <div class="toolbar-left">
-            <el-input v-model="addressSearch" clearable placeholder="搜索名称 / 钱包 / 标签" size="small" />
+            <el-input v-model="addressSearch" clearable placeholder="搜索成员 / 钱包 / 标签" size="small" />
             <span class="address-filter">当前分组：{{ addressGroupLabel }}</span>
           </div>
           <div class="toolbar-right">
-            <el-button v-if="props.embedded" type="primary" size="small" @click="openCreateContactDialog">新建联系人</el-button>
-            <span class="address-total">共 {{ filteredAddressContacts.length }} 位联系人</span>
+            <el-button v-if="props.embedded" type="primary" size="small" @click="openCreateContactDialog">添加成员</el-button>
+            <span class="address-total">共 {{ filteredAddressContacts.length }} 位成员</span>
           </div>
         </div>
 
         <div class="address-card address-list-card">
           <div v-if="!props.embedded" class="list-title-row">
             <div>
-              <div class="card-title">联系人列表</div>
-              <div class="card-subtitle">按名称、钱包地址或标签快速定位联系人。</div>
+              <div class="card-title">成员列表</div>
+              <div class="card-subtitle">按名称、钱包地址或标签快速定位成员。</div>
             </div>
           </div>
           <div class="contact-list">
-            <div v-if="!filteredAddressContacts.length" class="address-empty">暂无联系人</div>
+            <div v-if="!filteredAddressContacts.length" class="address-empty">暂无成员</div>
             <div v-for="contact in filteredAddressContacts" :key="contact.id" class="contact-row">
               <div class="contact-main">
                 <div class="contact-top">
@@ -247,12 +247,12 @@ async function submitCreateGroup() {
 
     <el-dialog
       v-model="contactDialogVisible"
-      :title="contactForm.id ? '编辑联系人' : '新建联系人'"
+      :title="contactForm.id ? '编辑成员' : '添加成员'"
       width="520px"
       @closed="resetContactForm"
     >
       <div class="contact-form">
-        <el-input v-model="contactForm.name" placeholder="联系人名称" size="small" />
+        <el-input v-model="contactForm.name" placeholder="成员名称 / 备注" size="small" />
         <el-input v-model="contactForm.walletAddress" placeholder="钱包地址" size="small" />
         <el-select v-model="contactForm.groupId" placeholder="选择分组" size="small">
           <el-option label="未分组" value="" />
@@ -273,7 +273,7 @@ async function submitCreateGroup() {
         <el-button @click="contactDialogVisible = false">取消</el-button>
         <el-button @click="resetContactForm">清空</el-button>
         <el-button type="primary" :loading="contactSaving" @click="submitContact">
-          {{ contactForm.id ? '保存' : '新增' }}
+          {{ contactForm.id ? '保存' : '添加' }}
         </el-button>
       </template>
     </el-dialog>

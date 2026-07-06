@@ -480,7 +480,7 @@ const fileBreadcrumbRoot = computed(() => {
 const managementSectionLabel = computed(() => {
   if (managementSection.value === 'keys') return '密钥管理'
   if (managementSection.value === 'adminUsers') return '用户管理'
-  if (managementSection.value === 'addressBook') return '好友管理'
+  if (managementSection.value === 'addressBook') return '分组管理'
   if (managementSection.value === 'uploadTasks') return '任务'
   return '我的资料'
 })
@@ -490,7 +490,7 @@ const mobileLocationLabel = computed(() => {
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
   if (showQuotaManage.value) return managementSectionLabel.value
-  if (showAddressBook.value) return '好友管理'
+  if (showAddressBook.value) return '分组管理'
   if (showUploadTasks.value) return '任务'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
@@ -2327,7 +2327,7 @@ async function copyCurrentPath() {
       text = '定向分享'
     }
   } else if (showAddressBook.value) {
-    text = '我的好友'
+    text = '分组管理'
   }
   await copyText(text, '已复制当前路径')
 }
@@ -4862,7 +4862,7 @@ onBeforeUnmount(() => {
                   <span v-show="!sidePanelCollapsed">用户管理</span>
                 </button>
               </el-tooltip>
-              <el-tooltip content="好友管理" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="分组管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
@@ -4870,7 +4870,7 @@ onBeforeUnmount(() => {
                   @click="enterQuotaManage('addressBook')"
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
-                  <span v-show="!sidePanelCollapsed">好友管理</span>
+                  <span v-show="!sidePanelCollapsed">分组管理</span>
                 </button>
               </el-tooltip>
             </div>
@@ -5556,13 +5556,13 @@ onBeforeUnmount(() => {
               </div>
               <div v-if="managementSection === 'addressBook'" class="user-card user-card-full" v-loading="addressBookLoading && !manualRefresh">
                 <div class="card-head">
-                  <div class="card-title">好友管理</div>
+                  <div class="card-title">分组管理</div>
                   <div class="user-actions">
                     <el-button size="small" @click="addressBookStore.fetchAddressBook()">刷新</el-button>
                   </div>
                 </div>
                 <div class="key-summary">
-                  <span>联系人：{{ addressBookStore.addressGroupCounts.total }}</span>
+                  <span>成员：{{ addressBookStore.addressGroupCounts.total }}</span>
                   <span>分组：{{ addressBookStore.addressGroups.length }}</span>
                   <span>未分组：{{ addressBookStore.addressGroupCounts.ungrouped }}</span>
                 </div>

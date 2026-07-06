@@ -104,7 +104,7 @@ export const useAddressBookStore = defineStore('addressBook', {
           }
         }
       } catch (error) {
-        console.error('获取地址簿失败:', error)
+        console.error('获取分组成员失败:', error)
       } finally {
         this.addressBookLoading = false
       }
@@ -178,7 +178,7 @@ export const useAddressBookStore = defineStore('addressBook', {
       const walletAddress = this.contactForm.walletAddress.trim()
       const tags = Array.isArray(this.contactForm.tags) ? this.contactForm.tags : []
       if (!name || !walletAddress) {
-        showError('请输入联系人名称和钱包地址')
+        showError('请输入成员名称和钱包地址')
         return
       }
       this.contactSaving = true
@@ -203,7 +203,7 @@ export const useAddressBookStore = defineStore('addressBook', {
         this.contactDialogVisible = false
         await this.fetchAddressBook()
       } catch (error: any) {
-        showError(error?.message || '保存联系人失败')
+        showError(error?.message || '保存成员失败')
       } finally {
         this.contactSaving = false
       }
@@ -219,7 +219,7 @@ export const useAddressBookStore = defineStore('addressBook', {
       this.contactDialogVisible = true
     },
     async removeContact(contact: AddressContact) {
-      if (!(await confirmAction(`确定删除 ${contact.name} 吗？`, '删除联系人'))) return
+      if (!(await confirmAction(`确定删除成员 ${contact.name} 吗？`, '删除成员'))) return
       try {
         await addressBookApi.deleteContact(contact.id)
         if (this.contactForm.id === contact.id) {
@@ -227,7 +227,7 @@ export const useAddressBookStore = defineStore('addressBook', {
         }
         await this.fetchAddressBook()
       } catch (error: any) {
-        showError(error?.message || '删除联系人失败')
+        showError(error?.message || '删除成员失败')
       }
     }
   }

@@ -681,7 +681,7 @@ onBeforeUnmount(() => {
 
   <el-dialog
     v-model="shareUserDialogModel"
-    title="共享给用户"
+    title="共享"
     width="420px"
   >
     <el-form label-width="72px" label-position="left" class="share-user-form">
@@ -690,8 +690,8 @@ onBeforeUnmount(() => {
       </el-form-item>
       <el-form-item label="共享方式">
         <el-radio-group v-model="shareUserForm.targetMode" size="small">
-          <el-radio-button value="addresses">地址共享</el-radio-button>
-          <el-radio-button value="groups">分组</el-radio-button>
+          <el-radio-button value="addresses">指定地址</el-radio-button>
+          <el-radio-button value="groups">共享分组</el-radio-button>
           <el-radio-button value="all_users">所有用户</el-radio-button>
         </el-radio-group>
       </el-form-item>
@@ -729,13 +729,12 @@ onBeforeUnmount(() => {
           collapse-tags
           collapse-tags-tooltip
           max-collapse-tags="2"
-          placeholder="选择一个或多个分组"
+          placeholder="选择一个或多个共享分组"
           style="width: 100%"
         >
-          <el-option label="未分组" value="" />
           <el-option v-for="group in addressGroups" :key="group.id" :label="group.name" :value="group.id" />
         </el-select>
-        <div class="share-group-meta">分组地址：{{ groupedContacts.length }} 个</div>
+        <div class="share-group-meta">分组成员：{{ groupedContacts.length }} 个</div>
       </el-form-item>
       <el-form-item v-if="shareUserForm.targetMode === 'groups' && groupedContacts.length">
         <div class="share-group-list">
