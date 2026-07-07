@@ -138,12 +138,23 @@ function memberGroupName(member: GroupMember) {
   return managedGroups.value.find(group => group.id === member.groupId)?.name || '-'
 }
 
+function memberDisplayName(member: GroupMember) {
+  const name = member.name?.trim()
+  const walletAddress = member.walletAddress?.trim().toLowerCase()
+  if (name && name.toLowerCase() !== walletAddress) return name
+  return member.username?.trim() || '-'
+}
+
 function handleWalletAddressChange(value: string) {
   const walletAddress = String(value || '').trim()
   if (!walletAddress || memberForm.value.name.trim()) return
   const matched = activeGroupMembers.value.find(member => member.walletAddress?.toLowerCase() === walletAddress.toLowerCase())
-  if (matched && matched.name && matched.name.toLowerCase() !== walletAddress.toLowerCase()) {
-    memberForm.value.name = matched.name
+  if (matched) {
+    memberForm.value.username = matched.username || ''
+    const name = memberDisplayName(matched)
+    if (name !== '-') {
+      memberForm.value.name = name
+    }
   }
 }
 
@@ -310,7 +321,7 @@ function canRespondMember(member: GroupMember) {
           class="member-table-row"
         >
           <div class="member-name">
-            <span class="member-name-text">{{ member.name }}</span>
+            <span class="member-name-text">{{ memberDisplayName(member) }}</span>
             <el-tag v-if="member.isOwner" size="small" type="success" effect="plain">创建者</el-tag>
           </div>
           <div class="member-address-cell">

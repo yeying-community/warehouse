@@ -17,9 +17,24 @@ function isPendingMember(member: GroupMember) {
 function matchesMemberKeyword(member: GroupMember, keyword: string) {
   if (!keyword) return true
   if (member.name.toLowerCase().includes(keyword)) return true
+  if ((member.username || '').toLowerCase().includes(keyword)) return true
   if (member.walletAddress.toLowerCase().includes(keyword)) return true
   if ((member.tags || []).some(tag => tag.toLowerCase().includes(keyword))) return true
   return false
+}
+
+function isWalletAddressValue(value: string | undefined, walletAddress: string | undefined) {
+  const normalizedValue = String(value || '').trim().toLowerCase()
+  const normalizedWallet = String(walletAddress || '').trim().toLowerCase()
+  return Boolean(normalizedValue && normalizedWallet && normalizedValue === normalizedWallet)
+}
+
+function preferredMemberName(member: GroupMember) {
+  const name = member.name?.trim()
+  const username = member.username?.trim()
+  if (name && !isWalletAddressValue(name, member.walletAddress)) return name
+  if (username) return username
+  return ''
 }
 
 async function confirmAction(message: string, title = '提示') {
@@ -211,7 +226,7 @@ export const useGroupStore = defineStore('group', {
     },
     async submitMember() {
       const walletAddress = this.memberForm.walletAddress.trim()
-      const name = this.memberForm.name.trim() || walletAddress
+      const name = this.memberForm.name.trim() || this.memberForm.username.trim() || walletAddress
       const groupId = this.memberForm.groupId.trim()
       const tags = Array.isArray(this.memberForm.tags) ? this.memberForm.tags : []
       if (!walletAddress || !groupId) {
@@ -253,7 +268,7 @@ export const useGroupStore = defineStore('group', {
     editMember(member: GroupMember) {
       this.memberForm = {
         id: member.id,
-        name: member.name,
+        name: preferredMemberName(member),
         username: member.username || '',
         walletAddress: member.walletAddress,
         groupId: member.groupId,
