@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User, Lock, Unlock } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
-import { isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider, consumeAccountChanged } from '@/plugins/auth'
+import { AUTH_CHANGED_EVENT, isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider } from '@/plugins/auth'
 import { decryptBlobContent, encryptFileContent, encryptTextContent } from '@/utils/crypto'
 import {
   buildEncryptedDirectoryMetadata,
@@ -69,6 +69,7 @@ const selectedWalletAccount = ref('')
 const walletHistorySelectRef = ref<any>(null)
 const walletPresent = ref(false)
 const walletLoginSubmitting = ref(false)
+const loggedIn = ref(isLoggedIn())
 let stopAccountWatch: (() => void) | null = null
 let stopWalletProviderWatch: (() => void) | null = null
 
@@ -4556,7 +4557,7 @@ onMounted(() => {
 })
 
 onMounted(() => {
-  if (isLoggedIn()) {
+  if (loggedIn.value) {
     fetchQuota()
     fetchUserInfo()
     void (async () => {
@@ -4587,16 +4588,37 @@ function handleExternalNavigate(event: Event) {
   }
 }
 
+function handleAuthChanged(): void {
+  loggedIn.value = isLoggedIn()
+  if (!loggedIn.value) {
+    loading.value = false
+    fileList.value = []
+    selectedFileRows.value = []
+    fileSelectionNonce.value += 1
+    userInfo.value = null
+    quota.value = { quota: 0, used: 0, available: 0, percentage: 0, unlimited: true }
+    showRecycle.value = false
+    showShare.value = false
+    showSharedWithMe.value = false
+    showQuotaManage.value = false
+    showGroupView.value = false
+    detailDrawerVisible.value = false
+    walletLoginSubmitting.value = false
+  }
+}
+
 onMounted(() => {
   window.addEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
   window.addEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
   window.addEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
+  window.addEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
   window.removeEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
   window.removeEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
+  window.removeEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
 })
 
 function syncWalletHistory(next?: string) {
@@ -4614,10 +4636,6 @@ onMounted(() => {
   stopWalletProviderWatch = watchWalletProvider((present) => {
     walletPresent.value = present
   })
-  const changed = consumeAccountChanged()
-  if (changed) {
-    showInfo('钱包账户已切换，请重新登录')
-  }
   syncWalletHistory()
   void (async () => {
     stopAccountWatch = await watchWalletAccounts(({ account }) => {
@@ -4637,7 +4655,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="home-container">
     <!-- 未登录状态 -->
-    <div v-if="!isLoggedIn()" class="login-page">
+    <div v-if="!loggedIn" class="login-page">
       <div class="login-floating-container">
         <div class="login-top-banner">
           <div class="login-top-banner-inner">
