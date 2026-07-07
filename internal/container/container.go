@@ -37,7 +37,7 @@ type Container struct {
 	RecycleRepository     repository.RecycleRepository
 	ShareRepository       repository.ShareRepository
 	UserShareRepository   repository.UserShareRepository
-	AddressBookRepository repository.AddressBookRepository
+	GroupRepository       repository.GroupRepository
 	WebDAVAccessKeyRepo   repository.WebDAVAccessKeyRepository
 	NotificationRepo      repository.NotificationRepository
 	ReplicationOutboxRepo repository.ReplicationOutboxRepository
@@ -60,7 +60,7 @@ type Container struct {
 	RecycleService         *service.RecycleService
 	ShareService           *service.ShareService
 	ShareUserService       *service.ShareUserService
-	AddressBookService     *service.AddressBookService
+	GroupService           *service.GroupService
 	WebDAVAccessKeyService *service.WebDAVAccessKeyService
 	NotificationService    *service.NotificationService
 
@@ -84,7 +84,7 @@ type Container struct {
 	ShareHandler               *handler.ShareHandler
 	ShareUserHandler           *handler.ShareUserHandler
 	WebDAVAccessKeyHandler     *handler.WebDAVAccessKeyHandler
-	AddressBookHandler         *handler.AddressBookHandler
+	GroupHandler               *handler.GroupHandler
 	NotificationHandler        *handler.NotificationHandler
 
 	// HTTP
@@ -191,8 +191,8 @@ func (c *Container) initRepositories() error {
 	c.ShareRepository = repository.NewPostgresShareRepository(c.DB.DB)
 	// 定向分享仓储
 	c.UserShareRepository = repository.NewPostgresUserShareRepository(c.DB.DB)
-	// 地址簿仓储
-	c.AddressBookRepository = repository.NewPostgresAddressBookRepository(c.DB.DB)
+	// 分组管理仓储
+	c.GroupRepository = repository.NewPostgresGroupRepository(c.DB.DB)
 	// WebDAV 访问密钥仓储
 	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
 	// 站内消息仓储
@@ -264,8 +264,8 @@ func (c *Container) initServices() error {
 		c.Config,
 		c.Logger,
 	)
-	// 地址簿服务
-	c.AddressBookService = service.NewAddressBookService(c.AddressBookRepository)
+	// 分组管理服务
+	c.GroupService = service.NewGroupService(c.GroupRepository)
 	// WebDAV 访问密钥服务
 	c.WebDAVAccessKeyService = service.NewWebDAVAccessKeyService(c.WebDAVAccessKeyRepo)
 	// 站内消息服务
@@ -274,7 +274,7 @@ func (c *Container) initServices() error {
 	c.ShareUserService = service.NewShareUserService(
 		c.UserShareRepository,
 		c.UserRepository,
-		c.AddressBookService,
+		c.GroupService,
 		c.NotificationService,
 		c.Config,
 		c.Logger,
@@ -431,9 +431,9 @@ func (c *Container) initHandlers() error {
 		c.MutationRecorder,
 		c.Logger,
 	)
-	// 地址簿处理器
-	c.AddressBookHandler = handler.NewAddressBookHandler(
-		c.AddressBookService,
+	// 分组管理处理器
+	c.GroupHandler = handler.NewGroupHandler(
+		c.GroupService,
 		c.Logger,
 	)
 	// WebDAV 访问密钥处理器
@@ -471,7 +471,7 @@ func (c *Container) initHTTP() error {
 		c.ShareHandler,
 		c.ShareUserHandler,
 		c.WebDAVAccessKeyHandler,
-		c.AddressBookHandler,
+		c.GroupHandler,
 		c.NotificationHandler,
 		c.Logger,
 	)

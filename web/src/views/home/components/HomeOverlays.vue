@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { AddressContact, AddressGroup, DirectShareItem, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
+import type { ManagedGroup, DirectShareItem, GroupMember, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
 import type { FileItem } from '../types'
 import { shortenAddress } from '@/utils/address'
 
@@ -68,9 +68,9 @@ const props = defineProps<{
     expiresValue: string
     expiresUnit: ShareExpiryUnit
   }
-  addressContacts: AddressContact[]
-  addressGroups: AddressGroup[]
-  groupedContacts: AddressContact[]
+  groupMembers: GroupMember[]
+  managedGroups: ManagedGroup[]
+  selectedGroupMembers: GroupMember[]
   submitShareUser: () => void
   createFolderDialogVisible: boolean
   createFolderSubmitting: boolean
@@ -681,7 +681,7 @@ onBeforeUnmount(() => {
 
   <el-dialog
     v-model="shareUserDialogModel"
-    title="共享给用户"
+    title="共享"
     width="420px"
   >
     <el-form label-width="72px" label-position="left" class="share-user-form">
@@ -690,8 +690,8 @@ onBeforeUnmount(() => {
       </el-form-item>
       <el-form-item label="共享方式">
         <el-radio-group v-model="shareUserForm.targetMode" size="small">
-          <el-radio-button value="addresses">地址共享</el-radio-button>
-          <el-radio-button value="groups">分组</el-radio-button>
+          <el-radio-button value="addresses">指定地址</el-radio-button>
+          <el-radio-button value="groups">共享分组</el-radio-button>
           <el-radio-button value="all_users">所有用户</el-radio-button>
         </el-radio-group>
       </el-form-item>
@@ -710,14 +710,14 @@ onBeforeUnmount(() => {
           style="width: 100%"
         >
           <el-option
-            v-for="contact in addressContacts"
-            :key="contact.id"
-            :label="contact.walletAddress"
-            :value="contact.walletAddress"
+            v-for="member in groupMembers"
+            :key="member.id"
+            :label="member.walletAddress"
+            :value="member.walletAddress"
           >
-            <div class="contact-option" :title="contact.walletAddress">
-              <span v-if="contact.name" class="contact-name">{{ contact.name }}</span>
-              <span class="contact-address mono">{{ shortenAddress(contact.walletAddress) }}</span>
+            <div class="member-option" :title="member.walletAddress">
+              <span v-if="member.name" class="member-name">{{ member.name }}</span>
+              <span class="member-address mono">{{ shortenAddress(member.walletAddress) }}</span>
             </div>
           </el-option>
         </el-select>
@@ -729,17 +729,16 @@ onBeforeUnmount(() => {
           collapse-tags
           collapse-tags-tooltip
           max-collapse-tags="2"
-          placeholder="选择一个或多个分组"
+          placeholder="选择一个或多个共享分组"
           style="width: 100%"
         >
-          <el-option label="未分组" value="" />
-          <el-option v-for="group in addressGroups" :key="group.id" :label="group.name" :value="group.id" />
+          <el-option v-for="group in managedGroups" :key="group.id" :label="group.name" :value="group.id" />
         </el-select>
-        <div class="share-group-meta">分组地址：{{ groupedContacts.length }} 个</div>
+        <div class="share-group-meta">分组成员：{{ selectedGroupMembers.length }} 个</div>
       </el-form-item>
-      <el-form-item v-if="shareUserForm.targetMode === 'groups' && groupedContacts.length">
+      <el-form-item v-if="shareUserForm.targetMode === 'groups' && selectedGroupMembers.length">
         <div class="share-group-list">
-          <span v-for="item in groupedContacts" :key="item.id" class="mono">
+          <span v-for="item in selectedGroupMembers" :key="item.id" class="mono">
             {{ shortenAddress(item.walletAddress) }}
           </span>
         </div>
@@ -954,20 +953,20 @@ onBeforeUnmount(() => {
   color: #909399;
 }
 
-.contact-option {
+.member-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.contact-name {
+.member-name {
   font-size: 13px;
   color: #1f2d3d;
   font-weight: 500;
 }
 
-.contact-address {
+.member-address {
   font-size: 12px;
   color: #909399;
 }

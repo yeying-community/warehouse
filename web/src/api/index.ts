@@ -34,7 +34,11 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
     throw new Error(error || `HTTP ${response.status}`)
   }
 
-  return response.json()
+  const text = await response.text()
+  if (!text.trim()) {
+    return undefined as T
+  }
+  return JSON.parse(text) as T
 }
 
 // 认证相关 API
@@ -325,18 +329,25 @@ export interface DirectShareItem {
 
 export type ShareExpiryUnit = 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year'
 
-export interface AddressGroup {
+export interface ManagedGroup {
   id: string
   name: string
+  canManage?: boolean
+  canInvite?: boolean
   createdAt?: string
 }
 
-export interface AddressContact {
+export interface GroupMember {
   id: string
   name: string
+  username?: string
   walletAddress: string
-  groupId?: string
+  groupId: string
   tags?: string[]
+  status?: 'active' | 'pending' | string
+  isOwner?: boolean
+  canManage?: boolean
+  canRespond?: boolean
   createdAt?: string
 }
 
@@ -478,45 +489,57 @@ export const webdavAccessKeyApi = {
   }
 }
 
-export const addressBookApi = {
+export const groupApi = {
   listGroups() {
-    return request<{ items: AddressGroup[] }>('/api/v1/public/webdav/address/groups')
+    return request<{ items: ManagedGroup[] }>('/api/v1/public/webdav/group/groups')
   },
   createGroup(name: string) {
-    return request<AddressGroup>('/api/v1/public/webdav/address/groups/create', {
+    return request<ManagedGroup>('/api/v1/public/webdav/group/groups/create', {
       method: 'POST',
       body: { name }
     })
   },
   updateGroup(id: string, name: string) {
-    return request('/api/v1/public/webdav/address/groups/update', {
+    return request('/api/v1/public/webdav/group/groups/update', {
       method: 'PUT',
       body: { id, name }
     })
   },
   deleteGroup(id: string) {
-    return request('/api/v1/public/webdav/address/groups/delete', {
+    return request('/api/v1/public/webdav/group/groups/delete', {
       method: 'DELETE',
       body: { id }
     })
   },
-  listContacts() {
-    return request<{ items: AddressContact[] }>('/api/v1/public/webdav/address/contacts')
+  listMembers() {
+    return request<{ items: GroupMember[] }>('/api/v1/public/webdav/group/members')
   },
-  createContact(payload: { name: string; walletAddress: string; groupId?: string; tags?: string[] }) {
-    return request<AddressContact>('/api/v1/public/webdav/address/contacts/create', {
+  createMember(payload: { name: string; walletAddress: string; groupId: string; tags?: string[] }) {
+    return request<GroupMember>('/api/v1/public/webdav/group/members/create', {
       method: 'POST',
       body: payload
     })
   },
-  updateContact(payload: { id: string; name?: string; walletAddress?: string; groupId?: string; tags?: string[] }) {
-    return request<AddressContact>('/api/v1/public/webdav/address/contacts/update', {
+  updateMember(payload: { id: string; name?: string; walletAddress?: string; groupId?: string; tags?: string[] }) {
+    return request<GroupMember>('/api/v1/public/webdav/group/members/update', {
       method: 'PUT',
       body: payload
     })
   },
-  deleteContact(id: string) {
-    return request('/api/v1/public/webdav/address/contacts/delete', {
+  approveMember(id: string) {
+    return request('/api/v1/public/webdav/group/members/approve', {
+      method: 'POST',
+      body: { id }
+    })
+  },
+  rejectMember(id: string) {
+    return request('/api/v1/public/webdav/group/members/reject', {
+      method: 'POST',
+      body: { id }
+    })
+  },
+  deleteMember(id: string) {
+    return request('/api/v1/public/webdav/group/members/delete', {
       method: 'DELETE',
       body: { id }
     })

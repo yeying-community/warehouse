@@ -3,7 +3,7 @@ import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
 import { Bell, Notebook, SwitchButton, Wallet } from '@element-plus/icons-vue'
 import { storeToRefs } from 'pinia'
 import { notificationApi, type AdminNotificationCreatePayload, type NotificationItem, type NotificationPreferenceItem } from '@/api'
-import { isLoggedIn, getCurrentAccount, logout, loginWithWallet, focusPendingWalletApproval, getWalletName, watchWalletAccounts, watchWalletProvider, markAccountChanged } from '@/plugins/auth'
+import { AUTH_CHANGED_EVENT, isLoggedIn, getCurrentAccount, logout, loginWithWallet, focusPendingWalletApproval, getWalletName, watchWalletAccounts, watchWalletProvider } from '@/plugins/auth'
 import { useUploadTaskStore } from '@/stores/uploadTaskStore'
 import UploadTaskListView from '@/views/home/components/UploadTaskListView.vue'
 import type { UploadTask } from '@/views/home/types'
@@ -70,6 +70,7 @@ onMounted(() => {
       void refreshUnreadCounts()
     }, 30000)
   }
+  window.addEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
 })
 
 onMounted(() => {
@@ -78,8 +79,7 @@ onMounted(() => {
       if (!next) return
       const current = account.value?.toLowerCase()
       if (current && current !== next.toLowerCase() && isAuth.value) {
-        markAccountChanged(next)
-        logout()
+        logout({ reload: false })
         return
       }
       account.value = next
@@ -105,6 +105,21 @@ async function handleConnect() {
 
 function handleLogout() {
   logout()
+}
+
+function handleAuthChanged(): void {
+  isAuth.value = isLoggedIn()
+  account.value = getCurrentAccount()
+  if (!isAuth.value) {
+    notificationOpen.value = false
+    uploadTasksVisible.value = false
+    unreadCount.value = 0
+    stopNotificationStreams()
+    if (notificationTimer !== null) {
+      window.clearInterval(notificationTimer)
+      notificationTimer = null
+    }
+  }
 }
 
 function formatTaskSize(bytes: number): string {
@@ -348,6 +363,7 @@ onBeforeUnmount(() => {
     window.clearTimeout(taskPulseTimer)
   }
   stopNotificationStreams()
+  window.removeEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
   stopWalletProviderWatch?.()
   stopAccountWatch?.()
 })

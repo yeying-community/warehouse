@@ -18,7 +18,6 @@ import {
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 const AUTH_BASE = API_BASE ? `${API_BASE.replace(/\/+$/, '')}/api/v1/public/auth` : '/api/v1/public/auth'
 const ACCOUNT_HISTORY_KEY = 'warehouse:accountHistory'
-const ACCOUNT_CHANGED_KEY = 'warehouse:accountChanged'
 export const AUTH_CHANGED_EVENT = 'warehouse:auth-changed'
 
 let currentWalletProvider: Eip1193Provider | null = null
@@ -112,18 +111,6 @@ function rememberAccount(address: string): void {
   const history = readAccountHistory().map(normalizeAddress)
   const next = [normalized, ...history.filter(item => item !== normalized)]
   writeAccountHistory(next.slice(0, 10))
-}
-
-export function markAccountChanged(address: string): void {
-  if (!isWalletAddress(address)) return
-  localStorage.setItem(ACCOUNT_CHANGED_KEY, normalizeAddress(address))
-}
-
-export function consumeAccountChanged(): string | null {
-  const stored = localStorage.getItem(ACCOUNT_CHANGED_KEY)
-  if (!stored) return null
-  localStorage.removeItem(ACCOUNT_CHANGED_KEY)
-  return stored
 }
 
 export async function watchWalletAccounts(handler: (payload: { account: string | null; accounts: string[] }) => void): Promise<() => void> {
@@ -305,7 +292,8 @@ export async function loginWithEmailCode(email: string, code: string): Promise<v
 }
 
 // 登出
-export function logout(): void {
+export function logout(options: { reload?: boolean } = {}): void {
+  const shouldReload = options.reload !== false
   void sdkLogout({ baseUrl: AUTH_BASE }).catch((error) => {
     console.warn('logout failed:', error)
   })
@@ -318,7 +306,9 @@ export function logout(): void {
   // 清除 cookie
   document.cookie = 'authToken=; path=/; max-age=0'
   window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
-  window.location.reload()
+  if (shouldReload) {
+    window.location.reload()
+  }
 }
 
 // 检查是否已登录

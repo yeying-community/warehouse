@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yeying-community/warehouse/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/domain/group"
 	"github.com/yeying-community/warehouse/internal/domain/shareuser"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
@@ -19,12 +19,12 @@ import (
 
 // ShareUserService 定向分享服务
 type ShareUserService struct {
-	repo               repository.UserShareRepository
-	userRepo           user.Repository
-	addressBookService *AddressBookService
-	notification       *NotificationService
-	config             *config.Config
-	logger             *zap.Logger
+	repo         repository.UserShareRepository
+	userRepo     user.Repository
+	groupService *GroupService
+	notification *NotificationService
+	config       *config.Config
+	logger       *zap.Logger
 }
 
 func (s *ShareUserService) Repository() repository.UserShareRepository {
@@ -45,22 +45,22 @@ func (s *ShareUserService) Config() *config.Config {
 func NewShareUserService(
 	repo repository.UserShareRepository,
 	userRepo user.Repository,
-	addressBookService *AddressBookService,
+	groupService *GroupService,
 	notificationService *NotificationService,
 	cfg *config.Config,
 	logger *zap.Logger,
 ) *ShareUserService {
 	return &ShareUserService{
-		repo:               repo,
-		userRepo:           userRepo,
-		addressBookService: addressBookService,
-		notification:       notificationService,
-		config:             cfg,
-		logger:             logger,
+		repo:         repo,
+		userRepo:     userRepo,
+		groupService: groupService,
+		notification: notificationService,
+		config:       cfg,
+		logger:       logger,
 	}
 }
 
-// CreateByGroups 按地址簿多分组创建共享（受众会在创建时展开为用户快照）
+// CreateByGroups 按共享分组创建共享（受众会在创建时展开为用户快照）
 func (s *ShareUserService) CreateByGroups(ctx context.Context, owner *user.User, groupIDs []string, rawPath string, permissions string, expiry ShareExpiryInput) (*shareuser.ShareUserItem, error) {
 	targetUsers, err := s.resolveTargetUsersByGroups(ctx, owner, groupIDs)
 	if err != nil {
@@ -71,7 +71,7 @@ func (s *ShareUserService) CreateByGroups(ctx context.Context, owner *user.User,
 
 // CreateByWallets 按地址列表创建共享
 func (s *ShareUserService) CreateByWallets(ctx context.Context, owner *user.User, wallets []string, rawPath string, permissions string, expiry ShareExpiryInput) (*shareuser.ShareUserItem, error) {
-	targetUsers, err := s.resolveTargetUsers(ctx, owner, wallets)
+	targetUsers, err := s.resolveTargetUsers(ctx, wallets)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (s *ShareUserService) createWithAudiences(
 	return item, nil
 }
 
-func (s *ShareUserService) resolveTargetUsers(ctx context.Context, owner *user.User, wallets []string) ([]repository.UserShareAudience, error) {
+func (s *ShareUserService) resolveTargetUsers(ctx context.Context, wallets []string) ([]repository.UserShareAudience, error) {
 	seenWallet := make(map[string]struct{})
 	seenUserID := make(map[string]struct{})
 	result := make([]repository.UserShareAudience, 0, len(wallets))
@@ -203,7 +203,6 @@ func (s *ShareUserService) resolveTargetUsers(ctx context.Context, owner *user.U
 			TargetUserID: target.ID,
 			TargetWallet: target.WalletAddress,
 		})
-		s.autoTrackAddress(ctx, owner, target)
 	}
 
 	if len(result) == 0 {
@@ -213,51 +212,51 @@ func (s *ShareUserService) resolveTargetUsers(ctx context.Context, owner *user.U
 }
 
 func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner *user.User, groupIDs []string) ([]repository.UserShareAudience, error) {
-	if s.addressBookService == nil {
-		return nil, fmt.Errorf("address book service is not available")
+	if s.groupService == nil {
+		return nil, fmt.Errorf("group management service is not available")
 	}
 	if len(groupIDs) == 0 {
 		return nil, fmt.Errorf("no target groups provided")
 	}
-	contacts, err := s.addressBookService.ListContacts(ctx, owner)
+	members, err := s.groupService.ListMembers(ctx, owner)
 	if err != nil {
 		return nil, err
 	}
 	selected := make(map[string]struct{}, len(groupIDs))
-	hasUngrouped := false
 	for _, raw := range groupIDs {
 		groupID := strings.TrimSpace(raw)
 		if groupID == "" {
-			hasUngrouped = true
 			continue
 		}
 		selected[groupID] = struct{}{}
 	}
-	if !hasUngrouped && len(selected) == 0 {
+	if len(selected) == 0 {
 		return nil, fmt.Errorf("no target groups provided")
 	}
 
 	wallets := make([]string, 0)
 	groupByWallet := make(map[string]string)
-	for _, contact := range contacts {
-		groupID := strings.TrimSpace(contact.GroupID)
-		if groupID == "" {
-			if !hasUngrouped {
-				continue
-			}
-		} else if _, ok := selected[groupID]; !ok {
+	for _, member := range members {
+		if group.NormalizeMemberStatus(member.Status) != group.MemberStatusActive {
 			continue
 		}
-		wallets = append(wallets, contact.WalletAddress)
-		walletKey := strings.ToLower(strings.TrimSpace(contact.WalletAddress))
+		groupID := strings.TrimSpace(member.GroupID)
+		if groupID == "" {
+			continue
+		}
+		if _, ok := selected[groupID]; !ok {
+			continue
+		}
+		wallets = append(wallets, member.WalletAddress)
+		walletKey := strings.ToLower(strings.TrimSpace(member.WalletAddress))
 		if walletKey != "" {
 			groupByWallet[walletKey] = groupID
 		}
 	}
 	if len(wallets) == 0 {
-		return nil, fmt.Errorf("no contacts found in target groups")
+		return nil, fmt.Errorf("no members found in target groups")
 	}
-	targetUsers, err := s.resolveTargetUsers(ctx, owner, wallets)
+	targetUsers, err := s.resolveTargetUsers(ctx, wallets)
 	if err != nil {
 		return nil, err
 	}
@@ -266,29 +265,6 @@ func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner
 		targetUsers[i].SourceGroupID = groupByWallet[walletKey]
 	}
 	return targetUsers, nil
-}
-
-func (s *ShareUserService) autoTrackAddress(ctx context.Context, owner *user.User, target *user.User) {
-	if s.addressBookService == nil || owner == nil || target == nil {
-		return
-	}
-	name := strings.TrimSpace(target.Username)
-	if name == "" {
-		name = shortenWallet(target.WalletAddress)
-	}
-	if name == "" {
-		name = "联系人"
-	}
-	if _, err := s.addressBookService.CreateContact(ctx, owner, name, target.WalletAddress, "", nil); err != nil {
-		if err == addressbook.ErrDuplicateWallet {
-			return
-		}
-		s.logger.Warn("failed to auto track address",
-			zap.String("owner", owner.Username),
-			zap.String("target", target.WalletAddress),
-			zap.Error(err),
-		)
-	}
 }
 
 func (s *ShareUserService) webdavPrefix() string {
@@ -300,14 +276,6 @@ func (s *ShareUserService) webdavPrefix() string {
 
 func (s *ShareUserService) normalizeItemPath(raw string) (string, error) {
 	return normalizeSharePath(raw, s.webdavPrefix())
-}
-
-func shortenWallet(address string) string {
-	trimmed := strings.TrimSpace(address)
-	if len(trimmed) <= 10 {
-		return trimmed
-	}
-	return trimmed[:6] + "..." + trimmed[len(trimmed)-4:]
 }
 
 // ListByOwner 获取我分享的列表

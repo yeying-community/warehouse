@@ -3,26 +3,28 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
-	"github.com/yeying-community/warehouse/internal/domain/addressbook"
+	"github.com/yeying-community/warehouse/internal/domain/group"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
 
-type AddressBookHandler struct {
-	service *service.AddressBookService
+type GroupHandler struct {
+	service *service.GroupService
 	logger  *zap.Logger
 }
 
-func NewAddressBookHandler(service *service.AddressBookService, logger *zap.Logger) *AddressBookHandler {
-	return &AddressBookHandler{
+func NewGroupHandler(service *service.GroupService, logger *zap.Logger) *GroupHandler {
+	return &GroupHandler{
 		service: service,
 		logger:  logger,
 	}
 }
 
-func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -41,6 +43,8 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 	type item struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
+		CanManage bool   `json:"canManage"`
+		CanInvite bool   `json:"canInvite"`
 		CreatedAt string `json:"createdAt"`
 	}
 	resp := struct {
@@ -50,6 +54,8 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 		resp.Items = append(resp.Items, item{
 			ID:        g.ID,
 			Name:      g.Name,
+			CanManage: g.UserID == u.ID,
+			CanInvite: g.CanInvite,
 			CreatedAt: g.CreatedAt.Format(timeLayout),
 		})
 	}
@@ -57,7 +63,7 @@ func (h *AddressBookHandler) HandleGroupList(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -74,9 +80,9 @@ func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	group, err := h.service.CreateGroup(r.Context(), u, req.Name)
+	createdGroup, err := h.service.CreateGroup(r.Context(), u, req.Name)
 	if err != nil {
-		if err == addressbook.ErrDuplicateGroupName {
+		if err == group.ErrDuplicateGroupName {
 			http.Error(w, "Group name already exists", http.StatusConflict)
 			return
 		}
@@ -85,13 +91,15 @@ func (h *AddressBookHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":        group.ID,
-		"name":      group.Name,
-		"createdAt": group.CreatedAt.Format(timeLayout),
+		"id":        createdGroup.ID,
+		"name":      createdGroup.Name,
+		"canManage": true,
+		"canInvite": true,
+		"createdAt": createdGroup.CreatedAt.Format(timeLayout),
 	})
 }
 
-func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -114,11 +122,11 @@ func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.service.RenameGroup(r.Context(), u, req.ID, req.Name); err != nil {
-		if err == addressbook.ErrGroupNotFound {
+		if err == group.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
-		if err == addressbook.ErrDuplicateGroupName {
+		if err == group.ErrDuplicateGroupName {
 			http.Error(w, "Group name already exists", http.StatusConflict)
 			return
 		}
@@ -128,7 +136,7 @@ func (h *AddressBookHandler) HandleGroupUpdate(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *AddressBookHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -150,7 +158,7 @@ func (h *AddressBookHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.service.DeleteGroup(r.Context(), u, req.ID); err != nil {
-		if err == addressbook.ErrGroupNotFound {
+		if err == group.ErrGroupNotFound {
 			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
@@ -160,7 +168,7 @@ func (h *AddressBookHandler) HandleGroupDelete(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *AddressBookHandler) HandleContactList(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -170,38 +178,48 @@ func (h *AddressBookHandler) HandleContactList(w http.ResponseWriter, r *http.Re
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	contacts, err := h.service.ListContacts(r.Context(), u)
+	members, err := h.service.ListMembers(r.Context(), u)
 	if err != nil {
-		h.logger.Error("failed to list contacts", zap.Error(err))
-		http.Error(w, "Failed to list contacts", http.StatusInternalServerError)
+		h.logger.Error("failed to list group members", zap.Error(err))
+		http.Error(w, "Failed to list group members", http.StatusInternalServerError)
 		return
 	}
 	type item struct {
 		ID            string   `json:"id"`
 		Name          string   `json:"name"`
+		Username      string   `json:"username"`
 		WalletAddress string   `json:"walletAddress"`
-		GroupID       string   `json:"groupId,omitempty"`
+		GroupID       string   `json:"groupId"`
 		Tags          []string `json:"tags"`
+		Status        string   `json:"status"`
+		IsOwner       bool     `json:"isOwner"`
+		CanManage     bool     `json:"canManage"`
+		CanRespond    bool     `json:"canRespond"`
 		CreatedAt     string   `json:"createdAt"`
 	}
 	resp := struct {
 		Items []item `json:"items"`
-	}{Items: make([]item, 0, len(contacts))}
-	for _, c := range contacts {
+	}{Items: make([]item, 0, len(members))}
+	for _, m := range members {
 		resp.Items = append(resp.Items, item{
-			ID:            c.ID,
-			Name:          c.Name,
-			WalletAddress: c.WalletAddress,
-			GroupID:       c.GroupID,
-			Tags:          c.Tags,
-			CreatedAt:     c.CreatedAt.Format(timeLayout),
+			ID:            m.ID,
+			Name:          m.Name,
+			Username:      m.Username,
+			WalletAddress: m.WalletAddress,
+			GroupID:       m.GroupID,
+			Tags:          m.Tags,
+			Status:        m.Status,
+			IsOwner:       m.IsOwner,
+			CanManage:     m.UserID == u.ID,
+			CanRespond:    canRespondToMemberInvite(u, m),
+			CreatedAt:     m.CreatedAt.Format(timeLayout),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *AddressBookHandler) HandleContactCreate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -221,10 +239,14 @@ func (h *AddressBookHandler) HandleContactCreate(w http.ResponseWriter, r *http.
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	contact, err := h.service.CreateContact(r.Context(), u, req.Name, req.WalletAddress, req.GroupID, req.Tags)
+	member, err := h.service.CreateMember(r.Context(), u, req.Name, req.WalletAddress, req.GroupID, req.Tags)
 	if err != nil {
-		if err == addressbook.ErrDuplicateWallet {
-			http.Error(w, "Wallet address already exists", http.StatusConflict)
+		if err == group.ErrDuplicateMember {
+			http.Error(w, "Member already exists in group", http.StatusConflict)
+			return
+		}
+		if err == group.ErrGroupNotFound {
+			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -232,16 +254,21 @@ func (h *AddressBookHandler) HandleContactCreate(w http.ResponseWriter, r *http.
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":            contact.ID,
-		"name":          contact.Name,
-		"walletAddress": contact.WalletAddress,
-		"groupId":       contact.GroupID,
-		"tags":          contact.Tags,
-		"createdAt":     contact.CreatedAt.Format(timeLayout),
+		"id":            member.ID,
+		"name":          member.Name,
+		"username":      member.Username,
+		"walletAddress": member.WalletAddress,
+		"groupId":       member.GroupID,
+		"tags":          member.Tags,
+		"status":        member.Status,
+		"isOwner":       member.IsOwner,
+		"canManage":     member.UserID == u.ID,
+		"canRespond":    canRespondToMemberInvite(u, member),
+		"createdAt":     member.CreatedAt.Format(timeLayout),
 	})
 }
 
-func (h *AddressBookHandler) HandleContactUpdate(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -266,14 +293,18 @@ func (h *AddressBookHandler) HandleContactUpdate(w http.ResponseWriter, r *http.
 		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
-	contact, err := h.service.UpdateContact(r.Context(), u, req.ID, req.Name, req.WalletAddress, req.GroupID, req.Tags)
+	member, err := h.service.UpdateMember(r.Context(), u, req.ID, req.Name, req.WalletAddress, req.GroupID, req.Tags)
 	if err != nil {
-		if err == addressbook.ErrContactNotFound {
-			http.Error(w, "Contact not found", http.StatusNotFound)
+		if err == group.ErrMemberNotFound {
+			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
-		if err == addressbook.ErrDuplicateWallet {
-			http.Error(w, "Wallet address already exists", http.StatusConflict)
+		if err == group.ErrDuplicateMember {
+			http.Error(w, "Member already exists in group", http.StatusConflict)
+			return
+		}
+		if err == group.ErrGroupNotFound {
+			http.Error(w, "Group not found", http.StatusNotFound)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -281,15 +312,96 @@ func (h *AddressBookHandler) HandleContactUpdate(w http.ResponseWriter, r *http.
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id":            contact.ID,
-		"name":          contact.Name,
-		"walletAddress": contact.WalletAddress,
-		"groupId":       contact.GroupID,
-		"tags":          contact.Tags,
+		"id":            member.ID,
+		"name":          member.Name,
+		"username":      member.Username,
+		"walletAddress": member.WalletAddress,
+		"groupId":       member.GroupID,
+		"tags":          member.Tags,
+		"status":        member.Status,
+		"isOwner":       member.IsOwner,
+		"canManage":     member.UserID == u.ID,
+		"canRespond":    canRespondToMemberInvite(u, member),
 	})
 }
 
-func (h *AddressBookHandler) HandleContactDelete(w http.ResponseWriter, r *http.Request) {
+func (h *GroupHandler) HandleMemberApprove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.service.ApproveMember(r.Context(), u, req.ID); err != nil {
+		if err == group.ErrMemberNotFound {
+			http.Error(w, "Member not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func canRespondToMemberInvite(u *user.User, member *group.Member) bool {
+	if u == nil || member == nil {
+		return false
+	}
+	switch group.NormalizeMemberStatus(member.Status) {
+	case group.MemberStatusPending:
+		return strings.EqualFold(strings.TrimSpace(u.WalletAddress), strings.TrimSpace(member.WalletAddress))
+	default:
+		return false
+	}
+}
+
+func (h *GroupHandler) HandleMemberReject(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ID == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.service.RejectMember(r.Context(), u, req.ID); err != nil {
+		if err == group.ErrMemberNotFound {
+			http.Error(w, "Member not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *GroupHandler) HandleMemberDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -310,9 +422,9 @@ func (h *AddressBookHandler) HandleContactDelete(w http.ResponseWriter, r *http.
 		http.Error(w, "id is required", http.StatusBadRequest)
 		return
 	}
-	if err := h.service.DeleteContact(r.Context(), u, req.ID); err != nil {
-		if err == addressbook.ErrContactNotFound {
-			http.Error(w, "Contact not found", http.StatusNotFound)
+	if err := h.service.DeleteMember(r.Context(), u, req.ID); err != nil {
+		if err == group.ErrMemberNotFound {
+			http.Error(w, "Member not found", http.StatusNotFound)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)

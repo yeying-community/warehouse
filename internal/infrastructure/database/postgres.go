@@ -156,7 +156,7 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
-		// 好友地址分组
+		// 分组
 		`CREATE TABLE IF NOT EXISTS address_groups (
 			id VARCHAR(50) PRIMARY KEY,
 			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -175,14 +175,15 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
-		// 好友地址
-		`CREATE TABLE IF NOT EXISTS address_contacts (
+		// 分组成员
+		`CREATE TABLE IF NOT EXISTS group_members (
 			id VARCHAR(50) PRIMARY KEY,
 			user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			group_id VARCHAR(50) NULL REFERENCES address_groups(id) ON DELETE SET NULL,
+			group_id VARCHAR(50) NOT NULL REFERENCES address_groups(id) ON DELETE CASCADE,
 			name VARCHAR(255) NOT NULL,
 			wallet_address VARCHAR(255) NOT NULL,
 			tags TEXT[] NOT NULL DEFAULT '{}',
+			status VARCHAR(20) NOT NULL DEFAULT 'active',
 			created_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
@@ -347,14 +348,57 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON internal_share_audiences(share_id, audience_type)
 			WHERE audience_type = 'all_users'`,
 
-		// 好友地址分组索引
+		// 兼容历史库：旧版 group_members 表缺少审批状态列，必须先补列再执行数据迁移
+		`ALTER TABLE group_members ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`,
+
+		// 兼容历史库：如果旧版成员表存在，则迁移到 group_members
+		`DO $$
+		BEGIN
+			IF to_regclass('public.address_contacts') IS NOT NULL THEN
+				ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+				INSERT INTO group_members (id, user_id, group_id, name, wallet_address, tags, status, created_at)
+				SELECT id, user_id, group_id, name, wallet_address, tags, 'active', created_at
+				FROM address_contacts
+				WHERE group_id IS NOT NULL
+				ON CONFLICT DO NOTHING;
+			END IF;
+		END $$`,
+
+		// 兼容历史库：分组创建者本身也应该是分组 active 成员
+		`INSERT INTO group_members (id, user_id, group_id, name, wallet_address, tags, status, created_at)
+		SELECT
+			'grp_owner_' || md5(g.id || '|' || g.user_id),
+			g.user_id,
+			g.id,
+			COALESCE(NULLIF(u.username, ''), u.wallet_address),
+			u.wallet_address,
+			'{}'::TEXT[],
+			'active',
+			g.created_at
+		FROM address_groups g
+		JOIN users u ON u.id = g.user_id
+		WHERE u.wallet_address IS NOT NULL
+			AND TRIM(u.wallet_address) <> ''
+			AND NOT EXISTS (
+				SELECT 1
+				FROM group_members m
+				WHERE m.user_id = g.user_id
+					AND m.group_id = g.id
+					AND LOWER(m.wallet_address) = LOWER(u.wallet_address)
+			)
+		ON CONFLICT DO NOTHING`,
+
+		// 分组索引
 		`CREATE INDEX IF NOT EXISTS idx_address_groups_user_id ON address_groups(user_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_groups_user_name ON address_groups(user_id, name)`,
 
-		// 好友地址索引
-		`CREATE INDEX IF NOT EXISTS idx_address_contacts_user_id ON address_contacts(user_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_address_contacts_group_id ON address_contacts(group_id)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_contacts_user_wallet ON address_contacts(user_id, wallet_address)`,
+		// 分组成员索引
+		`CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON group_members(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_members_group_id ON group_members(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_members_group_status ON group_members(group_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_group_members_wallet_lower ON group_members(LOWER(wallet_address))`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_group_members_user_group_wallet
+			ON group_members(user_id, group_id, wallet_address)`,
 
 		// 复制 outbox 索引
 		`CREATE INDEX IF NOT EXISTS idx_replication_outbox_pair_pending
@@ -391,9 +435,6 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			WHERE dedupe_key IS NOT NULL`,
 		`CREATE INDEX IF NOT EXISTS idx_notification_preferences_user
 			ON notification_preferences(user_id)`,
-
-		// 兼容已有地址簿表
-		`ALTER TABLE address_contacts ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}'`,
 
 		// 创建钱包地址索引
 		`CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address) WHERE wallet_address IS NOT NULL`,

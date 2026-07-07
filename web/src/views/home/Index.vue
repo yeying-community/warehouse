@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User, Lock, Unlock } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
-import { isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider, consumeAccountChanged } from '@/plugins/auth'
+import { AUTH_CHANGED_EVENT, isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider } from '@/plugins/auth'
 import { decryptBlobContent, encryptFileContent, encryptTextContent } from '@/utils/crypto'
 import {
   buildEncryptedDirectoryMetadata,
@@ -18,9 +18,9 @@ import { parsePropfindResponse } from '@/utils/webdav'
 import { copyText } from '@/utils/clipboard'
 import { shortenAddress } from '@/utils/address'
 import { showInfo, showSuccess } from '@/utils/toast'
-import { useAddressBookStore } from '@/stores/addressBookStore'
+import { useGroupStore } from '@/stores/groupStore'
 import { useUploadTaskStore } from '@/stores/uploadTaskStore'
-import AddressBookView from './components/AddressBookView.vue'
+import GroupView from './components/GroupView.vue'
 import HomeOverlays from './components/HomeOverlays.vue'
 import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
@@ -69,6 +69,7 @@ const selectedWalletAccount = ref('')
 const walletHistorySelectRef = ref<any>(null)
 const walletPresent = ref(false)
 const walletLoginSubmitting = ref(false)
+const loggedIn = ref(isLoggedIn())
 let stopAccountWatch: (() => void) | null = null
 let stopWalletProviderWatch: (() => void) | null = null
 
@@ -105,9 +106,8 @@ const adminUsersSubmitting = ref(false)
 const adminUsersEditTarget = ref<AdminUserItem | null>(null)
 const adminUsersEditValue = ref('')
 const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
-const showAddressBook = ref(false)
-const showUploadTasks = ref(false)
-const managementSection = ref<'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks'>('account')
+const showGroupView = ref(false)
+const managementSection = ref<ManagementSection>('account')
 const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
@@ -146,8 +146,8 @@ const accessKeyBindTargetID = ref('')
 const accessKeys = ref<WebDAVAccessKeyItem[]>([])
 const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
-const addressBookStore = useAddressBookStore()
-const { addressBookLoading, addressGroups, addressContacts } = storeToRefs(addressBookStore)
+const groupStore = useGroupStore()
+const { groupLoading, managedGroups, activeGroupMembers } = storeToRefs(groupStore)
 const uploadTaskStore = useUploadTaskStore()
 const editingUsername = ref(false)
 const usernameDraft = ref('')
@@ -194,7 +194,7 @@ const previewReadOnly = ref(false)
 let previewRequestSeq = 0
 const encryptedDirectoryRoots = ref<string[]>([])
 const currentEncryptedRoot = computed(() => {
-  if (showRecycle.value || showShare.value || showSharedWithMe.value || showUploadTasks.value) return null
+  if (showRecycle.value || showShare.value || showSharedWithMe.value) return null
   return resolveEncryptedRootForPath(currentPath.value)
 })
 const currentEncryptedDirectoryPasswordCached = computed(() => {
@@ -221,11 +221,13 @@ function isEncryptedDirectoryPasswordCachedForRoot(rootPath: string | null): boo
   return Boolean(getEncryptedDirectoryPassword(normalizeEncryptedRootPath(rootPath)))
 }
 const VIEW_STORAGE_KEY = 'warehouse:lastView'
+const MANAGEMENT_SECTION_STORAGE_KEY = 'warehouse:lastManagementSection'
 const FILE_PATH_STORAGE_KEY = 'warehouse:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'warehouse:sharedActiveId'
 const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
-type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'addressBook' | 'uploadTasks'
+type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group'
+type ManagementSection = 'account' | 'keys' | 'adminUsers' | 'group'
 type AssetSpace = AssetSpaceInfo
 type ShareExpiryForm = {
   expiresValue: string
@@ -286,7 +288,7 @@ const assetSpaceLoading = ref(false)
 const sidePanelCollapsed = ref(false)
 
 // 是否显示回收站列表
-const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showAddressBook.value && !showUploadTasks.value)
+const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value)
 const canUpload = computed(() => {
   if (!isFileView.value && !showSharedWithMe.value) return false
   if (showSharedWithMe.value) return isSharedBrowse.value && sharedCanCreate.value
@@ -307,15 +309,12 @@ const userProfile = computed(() => {
   const hasPassword = Boolean(userInfo.value?.has_password)
   return { username, walletAddress, walletName, permissions, createdAt, hasPassword }
 })
-const showSearch = computed(() => !showQuotaManage.value && !showAddressBook.value && !showUploadTasks.value)
-const showListHeader = computed(() => !showQuotaManage.value && !showAddressBook.value)
+const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value)
+const showListHeader = computed(() => !showQuotaManage.value && !showGroupView.value)
 type MobileAction = { command: string; label: string; disabled?: boolean }
 type MobileActionGroup = { title: string; items: MobileAction[] }
 
 const mobileActionGroups = computed<MobileActionGroup[]>(() => {
-  if (showUploadTasks.value) {
-    return []
-  }
   if (showRecycle.value) {
     return [
       {
@@ -408,14 +407,12 @@ function getMobileActionIcon(command: string) {
 }
 const searchKeyword = computed({
   get: () => {
-    if (showUploadTasks.value) return ''
     if (showRecycle.value) return recycleSearch.value
     if (showShare.value) return shareTab.value === 'link' ? shareLinkSearch.value : shareDirectSearch.value
     if (showSharedWithMe.value) return sharedSearch.value
     return fileSearch.value
   },
   set: (value: string) => {
-    if (showUploadTasks.value) return
     if (showRecycle.value) {
       recycleSearch.value = value
       return
@@ -436,7 +433,6 @@ const searchKeyword = computed({
   }
 })
 const searchPlaceholder = computed(() => {
-  if (showUploadTasks.value) return '搜索任务'
   if (showRecycle.value) return '搜索回收站'
   if (showShare.value) return shareTab.value === 'link' ? '搜索分享链接' : '搜索分享对象'
   if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索分享给我'
@@ -480,18 +476,16 @@ const fileBreadcrumbRoot = computed(() => {
 const managementSectionLabel = computed(() => {
   if (managementSection.value === 'keys') return '密钥管理'
   if (managementSection.value === 'adminUsers') return '用户管理'
-  if (managementSection.value === 'addressBook') return '好友管理'
-  if (managementSection.value === 'uploadTasks') return '任务'
+  if (managementSection.value === 'group') return '分组管理'
   return '我的资料'
 })
-const isManagementView = computed(() => showQuotaManage.value || showAddressBook.value || showUploadTasks.value)
+const isManagementView = computed(() => showQuotaManage.value || showGroupView.value)
 const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
   if (showQuotaManage.value) return managementSectionLabel.value
-  if (showAddressBook.value) return '好友管理'
-  if (showUploadTasks.value) return '任务'
+  if (showGroupView.value) return '分组管理'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
     return currentAssetSpace.value.name
@@ -529,13 +523,13 @@ const previewTitle = computed(() => {
 const previewDirty = computed(
   () => previewMode.value === 'text' && !previewReadOnly.value && previewContent.value !== previewOrigin.value
 )
-const groupedContacts = computed(() => {
+const selectedGroupMembers = computed(() => {
   if (shareUserForm.value.targetMode !== 'groups') return []
   const groupSet = new Set(
     shareUserForm.value.groupIds.map(item => String(item || '').trim())
   )
   if (!groupSet.size) return []
-  return addressContacts.value.filter(item => groupSet.has(String(item.groupId || '').trim()))
+  return activeGroupMembers.value.filter(item => groupSet.has(String(item.groupId || '').trim()))
 })
 const quotaAvailable = computed(() => {
   if (quota.value.unlimited) return null
@@ -1608,6 +1602,7 @@ async function fetchUserInfo() {
     canManageUsers.value = Boolean(data.capabilities?.manageUsers)
     if (!canManageUsers.value && managementSection.value === 'adminUsers') {
       managementSection.value = 'account'
+      persistManagementSection('account')
     }
     if (data.created_at) {
       localStorage.setItem('createdAt', data.created_at)
@@ -2234,7 +2229,7 @@ function previewAdjacentImage(direction: 'prev' | 'next') {
 }
 
 function handleRowClick(row: FileItem | RecycleItem | ShareItem | DirectShareItem) {
-  if (showQuotaManage.value || showAddressBook.value || showUploadTasks.value) return
+  if (showQuotaManage.value || showGroupView.value) return
   if (showRecycle.value) {
     openDetailDrawer('recycle', row as RecycleItem)
     return
@@ -2281,7 +2276,7 @@ function handleRowClick(row: FileItem | RecycleItem | ShareItem | DirectShareIte
 
 // 刷新当前视图
 async function refreshCurrentView() {
-  if (showUploadTasks.value || manualRefresh.value) return
+  if (manualRefresh.value) return
   manualRefresh.value = true
   try {
     if (showRecycle.value) {
@@ -2299,15 +2294,13 @@ async function refreshCurrentView() {
         await fetchSharedWithMe()
       }
     } else if (showQuotaManage.value) {
-      if (managementSection.value === 'addressBook') {
-        await addressBookStore.fetchAddressBook()
-      } else if (managementSection.value === 'uploadTasks') {
-        return
+      if (managementSection.value === 'group') {
+        await groupStore.fetchGroups()
       } else {
         await fetchUserCenter()
       }
-    } else if (showAddressBook.value) {
-      await addressBookStore.fetchAddressBook()
+    } else if (showGroupView.value) {
+      await groupStore.fetchGroups()
     } else {
       await fetchFiles(currentPath.value)
     }
@@ -2326,8 +2319,8 @@ async function copyCurrentPath() {
     } else {
       text = '定向分享'
     }
-  } else if (showAddressBook.value) {
-    text = '我的好友'
+  } else if (showGroupView.value) {
+    text = '分组管理'
   }
   await copyText(text, '已复制当前路径')
 }
@@ -3056,7 +3049,7 @@ async function retryUploadTask(task: UploadTask) {
     }
     return
   }
-  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showAddressBook.value && !showUploadTasks.value) {
+  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value) {
     fetchFiles(currentPath.value)
   }
 }
@@ -3701,8 +3694,7 @@ function enterRecycle() {
   showShare.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showAddressBook.value = false
-  showUploadTasks.value = false
+  showGroupView.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('recycle')
@@ -3716,8 +3708,7 @@ function enterFiles(path: string = currentPath.value) {
   showShare.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showAddressBook.value = false
-  showUploadTasks.value = false
+  showGroupView.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('files')
@@ -3882,8 +3873,7 @@ function enterShare(type: 'link' | 'direct' = shareTab.value) {
   showRecycle.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showAddressBook.value = false
-  showUploadTasks.value = false
+  showGroupView.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   shareTab.value = type
@@ -3908,12 +3898,11 @@ function enterSharedRoot(item: DirectShareItem) {
   showShare.value = false
   showRecycle.value = false
   showQuotaManage.value = false
-  showAddressBook.value = false
-  showUploadTasks.value = false
+  showGroupView.value = false
   sharedActive.value = item
   sharedPath.value = '/'
   sharedEntries.value = []
-  persistView('shareDirect')
+  persistView('sharedWithMe')
   persistSharedState()
   fetchSharedEntries('/')
 }
@@ -3924,8 +3913,7 @@ function backToSharedList() {
   showShare.value = true
   showRecycle.value = false
   showQuotaManage.value = false
-  showAddressBook.value = false
-  showUploadTasks.value = false
+  showGroupView.value = false
   shareTab.value = 'direct'
   sharedActive.value = null
   sharedPath.value = '/'
@@ -3941,8 +3929,7 @@ function enterSharedWithMeList() {
   showShare.value = false
   showRecycle.value = false
   showQuotaManage.value = false
-  showAddressBook.value = false
-  showUploadTasks.value = false
+  showGroupView.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('sharedWithMe')
@@ -4002,7 +3989,7 @@ function openShareUserDialog(item: FileItem) {
     ...createDefaultShareExpiryForm()
   }
   shareUserDialogVisible.value = true
-  addressBookStore.fetchAddressBook()
+  groupStore.fetchGroups()
 }
 
 async function submitShareUser() {
@@ -4028,7 +4015,7 @@ async function submitShareUser() {
         showError('请至少选择一个分组')
         return
       }
-      if (!groupedContacts.value.length) {
+      if (!selectedGroupMembers.value.length) {
         showError('所选分组没有可用地址')
         return
       }
@@ -4039,7 +4026,7 @@ async function submitShareUser() {
         permissions: shareUserForm.value.permissions,
         ...expiryPayload
       })
-      showSuccess(`已共享给所选分组内 ${groupedContacts.value.length} 位用户`)
+      showSuccess(`已共享给所选分组内 ${selectedGroupMembers.value.length} 位用户`)
     } else if (shareUserForm.value.targetMode === 'all_users') {
       await directShareApi.create({
         path: rawPath,
@@ -4082,40 +4069,35 @@ async function submitShareUser() {
   }
 }
 
-function enterAddressBook() {
+function enterGroupView() {
   detailDrawerVisible.value = false
-  showAddressBook.value = true
+  showGroupView.value = true
   showShare.value = false
   showRecycle.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
-  persistView('addressBook')
-  addressBookStore.fetchAddressBook()
+  persistView('group')
+  groupStore.fetchGroups()
 }
 
 // 进入账户管理
-function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks' = 'account') {
+function enterQuotaManage(section: ManagementSection = 'account') {
+  const nextSection = !canManageUsers.value && section === 'adminUsers' ? 'account' : normalizeManagementSection(section)
   detailDrawerVisible.value = false
-  managementSection.value = section
+  managementSection.value = nextSection
   showQuotaManage.value = true
   showShare.value = false
   showRecycle.value = false
   showSharedWithMe.value = false
-  showAddressBook.value = false
-  showUploadTasks.value = false
+  showGroupView.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('quotaManage')
-  if (section === 'addressBook') {
-    addressBookStore.fetchAddressBook()
-    return
-  }
-  if (section === 'uploadTasks') {
-    uploadTaskStore.openDialog()
-    managementSection.value = 'account'
+  persistManagementSection(nextSection)
+  if (nextSection === 'group') {
+    groupStore.fetchGroups()
     return
   }
   fetchUserCenter()
@@ -4385,6 +4367,26 @@ function persistView(view: ViewKey) {
   window.dispatchEvent(new CustomEvent('warehouse:view-changed', { detail: { view } }))
 }
 
+function normalizeManagementSection(value: unknown): ManagementSection {
+  switch (value) {
+    case 'keys':
+    case 'adminUsers':
+    case 'group':
+      return value
+    default:
+      return 'account'
+  }
+}
+
+function persistManagementSection(section: ManagementSection) {
+  localStorage.setItem(MANAGEMENT_SECTION_STORAGE_KEY, section)
+}
+
+function restoreManagementSection() {
+  const storedSection = normalizeManagementSection(localStorage.getItem(MANAGEMENT_SECTION_STORAGE_KEY))
+  return !canManageUsers.value && storedSection === 'adminUsers' ? 'account' : storedSection
+}
+
 function clearSharedState() {
   localStorage.removeItem(SHARED_ACTIVE_STORAGE_KEY)
   localStorage.removeItem(SHARED_PATH_STORAGE_KEY)
@@ -4397,7 +4399,53 @@ function persistSharedState() {
 }
 
 async function restoreSharedWithMeView() {
-  enterShare('direct')
+  const activeId = localStorage.getItem(SHARED_ACTIVE_STORAGE_KEY) || ''
+  const storedPath = normalizeDirectoryPath(localStorage.getItem(SHARED_PATH_STORAGE_KEY) || '/')
+  if (!activeId) {
+    enterSharedWithMeList()
+    return
+  }
+
+  detailDrawerVisible.value = false
+  showSharedWithMe.value = true
+  showShare.value = false
+  showRecycle.value = false
+  showQuotaManage.value = false
+  showGroupView.value = false
+  sharedActive.value = null
+  sharedPath.value = storedPath
+  sharedEntries.value = []
+  persistView('sharedWithMe')
+
+  sharedWithMeLoading.value = true
+  try {
+    const [mineResult, receivedResult] = await Promise.allSettled([
+      directShareApi.listMine(),
+      directShareApi.listReceived()
+    ])
+    const mineItems = mineResult.status === 'fulfilled' ? mineResult.value.items : []
+    const receivedItems = receivedResult.status === 'fulfilled' ? receivedResult.value.items : []
+    if (mineResult.status === 'fulfilled') directShareList.value = mineItems
+    if (receivedResult.status === 'fulfilled') sharedWithMeList.value = receivedItems
+
+    const active = [...receivedItems, ...mineItems].find(item => item.id === activeId && item.isDir)
+    if (!active) {
+      clearSharedState()
+      sharedPath.value = '/'
+      await fetchSharedWithMe()
+      return
+    }
+    sharedActive.value = active
+    persistSharedState()
+    await fetchSharedEntries(sharedPath.value)
+  } catch (error) {
+    console.error('恢复共享目录失败:', error)
+    clearSharedState()
+    sharedPath.value = '/'
+    await fetchSharedWithMe()
+  } finally {
+    sharedWithMeLoading.value = false
+  }
 }
 
 async function restoreView() {
@@ -4419,15 +4467,11 @@ async function restoreView() {
     return
   }
   if (storedView === 'quotaManage') {
-    enterQuotaManage()
+    enterQuotaManage(restoreManagementSection())
     return
   }
-  if (storedView === 'addressBook') {
-    enterAddressBook()
-    return
-  }
-  if (storedView === 'uploadTasks') {
-    enterFiles(resolveInitialFilePath(localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'))
+  if (storedView === 'group') {
+    enterGroupView()
     return
   }
   const storedPath = localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'
@@ -4491,7 +4535,7 @@ watch(accessKeyDialogVisible, visible => {
   accessKeyForm.value = createDefaultAccessKeyForm('/')
 })
 
-watch(addressGroups, groups => {
+watch(managedGroups, groups => {
   const validIDs = new Set(groups.map(group => group.id))
   const normalized = Array.from(
     new Set(shareUserForm.value.groupIds.map(item => String(item || '').trim()))
@@ -4513,7 +4557,7 @@ onMounted(() => {
 })
 
 onMounted(() => {
-  if (isLoggedIn()) {
+  if (loggedIn.value) {
     fetchQuota()
     fetchUserInfo()
     void (async () => {
@@ -4524,7 +4568,10 @@ onMounted(() => {
 })
 
 function handleExternalNavigate(event: Event) {
-  const customEvent = event as CustomEvent<{ view?: ViewKey; section?: 'account' | 'keys' | 'adminUsers' | 'addressBook' | 'uploadTasks' }>
+  const customEvent = event as CustomEvent<{
+    view?: ViewKey
+    section?: ManagementSection
+  }>
   const view = customEvent?.detail?.view
   if (!view) return
   if (view === 'quotaManage') {
@@ -4535,13 +4582,28 @@ function handleExternalNavigate(event: Event) {
     enterSharedWithMeList()
     return
   }
-  if (view === 'addressBook') {
-    enterAddressBook()
+  if (view === 'group') {
+    enterGroupView()
     return
   }
-  if (view === 'uploadTasks') {
-    uploadTaskStore.openDialog()
-    return
+}
+
+function handleAuthChanged(): void {
+  loggedIn.value = isLoggedIn()
+  if (!loggedIn.value) {
+    loading.value = false
+    fileList.value = []
+    selectedFileRows.value = []
+    fileSelectionNonce.value += 1
+    userInfo.value = null
+    quota.value = { quota: 0, used: 0, available: 0, percentage: 0, unlimited: true }
+    showRecycle.value = false
+    showShare.value = false
+    showSharedWithMe.value = false
+    showQuotaManage.value = false
+    showGroupView.value = false
+    detailDrawerVisible.value = false
+    walletLoginSubmitting.value = false
   }
 }
 
@@ -4549,12 +4611,14 @@ onMounted(() => {
   window.addEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
   window.addEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
   window.addEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
+  window.addEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('warehouse:navigate', handleExternalNavigate as EventListener)
   window.removeEventListener('warehouse:upload-task-retry', handleUploadTaskRetryEvent as EventListener)
   window.removeEventListener('warehouse:upload-task-open', handleUploadTaskOpenEvent as EventListener)
+  window.removeEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
 })
 
 function syncWalletHistory(next?: string) {
@@ -4572,10 +4636,6 @@ onMounted(() => {
   stopWalletProviderWatch = watchWalletProvider((present) => {
     walletPresent.value = present
   })
-  const changed = consumeAccountChanged()
-  if (changed) {
-    showInfo('钱包账户已切换，请重新登录')
-  }
   syncWalletHistory()
   void (async () => {
     stopAccountWatch = await watchWalletAccounts(({ account }) => {
@@ -4595,7 +4655,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="home-container">
     <!-- 未登录状态 -->
-    <div v-if="!isLoggedIn()" class="login-page">
+    <div v-if="!loggedIn" class="login-page">
       <div class="login-floating-container">
         <div class="login-top-banner">
           <div class="login-top-banner-inner">
@@ -4862,15 +4922,15 @@ onBeforeUnmount(() => {
                   <span v-show="!sidePanelCollapsed">用户管理</span>
                 </button>
               </el-tooltip>
-              <el-tooltip content="好友管理" placement="right" :disabled="!sidePanelCollapsed">
+              <el-tooltip content="分组管理" placement="right" :disabled="!sidePanelCollapsed">
                 <button
                   type="button"
                   class="nav-item"
-                  :class="{ active: showQuotaManage && managementSection === 'addressBook' }"
-                  @click="enterQuotaManage('addressBook')"
+                  :class="{ active: showQuotaManage && managementSection === 'group' }"
+                  @click="enterQuotaManage('group')"
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
-                  <span v-show="!sidePanelCollapsed">好友管理</span>
+                  <span v-show="!sidePanelCollapsed">分组管理</span>
                 </button>
               </el-tooltip>
             </div>
@@ -5554,24 +5614,13 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
-              <div v-if="managementSection === 'addressBook'" class="user-card user-card-full" v-loading="addressBookLoading && !manualRefresh">
-                <div class="card-head">
-                  <div class="card-title">好友管理</div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="addressBookStore.fetchAddressBook()">刷新</el-button>
-                  </div>
-                </div>
-                <div class="key-summary">
-                  <span>联系人：{{ addressBookStore.addressGroupCounts.total }}</span>
-                  <span>分组：{{ addressBookStore.addressGroups.length }}</span>
-                  <span>未分组：{{ addressBookStore.addressGroupCounts.ungrouped }}</span>
-                </div>
-                <AddressBookView embedded @refresh="refreshCurrentView" />
+              <div v-if="managementSection === 'group'" class="user-card user-card-full" v-loading="groupLoading && !manualRefresh">
+                <GroupView embedded @refresh="refreshCurrentView" />
               </div>
             </div>
           </div>
-          <div v-else-if="showAddressBook" class="content-body content-scroll" v-loading="addressBookLoading && !manualRefresh">
-            <AddressBookView @refresh="refreshCurrentView" />
+          <div v-else-if="showGroupView" class="content-body content-scroll" v-loading="groupLoading && !manualRefresh">
+            <GroupView @refresh="refreshCurrentView" />
           </div>
           <div v-else class="content-body table-wrapper">
             <div v-if="shareViewSummary" class="view-summary-bar">
@@ -5753,9 +5802,9 @@ onBeforeUnmount(() => {
         :share-user-submitting="shareUserSubmitting"
         :share-user-target="shareUserTarget"
         :share-user-form="shareUserForm"
-        :address-contacts="addressContacts"
-        :address-groups="addressGroups"
-        :grouped-contacts="groupedContacts"
+        :group-members="activeGroupMembers"
+        :managed-groups="managedGroups"
+        :selected-group-members="selectedGroupMembers"
         :submit-share-user="submitShareUser"
         v-model:create-folder-dialog-visible="createFolderDialogVisible"
         :create-folder-submitting="createFolderSubmitting"
@@ -7097,6 +7146,10 @@ onBeforeUnmount(() => {
 
 .user-card-full {
   grid-column: 1 / -1;
+}
+
+.user-card-full:has(.group-management-page.embedded) {
+  padding: 16px;
 }
 
 .key-summary {
