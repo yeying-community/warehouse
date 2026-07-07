@@ -310,7 +310,7 @@ function canRespondMember(member: GroupMember) {
           class="member-table-row"
         >
           <div class="member-name">
-            <span>{{ member.name }}</span>
+            <span class="member-name-text">{{ member.name }}</span>
             <el-tag v-if="member.isOwner" size="small" type="success" effect="plain">创建者</el-tag>
           </div>
           <div class="member-address-cell">
@@ -745,12 +745,24 @@ function canRespondMember(member: GroupMember) {
 
 .member-name {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   font-weight: 600;
   color: #1f2d3d;
   font-size: 14px;
   min-width: 0;
+}
+
+.member-name-text {
+  min-width: 0;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.member-name :deep(.el-tag) {
+  flex-shrink: 0;
 }
 
 .detail-header-spacer {
