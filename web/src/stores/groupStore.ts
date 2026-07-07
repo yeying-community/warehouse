@@ -54,6 +54,7 @@ export const useGroupStore = defineStore('group', {
     memberForm: {
       id: '',
       name: '',
+      username: '',
       walletAddress: '',
       groupId: '',
       tags: [] as string[]
@@ -191,6 +192,7 @@ export const useGroupStore = defineStore('group', {
       this.memberForm = {
         id: '',
         name: '',
+        username: '',
         walletAddress: '',
         groupId: filter !== 'all' ? filter : '',
         tags: []
@@ -224,8 +226,6 @@ export const useGroupStore = defineStore('group', {
           await groupApi.updateMember({
             id: this.memberForm.id,
             name,
-            walletAddress,
-            groupId,
             tags
           })
         } else {
@@ -240,7 +240,7 @@ export const useGroupStore = defineStore('group', {
         this.memberDialogVisible = false
         await this.fetchGroups()
         if (savedMember && isPendingMember(savedMember)) {
-          showSuccess('成员申请已提交，等待分组维护者审批')
+          showSuccess('成员邀请已发送，等待对方确认')
         } else {
           showSuccess(isEditing ? '成员已保存' : '成员已添加')
         }
@@ -254,6 +254,7 @@ export const useGroupStore = defineStore('group', {
       this.memberForm = {
         id: member.id,
         name: member.name,
+        username: member.username || '',
         walletAddress: member.walletAddress,
         groupId: member.groupId,
         tags: member.tags ? [...member.tags] : []
@@ -276,22 +277,22 @@ export const useGroupStore = defineStore('group', {
       try {
         await groupApi.approveMember(member.id)
         await this.fetchGroups()
-        showSuccess('成员已通过')
+        showSuccess('已确认加入分组')
       } catch (error: any) {
-        showError(error?.message || '审批成员失败')
+        showError(error?.message || '确认邀请失败')
       }
     },
     async rejectMember(member: GroupMember) {
-      if (!(await confirmAction(`确定拒绝 ${member.name} 的加入申请吗？`, '拒绝申请'))) return
+      if (!(await confirmAction(`确定拒绝 ${member.name} 的加入邀请吗？`, '拒绝邀请'))) return
       try {
         await groupApi.rejectMember(member.id)
         if (this.memberForm.id === member.id) {
           this.resetMemberForm()
         }
         await this.fetchGroups()
-        showSuccess('申请已拒绝')
+        showSuccess('邀请已拒绝')
       } catch (error: any) {
-        showError(error?.message || '拒绝申请失败')
+        showError(error?.message || '拒绝邀请失败')
       }
     }
   }

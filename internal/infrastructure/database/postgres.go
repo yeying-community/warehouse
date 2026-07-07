@@ -364,6 +364,30 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			END IF;
 		END $$`,
 
+		// 兼容历史库：分组创建者本身也应该是分组 active 成员
+		`INSERT INTO group_members (id, user_id, group_id, name, wallet_address, tags, status, created_at)
+		SELECT
+			'grp_owner_' || md5(g.id || '|' || g.user_id),
+			g.user_id,
+			g.id,
+			COALESCE(NULLIF(u.username, ''), u.wallet_address),
+			u.wallet_address,
+			'{}'::TEXT[],
+			'active',
+			g.created_at
+		FROM address_groups g
+		JOIN users u ON u.id = g.user_id
+		WHERE u.wallet_address IS NOT NULL
+			AND TRIM(u.wallet_address) <> ''
+			AND NOT EXISTS (
+				SELECT 1
+				FROM group_members m
+				WHERE m.user_id = g.user_id
+					AND m.group_id = g.id
+					AND LOWER(m.wallet_address) = LOWER(u.wallet_address)
+			)
+		ON CONFLICT DO NOTHING`,
+
 		// 分组索引
 		`CREATE INDEX IF NOT EXISTS idx_address_groups_user_id ON address_groups(user_id)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_address_groups_user_name ON address_groups(user_id, name)`,

@@ -34,7 +34,11 @@ async function request<T>(url: string, options: RequestOptions = {}): Promise<T>
     throw new Error(error || `HTTP ${response.status}`)
   }
 
-  return response.json()
+  const text = await response.text()
+  if (!text.trim()) {
+    return undefined as T
+  }
+  return JSON.parse(text) as T
 }
 
 // 认证相关 API
@@ -329,17 +333,21 @@ export interface ManagedGroup {
   id: string
   name: string
   canManage?: boolean
+  canInvite?: boolean
   createdAt?: string
 }
 
 export interface GroupMember {
   id: string
   name: string
+  username?: string
   walletAddress: string
   groupId: string
   tags?: string[]
   status?: 'active' | 'pending' | string
+  isOwner?: boolean
   canManage?: boolean
+  canRespond?: boolean
   createdAt?: string
 }
 

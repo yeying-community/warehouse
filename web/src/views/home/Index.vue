@@ -106,8 +106,7 @@ const adminUsersEditTarget = ref<AdminUserItem | null>(null)
 const adminUsersEditValue = ref('')
 const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showGroupView = ref(false)
-const showUploadTasks = ref(false)
-const managementSection = ref<'account' | 'keys' | 'adminUsers' | 'group' | 'uploadTasks'>('account')
+const managementSection = ref<ManagementSection>('account')
 const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
@@ -194,7 +193,7 @@ const previewReadOnly = ref(false)
 let previewRequestSeq = 0
 const encryptedDirectoryRoots = ref<string[]>([])
 const currentEncryptedRoot = computed(() => {
-  if (showRecycle.value || showShare.value || showSharedWithMe.value || showUploadTasks.value) return null
+  if (showRecycle.value || showShare.value || showSharedWithMe.value) return null
   return resolveEncryptedRootForPath(currentPath.value)
 })
 const currentEncryptedDirectoryPasswordCached = computed(() => {
@@ -221,11 +220,13 @@ function isEncryptedDirectoryPasswordCachedForRoot(rootPath: string | null): boo
   return Boolean(getEncryptedDirectoryPassword(normalizeEncryptedRootPath(rootPath)))
 }
 const VIEW_STORAGE_KEY = 'warehouse:lastView'
+const MANAGEMENT_SECTION_STORAGE_KEY = 'warehouse:lastManagementSection'
 const FILE_PATH_STORAGE_KEY = 'warehouse:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'warehouse:sharedActiveId'
 const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
-type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group' | 'uploadTasks'
+type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group'
+type ManagementSection = 'account' | 'keys' | 'adminUsers' | 'group'
 type AssetSpace = AssetSpaceInfo
 type ShareExpiryForm = {
   expiresValue: string
@@ -286,7 +287,7 @@ const assetSpaceLoading = ref(false)
 const sidePanelCollapsed = ref(false)
 
 // 是否显示回收站列表
-const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value && !showUploadTasks.value)
+const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value)
 const canUpload = computed(() => {
   if (!isFileView.value && !showSharedWithMe.value) return false
   if (showSharedWithMe.value) return isSharedBrowse.value && sharedCanCreate.value
@@ -307,15 +308,12 @@ const userProfile = computed(() => {
   const hasPassword = Boolean(userInfo.value?.has_password)
   return { username, walletAddress, walletName, permissions, createdAt, hasPassword }
 })
-const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value && !showUploadTasks.value)
+const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value)
 const showListHeader = computed(() => !showQuotaManage.value && !showGroupView.value)
 type MobileAction = { command: string; label: string; disabled?: boolean }
 type MobileActionGroup = { title: string; items: MobileAction[] }
 
 const mobileActionGroups = computed<MobileActionGroup[]>(() => {
-  if (showUploadTasks.value) {
-    return []
-  }
   if (showRecycle.value) {
     return [
       {
@@ -408,14 +406,12 @@ function getMobileActionIcon(command: string) {
 }
 const searchKeyword = computed({
   get: () => {
-    if (showUploadTasks.value) return ''
     if (showRecycle.value) return recycleSearch.value
     if (showShare.value) return shareTab.value === 'link' ? shareLinkSearch.value : shareDirectSearch.value
     if (showSharedWithMe.value) return sharedSearch.value
     return fileSearch.value
   },
   set: (value: string) => {
-    if (showUploadTasks.value) return
     if (showRecycle.value) {
       recycleSearch.value = value
       return
@@ -436,7 +432,6 @@ const searchKeyword = computed({
   }
 })
 const searchPlaceholder = computed(() => {
-  if (showUploadTasks.value) return '搜索任务'
   if (showRecycle.value) return '搜索回收站'
   if (showShare.value) return shareTab.value === 'link' ? '搜索分享链接' : '搜索分享对象'
   if (showSharedWithMe.value) return sharedActive.value ? '搜索共享内容' : '搜索分享给我'
@@ -481,17 +476,15 @@ const managementSectionLabel = computed(() => {
   if (managementSection.value === 'keys') return '密钥管理'
   if (managementSection.value === 'adminUsers') return '用户管理'
   if (managementSection.value === 'group') return '分组管理'
-  if (managementSection.value === 'uploadTasks') return '任务'
   return '我的资料'
 })
-const isManagementView = computed(() => showQuotaManage.value || showGroupView.value || showUploadTasks.value)
+const isManagementView = computed(() => showQuotaManage.value || showGroupView.value)
 const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
   if (showQuotaManage.value) return managementSectionLabel.value
   if (showGroupView.value) return '分组管理'
-  if (showUploadTasks.value) return '任务'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
   if (currentAssetSpace.value && normalizedPath === normalizeDirectoryPath(currentAssetSpace.value.path)) {
     return currentAssetSpace.value.name
@@ -1608,6 +1601,7 @@ async function fetchUserInfo() {
     canManageUsers.value = Boolean(data.capabilities?.manageUsers)
     if (!canManageUsers.value && managementSection.value === 'adminUsers') {
       managementSection.value = 'account'
+      persistManagementSection('account')
     }
     if (data.created_at) {
       localStorage.setItem('createdAt', data.created_at)
@@ -2234,7 +2228,7 @@ function previewAdjacentImage(direction: 'prev' | 'next') {
 }
 
 function handleRowClick(row: FileItem | RecycleItem | ShareItem | DirectShareItem) {
-  if (showQuotaManage.value || showGroupView.value || showUploadTasks.value) return
+  if (showQuotaManage.value || showGroupView.value) return
   if (showRecycle.value) {
     openDetailDrawer('recycle', row as RecycleItem)
     return
@@ -2281,7 +2275,7 @@ function handleRowClick(row: FileItem | RecycleItem | ShareItem | DirectShareIte
 
 // 刷新当前视图
 async function refreshCurrentView() {
-  if (showUploadTasks.value || manualRefresh.value) return
+  if (manualRefresh.value) return
   manualRefresh.value = true
   try {
     if (showRecycle.value) {
@@ -2301,8 +2295,6 @@ async function refreshCurrentView() {
     } else if (showQuotaManage.value) {
       if (managementSection.value === 'group') {
         await groupStore.fetchGroups()
-      } else if (managementSection.value === 'uploadTasks') {
-        return
       } else {
         await fetchUserCenter()
       }
@@ -3056,7 +3048,7 @@ async function retryUploadTask(task: UploadTask) {
     }
     return
   }
-  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value && !showUploadTasks.value) {
+  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value) {
     fetchFiles(currentPath.value)
   }
 }
@@ -3702,7 +3694,6 @@ function enterRecycle() {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
-  showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('recycle')
@@ -3717,7 +3708,6 @@ function enterFiles(path: string = currentPath.value) {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
-  showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('files')
@@ -3883,7 +3873,6 @@ function enterShare(type: 'link' | 'direct' = shareTab.value) {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
-  showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   shareTab.value = type
@@ -3909,11 +3898,10 @@ function enterSharedRoot(item: DirectShareItem) {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
-  showUploadTasks.value = false
   sharedActive.value = item
   sharedPath.value = '/'
   sharedEntries.value = []
-  persistView('shareDirect')
+  persistView('sharedWithMe')
   persistSharedState()
   fetchSharedEntries('/')
 }
@@ -3925,7 +3913,6 @@ function backToSharedList() {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
-  showUploadTasks.value = false
   shareTab.value = 'direct'
   sharedActive.value = null
   sharedPath.value = '/'
@@ -3942,7 +3929,6 @@ function enterSharedWithMeList() {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
-  showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('sharedWithMe')
@@ -4089,7 +4075,6 @@ function enterGroupView() {
   showRecycle.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
-  showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('group')
@@ -4097,25 +4082,21 @@ function enterGroupView() {
 }
 
 // 进入账户管理
-function enterQuotaManage(section: 'account' | 'keys' | 'adminUsers' | 'group' | 'uploadTasks' = 'account') {
+function enterQuotaManage(section: ManagementSection = 'account') {
+  const nextSection = !canManageUsers.value && section === 'adminUsers' ? 'account' : normalizeManagementSection(section)
   detailDrawerVisible.value = false
-  managementSection.value = section
+  managementSection.value = nextSection
   showQuotaManage.value = true
   showShare.value = false
   showRecycle.value = false
   showSharedWithMe.value = false
   showGroupView.value = false
-  showUploadTasks.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('quotaManage')
-  if (section === 'group') {
+  persistManagementSection(nextSection)
+  if (nextSection === 'group') {
     groupStore.fetchGroups()
-    return
-  }
-  if (section === 'uploadTasks') {
-    uploadTaskStore.openDialog()
-    managementSection.value = 'account'
     return
   }
   fetchUserCenter()
@@ -4385,6 +4366,26 @@ function persistView(view: ViewKey) {
   window.dispatchEvent(new CustomEvent('warehouse:view-changed', { detail: { view } }))
 }
 
+function normalizeManagementSection(value: unknown): ManagementSection {
+  switch (value) {
+    case 'keys':
+    case 'adminUsers':
+    case 'group':
+      return value
+    default:
+      return 'account'
+  }
+}
+
+function persistManagementSection(section: ManagementSection) {
+  localStorage.setItem(MANAGEMENT_SECTION_STORAGE_KEY, section)
+}
+
+function restoreManagementSection() {
+  const storedSection = normalizeManagementSection(localStorage.getItem(MANAGEMENT_SECTION_STORAGE_KEY))
+  return !canManageUsers.value && storedSection === 'adminUsers' ? 'account' : storedSection
+}
+
 function clearSharedState() {
   localStorage.removeItem(SHARED_ACTIVE_STORAGE_KEY)
   localStorage.removeItem(SHARED_PATH_STORAGE_KEY)
@@ -4397,7 +4398,53 @@ function persistSharedState() {
 }
 
 async function restoreSharedWithMeView() {
-  enterShare('direct')
+  const activeId = localStorage.getItem(SHARED_ACTIVE_STORAGE_KEY) || ''
+  const storedPath = normalizeDirectoryPath(localStorage.getItem(SHARED_PATH_STORAGE_KEY) || '/')
+  if (!activeId) {
+    enterSharedWithMeList()
+    return
+  }
+
+  detailDrawerVisible.value = false
+  showSharedWithMe.value = true
+  showShare.value = false
+  showRecycle.value = false
+  showQuotaManage.value = false
+  showGroupView.value = false
+  sharedActive.value = null
+  sharedPath.value = storedPath
+  sharedEntries.value = []
+  persistView('sharedWithMe')
+
+  sharedWithMeLoading.value = true
+  try {
+    const [mineResult, receivedResult] = await Promise.allSettled([
+      directShareApi.listMine(),
+      directShareApi.listReceived()
+    ])
+    const mineItems = mineResult.status === 'fulfilled' ? mineResult.value.items : []
+    const receivedItems = receivedResult.status === 'fulfilled' ? receivedResult.value.items : []
+    if (mineResult.status === 'fulfilled') directShareList.value = mineItems
+    if (receivedResult.status === 'fulfilled') sharedWithMeList.value = receivedItems
+
+    const active = [...receivedItems, ...mineItems].find(item => item.id === activeId && item.isDir)
+    if (!active) {
+      clearSharedState()
+      sharedPath.value = '/'
+      await fetchSharedWithMe()
+      return
+    }
+    sharedActive.value = active
+    persistSharedState()
+    await fetchSharedEntries(sharedPath.value)
+  } catch (error) {
+    console.error('恢复共享目录失败:', error)
+    clearSharedState()
+    sharedPath.value = '/'
+    await fetchSharedWithMe()
+  } finally {
+    sharedWithMeLoading.value = false
+  }
 }
 
 async function restoreView() {
@@ -4419,15 +4466,11 @@ async function restoreView() {
     return
   }
   if (storedView === 'quotaManage') {
-    enterQuotaManage()
+    enterQuotaManage(restoreManagementSection())
     return
   }
   if (storedView === 'group') {
     enterGroupView()
-    return
-  }
-  if (storedView === 'uploadTasks') {
-    enterFiles(resolveInitialFilePath(localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'))
     return
   }
   const storedPath = localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'
@@ -4526,7 +4569,7 @@ onMounted(() => {
 function handleExternalNavigate(event: Event) {
   const customEvent = event as CustomEvent<{
     view?: ViewKey
-    section?: 'account' | 'keys' | 'adminUsers' | 'group' | 'uploadTasks'
+    section?: ManagementSection
   }>
   const view = customEvent?.detail?.view
   if (!view) return
@@ -4540,10 +4583,6 @@ function handleExternalNavigate(event: Event) {
   }
   if (view === 'group') {
     enterGroupView()
-    return
-  }
-  if (view === 'uploadTasks') {
-    uploadTaskStore.openDialog()
     return
   }
 }

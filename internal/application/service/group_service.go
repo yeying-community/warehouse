@@ -23,14 +23,26 @@ func (s *GroupService) ListGroups(ctx context.Context, u *user.User) ([]*group.G
 }
 
 func (s *GroupService) CreateGroup(ctx context.Context, u *user.User, name string) (*group.Group, error) {
-	group, err := group.NewGroup(u.ID, name)
+	grp, err := group.NewGroup(u.ID, name)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.CreateGroup(ctx, group); err != nil {
+	ownerMemberName := strings.TrimSpace(u.Username)
+	if ownerMemberName == "" {
+		ownerMemberName = strings.TrimSpace(u.WalletAddress)
+	}
+	var ownerMember *group.Member
+	if strings.TrimSpace(u.WalletAddress) != "" {
+		ownerMember, err = group.NewMember(u.ID, grp.ID, ownerMemberName, u.WalletAddress, nil)
+		if err != nil {
+			return nil, err
+		}
+		ownerMember.Status = group.MemberStatusActive
+	}
+	if err := s.repo.CreateGroup(ctx, grp, ownerMember); err != nil {
 		return nil, err
 	}
-	return group, nil
+	return grp, nil
 }
 
 func (s *GroupService) RenameGroup(ctx context.Context, u *user.User, groupID, name string) error {
@@ -62,9 +74,10 @@ func (s *GroupService) CreateMember(ctx context.Context, u *user.User, name, wal
 	if err != nil {
 		return nil, err
 	}
-	if targetGroup.UserID != u.ID {
-		member.Status = group.MemberStatusPending
+	if !targetGroup.CanInvite {
+		return nil, group.ErrGroupPermissionDenied
 	}
+	member.Status = group.MemberStatusPending
 	if err := s.repo.CreateMember(ctx, member); err != nil {
 		return nil, err
 	}
@@ -76,6 +89,8 @@ func (s *GroupService) UpdateMember(ctx context.Context, u *user.User, id, name,
 	if err != nil {
 		return nil, err
 	}
+	originalWallet := member.WalletAddress
+	originalGroupID := member.GroupID
 	if strings.TrimSpace(name) != "" {
 		member.Name = strings.TrimSpace(name)
 	}
@@ -90,6 +105,9 @@ func (s *GroupService) UpdateMember(ctx context.Context, u *user.User, id, name,
 	}
 	if tags != nil {
 		member.Tags = sanitizeTags(*tags)
+	}
+	if !strings.EqualFold(originalWallet, member.WalletAddress) || originalGroupID != member.GroupID {
+		member.Status = group.MemberStatusPending
 	}
 	if err := s.repo.UpdateMember(ctx, member); err != nil {
 		return nil, err
@@ -120,9 +138,9 @@ func (s *GroupService) DeleteMember(ctx context.Context, u *user.User, id string
 }
 
 func (s *GroupService) ApproveMember(ctx context.Context, u *user.User, id string) error {
-	return s.repo.UpdateMemberStatus(ctx, u.ID, id, group.MemberStatusActive)
+	return s.repo.UpdateMemberStatusByWallet(ctx, u.WalletAddress, id, group.MemberStatusActive)
 }
 
 func (s *GroupService) RejectMember(ctx context.Context, u *user.User, id string) error {
-	return s.repo.DeleteMember(ctx, u.ID, id)
+	return s.repo.DeleteMemberByWallet(ctx, u.WalletAddress, id)
 }

@@ -53,12 +53,24 @@ type usedSpaceMutation struct {
 // statusRecorder 记录响应状态码
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
+	if r.wroteHeader {
+		return
+	}
 	r.status = code
+	r.wroteHeader = true
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(data []byte) (int, error) {
+	if !r.wroteHeader {
+		r.WriteHeader(r.status)
+	}
+	return r.ResponseWriter.Write(data)
 }
 
 // NewWebDAVService 创建 WebDAV 服务

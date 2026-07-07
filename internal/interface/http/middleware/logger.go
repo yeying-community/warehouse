@@ -86,6 +86,13 @@ func (w *responseWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
+func (w *responseWriter) Write(data []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(w.statusCode)
+	}
+	return w.ResponseWriter.Write(data)
+}
+
 func (w *responseWriter) Flush() {
 	if !w.wroteHeader {
 		w.WriteHeader(w.statusCode)

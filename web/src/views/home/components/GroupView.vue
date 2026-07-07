@@ -64,11 +64,14 @@ const detailMembers = computed(() => [
   ...filteredGroupMembers.value
 ])
 const canManageSelectedGroup = computed(() => selectedGroup.value?.canManage === true)
+const canInviteSelectedGroup = computed(() => selectedGroup.value?.canInvite === true)
 const memberDialogTitle = computed(() => memberForm.value.id ? '编辑成员' : '添加成员')
+const editingMember = computed(() => Boolean(memberForm.value.id))
 const memberDialogGroupName = computed(() => {
   const groupID = memberForm.value.groupId || selectedGroup.value?.id || ''
   return managedGroups.value.find(group => group.id === groupID)?.name || selectedGroup.value?.name || '-'
 })
+const memberDialogUsername = computed(() => memberForm.value.username?.trim() || '-')
 
 const memberAddressOptions = computed(() => {
   const byWallet = new Map<string, {
@@ -170,7 +173,7 @@ function backToGroupList() {
 }
 
 function openAddMemberForCurrentGroup() {
-  if (!selectedGroup.value) return
+  if (!selectedGroup.value || !canInviteSelectedGroup.value) return
   openCreateMemberDialog()
   memberForm.value.groupId = selectedGroup.value.id
 }
@@ -184,7 +187,7 @@ function groupPendingCount(group: ManagedGroup) {
 }
 
 function memberStatusLabel(member: GroupMember) {
-  return member.status === 'pending' ? '待审批' : '已通过'
+  return member.status === 'pending' ? '待成员确认' : '已加入'
 }
 
 function memberStatusType(member: GroupMember) {
@@ -194,20 +197,25 @@ function memberStatusType(member: GroupMember) {
 function canManageMember(member: GroupMember) {
   return Boolean(member.canManage || canManageSelectedGroup.value)
 }
+
+function canRespondMember(member: GroupMember) {
+  return member.status === 'pending' && member.canRespond === true
+}
 </script>
 
 <template>
   <div class="group-management-page" :class="{ embedded: props.embedded }">
     <div class="group-management-hero">
       <div class="group-management-title-row" :class="{ 'is-detail': inGroupDetail }">
-        <div class="group-management-hero-main">
+        <div v-if="!inGroupDetail" class="group-management-hero-main">
           <div class="group-management-title">分组管理</div>
-          <div v-if="!inGroupDetail" class="group-management-sub">维护共享分组、成员准入和审批，用于安全地控制协作范围。</div>
+          <div v-if="!inGroupDetail" class="group-management-sub">维护共享分组、成员准入和邀请确认，用于安全地控制协作范围。</div>
         </div>
-        <div v-if="inGroupDetail" class="detail-group-title">{{ selectedGroup?.name }}</div>
         <div v-if="inGroupDetail" class="group-management-hero-actions">
           <el-button :icon="ArrowLeft" @click="backToGroupList">返回分组列表</el-button>
         </div>
+        <div v-if="inGroupDetail" class="detail-group-title">{{ selectedGroup?.name }}</div>
+        <div v-if="inGroupDetail" class="detail-header-spacer"></div>
         <div v-else class="group-management-hero-actions">
           <el-button type="primary" @click="openCreateGroupDialog">新建分组</el-button>
           <el-tooltip content="刷新" placement="top">
@@ -242,12 +250,12 @@ function canManageMember(member: GroupMember) {
         >
           <div class="group-list-main">
             <div class="group-list-name">{{ group.name }}</div>
-            <div class="group-list-meta">点击查看成员与审批</div>
+            <div class="group-list-meta">点击查看成员与邀请状态</div>
           </div>
           <div class="group-list-stats">
             <el-tag size="small" effect="plain">成员 {{ groupActiveCount(group) }}</el-tag>
             <el-tag v-if="groupPendingCount(group)" size="small" type="warning" effect="plain">
-              待审批 {{ groupPendingCount(group) }}
+              待确认 {{ groupPendingCount(group) }}
             </el-tag>
           </div>
           <div v-if="group.canManage" class="group-list-actions" @click.stop>
@@ -267,7 +275,13 @@ function canManageMember(member: GroupMember) {
           <el-input v-model="groupSearch" clearable placeholder="搜索成员 / 钱包 / 标签" />
         </div>
         <div class="toolbar-right">
-          <el-button type="primary" @click="openAddMemberForCurrentGroup">添加成员</el-button>
+          <el-button
+            v-if="canInviteSelectedGroup"
+            type="primary"
+            @click="openAddMemberForCurrentGroup"
+          >
+            添加成员
+          </el-button>
           <el-tooltip content="刷新" placement="top">
             <el-button
               class="refresh-button"
@@ -295,7 +309,10 @@ function canManageMember(member: GroupMember) {
           :key="member.id"
           class="member-table-row"
         >
-          <div class="member-name">{{ member.name }}</div>
+          <div class="member-name">
+            <span>{{ member.name }}</span>
+            <el-tag v-if="member.isOwner" size="small" type="success" effect="plain">创建者</el-tag>
+          </div>
           <div class="member-address-cell">
             <span class="mono wallet-text" :title="member.walletAddress">{{ shortenAddress(member.walletAddress) }}</span>
             <el-tooltip content="复制钱包地址" placement="top">
@@ -320,25 +337,25 @@ function canManageMember(member: GroupMember) {
             </el-tag>
           </div>
           <div class="member-actions">
-            <template v-if="canManageMember(member)">
+            <template v-if="canRespondMember(member)">
               <el-button
-                v-if="member.status === 'pending'"
                 size="small"
                 type="primary"
                 :icon="Check"
                 @click="approveMember(member)"
               >
-                通过
+                确认
               </el-button>
               <el-button
-                v-if="member.status === 'pending'"
                 size="small"
                 :icon="Close"
                 @click="rejectMember(member)"
               >
                 拒绝
               </el-button>
-              <el-tooltip v-if="member.status !== 'pending'" content="编辑" placement="top">
+            </template>
+            <template v-else-if="canManageMember(member)">
+              <el-tooltip content="编辑" placement="top">
                 <el-button class="icon-button" link :icon="Edit" @click="editMember(member)" />
               </el-tooltip>
               <el-tooltip content="移除" placement="top">
@@ -361,7 +378,6 @@ function canManageMember(member: GroupMember) {
         <el-input
           v-model="groupForm.name"
           placeholder="分组名称"
-          size="small"
           @keyup.enter="submitCreateGroup"
         />
       </div>
@@ -384,7 +400,20 @@ function canManageMember(member: GroupMember) {
           <span class="member-dialog-context-value">{{ memberDialogGroupName }}</span>
         </div>
         <el-form label-position="top" class="member-dialog-form">
-          <el-form-item label="钱包地址">
+          <el-form-item v-if="editingMember" label="钱包地址">
+            <el-input
+              v-model="memberForm.walletAddress"
+              class="mono"
+              readonly
+            />
+          </el-form-item>
+          <el-form-item v-if="editingMember" label="用户名">
+            <el-input
+              :model-value="memberDialogUsername"
+              readonly
+            />
+          </el-form-item>
+          <el-form-item v-else label="钱包地址">
             <el-select
               v-model="memberForm.walletAddress"
               filterable
@@ -423,7 +452,7 @@ function canManageMember(member: GroupMember) {
           :loading="memberSaving"
           @click="submitMember"
         >
-          {{ memberForm.id ? '保存' : '添加' }}
+          {{ editingMember ? '保存' : '添加' }}
         </el-button>
       </template>
     </el-dialog>
@@ -487,7 +516,7 @@ function canManageMember(member: GroupMember) {
 }
 
 .group-management-title-row.is-detail .group-management-hero-actions {
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .group-management-hero-main,
@@ -715,9 +744,16 @@ function canManageMember(member: GroupMember) {
 }
 
 .member-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
   color: #1f2d3d;
   font-size: 14px;
+  min-width: 0;
+}
+
+.detail-header-spacer {
   min-width: 0;
 }
 
@@ -792,6 +828,10 @@ function canManageMember(member: GroupMember) {
   .detail-group-title {
     max-width: 100%;
     text-align: left;
+  }
+
+  .detail-header-spacer {
+    display: none;
   }
 
   .member-form {

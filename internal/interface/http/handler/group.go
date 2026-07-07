@@ -3,9 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/group"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/interface/http/middleware"
 	"go.uber.org/zap"
 )
@@ -42,6 +44,7 @@ func (h *GroupHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
 		CanManage bool   `json:"canManage"`
+		CanInvite bool   `json:"canInvite"`
 		CreatedAt string `json:"createdAt"`
 	}
 	resp := struct {
@@ -52,6 +55,7 @@ func (h *GroupHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
 			ID:        g.ID,
 			Name:      g.Name,
 			CanManage: g.UserID == u.ID,
+			CanInvite: g.CanInvite,
 			CreatedAt: g.CreatedAt.Format(timeLayout),
 		})
 	}
@@ -90,6 +94,7 @@ func (h *GroupHandler) HandleGroupCreate(w http.ResponseWriter, r *http.Request)
 		"id":        createdGroup.ID,
 		"name":      createdGroup.Name,
 		"canManage": true,
+		"canInvite": true,
 		"createdAt": createdGroup.CreatedAt.Format(timeLayout),
 	})
 }
@@ -182,11 +187,14 @@ func (h *GroupHandler) HandleMemberList(w http.ResponseWriter, r *http.Request) 
 	type item struct {
 		ID            string   `json:"id"`
 		Name          string   `json:"name"`
+		Username      string   `json:"username"`
 		WalletAddress string   `json:"walletAddress"`
 		GroupID       string   `json:"groupId"`
 		Tags          []string `json:"tags"`
 		Status        string   `json:"status"`
+		IsOwner       bool     `json:"isOwner"`
 		CanManage     bool     `json:"canManage"`
+		CanRespond    bool     `json:"canRespond"`
 		CreatedAt     string   `json:"createdAt"`
 	}
 	resp := struct {
@@ -196,11 +204,14 @@ func (h *GroupHandler) HandleMemberList(w http.ResponseWriter, r *http.Request) 
 		resp.Items = append(resp.Items, item{
 			ID:            m.ID,
 			Name:          m.Name,
+			Username:      m.Username,
 			WalletAddress: m.WalletAddress,
 			GroupID:       m.GroupID,
 			Tags:          m.Tags,
 			Status:        m.Status,
+			IsOwner:       m.IsOwner,
 			CanManage:     m.UserID == u.ID,
+			CanRespond:    canRespondToMemberInvite(u, m),
 			CreatedAt:     m.CreatedAt.Format(timeLayout),
 		})
 	}
@@ -245,11 +256,14 @@ func (h *GroupHandler) HandleMemberCreate(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":            member.ID,
 		"name":          member.Name,
+		"username":      member.Username,
 		"walletAddress": member.WalletAddress,
 		"groupId":       member.GroupID,
 		"tags":          member.Tags,
 		"status":        member.Status,
+		"isOwner":       member.IsOwner,
 		"canManage":     member.UserID == u.ID,
+		"canRespond":    canRespondToMemberInvite(u, member),
 		"createdAt":     member.CreatedAt.Format(timeLayout),
 	})
 }
@@ -300,11 +314,14 @@ func (h *GroupHandler) HandleMemberUpdate(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id":            member.ID,
 		"name":          member.Name,
+		"username":      member.Username,
 		"walletAddress": member.WalletAddress,
 		"groupId":       member.GroupID,
 		"tags":          member.Tags,
 		"status":        member.Status,
+		"isOwner":       member.IsOwner,
 		"canManage":     member.UserID == u.ID,
+		"canRespond":    canRespondToMemberInvite(u, member),
 	})
 }
 
@@ -338,6 +355,18 @@ func (h *GroupHandler) HandleMemberApprove(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func canRespondToMemberInvite(u *user.User, member *group.Member) bool {
+	if u == nil || member == nil {
+		return false
+	}
+	switch group.NormalizeMemberStatus(member.Status) {
+	case group.MemberStatusPending:
+		return strings.EqualFold(strings.TrimSpace(u.WalletAddress), strings.TrimSpace(member.WalletAddress))
+	default:
+		return false
+	}
 }
 
 func (h *GroupHandler) HandleMemberReject(w http.ResponseWriter, r *http.Request) {

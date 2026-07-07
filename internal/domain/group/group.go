@@ -9,10 +9,11 @@ import (
 )
 
 var (
-	ErrGroupNotFound      = errors.New("group not found")
-	ErrMemberNotFound     = errors.New("member not found")
-	ErrDuplicateGroupName = errors.New("group name already exists")
-	ErrDuplicateMember    = errors.New("member already exists in group")
+	ErrGroupNotFound         = errors.New("group not found")
+	ErrMemberNotFound        = errors.New("member not found")
+	ErrDuplicateGroupName    = errors.New("group name already exists")
+	ErrDuplicateMember       = errors.New("member already exists in group")
+	ErrGroupPermissionDenied = errors.New("group permission denied")
 )
 
 const (
@@ -24,6 +25,7 @@ type Group struct {
 	ID        string
 	UserID    string
 	Name      string
+	CanInvite bool
 	CreatedAt time.Time
 }
 
@@ -32,9 +34,11 @@ type Member struct {
 	UserID        string
 	GroupID       string
 	Name          string
+	Username      string
 	WalletAddress string
 	Tags          []string
 	Status        string
+	IsOwner       bool
 	CreatedAt     time.Time
 }
 
@@ -56,6 +60,9 @@ func NewMember(userID, groupID, name, walletAddress string, tags []string) (*Mem
 	groupID = strings.TrimSpace(groupID)
 	if groupID == "" {
 		return nil, errors.New("group id is required")
+	}
+	if tags == nil {
+		tags = []string{}
 	}
 	name = strings.TrimSpace(name)
 	walletAddress = strings.TrimSpace(walletAddress)
