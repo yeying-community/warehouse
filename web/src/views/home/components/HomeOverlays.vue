@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { ManagedGroup, DirectShareItem, GroupMember, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
-import type { FileItem } from '../types'
+import type { CipherSuiteOption, FileItem } from '../types'
 import { shortenAddress } from '@/utils/address'
 
 const props = defineProps<{
@@ -77,9 +77,11 @@ const props = defineProps<{
   createFolderForm: {
     name: string
     encrypted: boolean
+    cipherSuite: string
     password: string
     confirmPassword: string
   }
+  cipherSuiteOptions: CipherSuiteOption[]
   submitCreateFolder: () => void
   renameDialogVisible: boolean
   renameSubmitting: boolean
@@ -793,6 +795,25 @@ onBeforeUnmount(() => {
         <div class="share-group-meta">加密目录内的文件会在浏览器端加密后再上传到服务端。</div>
       </el-form-item>
       <template v-if="createFolderForm.encrypted">
+        <el-form-item label="加密算法">
+          <el-select
+            v-model="createFolderForm.cipherSuite"
+            class="create-folder-cipher-select"
+            placeholder="请选择加密算法"
+          >
+            <el-option
+              v-for="suite in cipherSuiteOptions"
+              :key="suite.name"
+              :label="suite.description || suite.name"
+              :value="suite.name"
+            >
+              <div class="cipher-suite-option">
+                <span>{{ suite.description || suite.name }}</span>
+                <span>{{ suite.name }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
         <el-form-item label="目录密码">
           <el-input
             v-model="createFolderForm.password"

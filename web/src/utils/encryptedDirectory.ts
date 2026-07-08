@@ -24,7 +24,11 @@ export function normalizeDirectoryRoot(path: string): string {
   return normalizePath(path)
 }
 
-export function buildEncryptedDirectoryMetadata(cipherSuite = 'default'): EncryptedDirectoryMetadata {
+export const DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE = 'aes-256-gcm'
+
+export function buildEncryptedDirectoryMetadata(
+  cipherSuite = DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE
+): EncryptedDirectoryMetadata {
   return {
     version: 1,
     encrypted: true,
