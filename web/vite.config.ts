@@ -21,6 +21,9 @@ export default defineConfig(({ command, mode }) => {
         '@yeying-community/web3-bs': fileURLToPath(new URL('./node_modules/@yeying-community/web3-bs/dist/web3-bs.esm.js', import.meta.url))
       }
     },
+    optimizeDeps: {
+      exclude: ['@yeying-community/web3-bs']
+    },
     css: {
       preprocessorOptions: {
         scss: {

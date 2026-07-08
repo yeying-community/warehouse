@@ -66,6 +66,7 @@ describe('encryptedDirectory helpers', () => {
     expect(metadata.version).toBe(1)
     expect(metadata.encrypted).toBe(true)
     expect(metadata.cipherSuite).toBe('aes-256-gcm')
+    expect(metadata.passwordSource).toBe('wallet')
     expect(new Date(metadata.createdAt).toString()).not.toBe('Invalid Date')
 
     expect(buildEncryptedDirectoryMetadataPath('/secure')).toBe(`/secure/${ENCRYPTED_DIRECTORY_MARKER}`)
