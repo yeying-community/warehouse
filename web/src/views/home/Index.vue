@@ -201,7 +201,7 @@ const encryptedDirectoryMetadata = ref<Record<string, EncryptedDirectoryMetadata
 const cipherSuiteOptions = ref<CipherSuiteOption[]>([
   {
     name: DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
-    description: 'AES-256-GCM',
+    description: '国际默认',
     mode: 'symmetric'
   }
 ])
@@ -1001,16 +1001,24 @@ async function fetchEncryptedDirectoryMetadata(rootPath: string): Promise<Encryp
 async function loadCipherSuiteOptions(): Promise<void> {
   try {
     const suites = await getSupportedCipherSuites()
-    const symmetricSuites = (suites || [])
+    const supportedSymmetricSuiteNames = new Set((suites || [])
       .filter((suite: CipherSuiteInfo) => suite?.mode === 'symmetric' && typeof suite.name === 'string' && suite.name.trim())
-      .map((suite: CipherSuiteInfo) => ({
-        name: suite.name.trim(),
-        description: suite.description || suite.name,
-        mode: suite.mode
-      }))
-    if (symmetricSuites.length > 0) {
-      cipherSuiteOptions.value = symmetricSuites
+      .map((suite: CipherSuiteInfo) => suite.name.trim()))
+    const simplifiedSuites: CipherSuiteOption[] = [
+      {
+        name: DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+        description: '国际默认',
+        mode: 'symmetric'
+      }
+    ]
+    if (supportedSymmetricSuiteNames.has('sm4-cbc-hmac-sm3')) {
+      simplifiedSuites.push({
+        name: 'sm4-cbc-hmac-sm3',
+        description: '国密对称',
+        mode: 'symmetric'
+      })
     }
+    cipherSuiteOptions.value = simplifiedSuites
   } catch (error) {
     console.warn('获取钱包加密算法列表失败，使用默认算法:', error)
   }

@@ -809,7 +809,6 @@ onBeforeUnmount(() => {
             >
               <div class="cipher-suite-option">
                 <span>{{ suite.description || suite.name }}</span>
-                <span>{{ suite.name }}</span>
               </div>
             </el-option>
           </el-select>
