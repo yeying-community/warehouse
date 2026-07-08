@@ -34,6 +34,7 @@ type ReplicationReconcileRepository interface {
 	ReplaceItems(ctx context.Context, jobID int64, items []*replication.ReconcileItem) error
 	UpdateJobResult(ctx context.Context, jobID int64, status string, scannedItems, pendingItems int64, completedAt *time.Time, lastError *string) error
 	GetLatestJob(ctx context.Context, sourceNodeID, targetNodeID string) (*replication.ReconcileJob, error)
+	GetLatestUnfinishedJob(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.ReconcileJob, error)
 	ListPendingItems(ctx context.Context, jobID int64, limit int) ([]*replication.ReconcileItem, error)
 	UpdateItemsState(ctx context.Context, itemIDs []int64, state string) error
 	CountPendingItems(ctx context.Context, jobID int64) (int64, error)
@@ -538,6 +539,66 @@ func (r *PostgresReplicationReconcileRepository) GetLatestJob(ctx context.Contex
 		job.CompletedAt = &completedAt.Time
 	}
 	job.AssignmentGeneration = nullableInt64(assignmentGeneration)
+	job.LastError = nullableString(lastError)
+	return job, nil
+}
+
+// GetLatestUnfinishedJob loads the newest running reconcile job for a pair and assignment generation.
+func (r *PostgresReplicationReconcileRepository) GetLatestUnfinishedJob(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.ReconcileJob, error) {
+	query := `
+		SELECT id, source_node_id, target_node_id, assignment_generation, watermark_outbox_id, status,
+		       scanned_items, pending_items, started_at, completed_at, last_error,
+		       created_at, updated_at
+		FROM replication_reconcile_jobs
+		WHERE source_node_id = $1
+		  AND target_node_id = $2
+		  AND status = $3
+		  AND (
+		      ($4::BIGINT IS NULL AND assignment_generation IS NULL)
+		      OR assignment_generation = $4
+		  )
+		ORDER BY id DESC
+		LIMIT 1
+	`
+
+	job := &replication.ReconcileJob{}
+	var assignmentGenerationValue sql.NullInt64
+	if assignmentGeneration != nil {
+		assignmentGenerationValue = sql.NullInt64{Int64: *assignmentGeneration, Valid: true}
+	}
+	var scannedAssignmentGeneration sql.NullInt64
+	var completedAt sql.NullTime
+	var lastError sql.NullString
+	err := r.db.QueryRowContext(ctx, query,
+		sourceNodeID,
+		targetNodeID,
+		replication.ReconcileJobStatusRunning,
+		assignmentGenerationValue,
+	).Scan(
+		&job.ID,
+		&job.SourceNodeID,
+		&job.TargetNodeID,
+		&scannedAssignmentGeneration,
+		&job.WatermarkOutboxID,
+		&job.Status,
+		&job.ScannedItems,
+		&job.PendingItems,
+		&job.StartedAt,
+		&completedAt,
+		&lastError,
+		&job.CreatedAt,
+		&job.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, replication.ErrReconcileJobNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest unfinished reconcile job: %w", err)
+	}
+	if completedAt.Valid {
+		job.CompletedAt = &completedAt.Time
+	}
+	job.AssignmentGeneration = nullableInt64(scannedAssignmentGeneration)
 	job.LastError = nullableString(lastError)
 	return job, nil
 }

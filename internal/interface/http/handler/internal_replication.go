@@ -34,6 +34,7 @@ type replicationReconcileStore interface {
 	ReplaceItems(ctx context.Context, jobID int64, items []*replication.ReconcileItem) error
 	UpdateJobResult(ctx context.Context, jobID int64, status string, scannedItems, pendingItems int64, completedAt *time.Time, lastError *string) error
 	GetLatestJob(ctx context.Context, sourceNodeID, targetNodeID string) (*replication.ReconcileJob, error)
+	GetLatestUnfinishedJob(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.ReconcileJob, error)
 	ListPendingItems(ctx context.Context, jobID int64, limit int) ([]*replication.ReconcileItem, error)
 	UpdateItemsState(ctx context.Context, itemIDs []int64, state string) error
 	CountPendingItems(ctx context.Context, jobID int64) (int64, error)
@@ -459,6 +460,14 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 		return nil, fmt.Errorf("load reconcile assignment: %w", err)
 	}
 
+	if job, err := h.reconcileStore.GetLatestUnfinishedJob(ctx, h.config.Node.ID, targetNodeID, peer.AssignmentGeneration); err != nil {
+		if !errors.Is(err, replication.ErrReconcileJobNotFound) {
+			return nil, fmt.Errorf("load unfinished reconcile job: %w", err)
+		}
+	} else if job != nil {
+		return h.resumeReconcileJob(ctx, peer, job, assignment)
+	}
+
 	watermarkOutboxID := int64(0)
 	if h.outbox != nil {
 		summary, err := h.outbox.GetStatusSummary(ctx, h.config.Node.ID, targetNodeID)
@@ -504,8 +513,39 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 		return nil, fmt.Errorf("persist reconcile items: %w", err)
 	}
 
-	scannedItems := int64(len(items))
-	pendingItems := scannedItems
+	job.ScannedItems = int64(len(items))
+	job.PendingItems = job.ScannedItems
+	return h.finishReconcileJob(ctx, peer, job, assignment)
+}
+
+func (h *InternalReplicationHandler) resumeReconcileJob(ctx context.Context, peer *service.ResolvedReplicationPeer, job *replication.ReconcileJob, assignment *cluster.ReplicationAssignment) (*internalReconcileStartResponse, error) {
+	if job == nil {
+		return nil, replication.ErrReconcileJobNotFound
+	}
+	if assignment != nil {
+		if err := h.updateReconcileAssignmentState(ctx, assignment, cluster.AssignmentStateReconciling, int64Pointer(job.ID), nil); err != nil {
+			lastErr := err.Error()
+			_ = h.reconcileStore.UpdateJobResult(ctx, job.ID, replication.ReconcileJobStatusFailed, job.ScannedItems, job.PendingItems, nil, &lastErr)
+			return nil, fmt.Errorf("mark assignment reconciling: %w", err)
+		}
+	}
+	return h.finishReconcileJob(ctx, peer, job, assignment)
+}
+
+func (h *InternalReplicationHandler) finishReconcileJob(ctx context.Context, peer *service.ResolvedReplicationPeer, job *replication.ReconcileJob, assignment *cluster.ReplicationAssignment) (*internalReconcileStartResponse, error) {
+	if peer == nil || job == nil {
+		return nil, fmt.Errorf("reconcile peer and job are required")
+	}
+	targetNodeID := strings.TrimSpace(job.TargetNodeID)
+	scannedItems := job.ScannedItems
+	pendingItems, err := h.reconcileStore.CountPendingItems(ctx, job.ID)
+	if err != nil {
+		lastErr := err.Error()
+		_ = h.reconcileStore.UpdateJobResult(ctx, job.ID, replication.ReconcileJobStatusFailed, scannedItems, job.PendingItems, nil, &lastErr)
+		h.recordReconcileAssignmentFailure(ctx, assignment, job.ID, err)
+		return nil, fmt.Errorf("count pending reconcile items: %w", err)
+	}
+
 	dispatchPeer, err := h.resolveTargetPeerForNode(ctx, targetNodeID, true)
 	if err != nil {
 		return nil, fmt.Errorf("resolve dispatch peer: %w", err)
@@ -549,7 +589,7 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 			return nil, fmt.Errorf("bootstrap mark after reconcile: %w", err)
 		}
 		client := &http.Client{Timeout: h.config.Replication.RequestTimeout}
-		if err := h.sendBootstrapMark(ctx, client, dispatchPeer.BaseURL, *bootstrapGeneration, watermarkOutboxID); err != nil {
+		if err := h.sendBootstrapMark(ctx, client, dispatchPeer.BaseURL, *bootstrapGeneration, job.WatermarkOutboxID); err != nil {
 			lastErr := err.Error()
 			_ = h.reconcileStore.UpdateJobResult(
 				ctx,
@@ -589,7 +629,7 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 		JobID:             job.ID,
 		SourceNodeID:      job.SourceNodeID,
 		TargetNodeID:      job.TargetNodeID,
-		WatermarkOutboxID: watermarkOutboxID,
+		WatermarkOutboxID: job.WatermarkOutboxID,
 		ScannedItems:      scannedItems,
 		PendingItems:      pendingItems,
 		Status:            replication.ReconcileJobStatusReady,
