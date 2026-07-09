@@ -16,12 +16,13 @@ import (
 
 // QuotaReconciler periodically recalculates used_space to repair drift.
 type QuotaReconciler struct {
-	config      *config.Config
-	users       user.Repository
-	recycleRepo repository.RecycleRepository
-	quotaSvc    quota.Service
-	logger      *zap.Logger
-	interval    time.Duration
+	config          *config.Config
+	users           user.Repository
+	recycleRepo     repository.RecycleRepository
+	quotaSvc        quota.Service
+	notificationSvc *NotificationService
+	logger          *zap.Logger
+	interval        time.Duration
 }
 
 // NewQuotaReconciler creates a background quota reconciliation worker.
@@ -43,6 +44,15 @@ func NewQuotaReconciler(
 		logger:      logger,
 		interval:    cfg.Quota.AutoReconcileInterval,
 	}
+}
+
+// SetNotificationService wires quota notification generation into the
+// background reconciliation pass without making notification reads do writes.
+func (r *QuotaReconciler) SetNotificationService(notificationSvc *NotificationService) {
+	if r == nil {
+		return
+	}
+	r.notificationSvc = notificationSvc
 }
 
 // Enabled reports whether automatic quota reconciliation should run on this node.
@@ -124,6 +134,19 @@ func (r *QuotaReconciler) ReconcileOnce(ctx context.Context) error {
 		if changed {
 			repaired++
 		}
+		if r.notificationSvc != nil {
+			if err := r.notificationSvc.EnsureUserQuotaNotification(ctx, u, u.Quota, u.UsedSpace); err != nil && !errors.Is(err, context.Canceled) && r.logger != nil {
+				r.logger.Warn("failed to ensure user quota notification",
+					zap.String("username", u.Username),
+					zap.Error(err))
+			}
+		}
+	}
+
+	if r.notificationSvc != nil {
+		if err := r.notificationSvc.EnsureAdminQuotaNotifications(ctx); err != nil && !errors.Is(err, context.Canceled) && r.logger != nil {
+			r.logger.Warn("failed to ensure admin quota notifications", zap.Error(err))
+		}
 	}
 
 	if r.logger != nil {
@@ -148,6 +171,7 @@ func (r *QuotaReconciler) reconcileUser(ctx context.Context, u *user.User) (bool
 	if err := r.users.UpdateUsedSpace(ctx, u.Username, snapshot.TotalUsed); err != nil {
 		return false, err
 	}
+	u.UsedSpace = snapshot.TotalUsed
 	if r.logger != nil {
 		r.logger.Info("quota drift repaired",
 			zap.String("username", u.Username),

@@ -61,9 +61,6 @@ func (s *NotificationService) ListForAdmin(ctx context.Context, limit int) ([]*n
 	if s == nil || s.repo == nil {
 		return nil, nil
 	}
-	if err := s.EnsureAdminQuotaNotifications(ctx); err != nil {
-		s.logger.Warn("failed to ensure admin quota notifications", zap.Error(err))
-	}
 	return s.repo.ListForRole(ctx, notification.RecipientRoleAdmin, limit)
 }
 
@@ -92,9 +89,6 @@ func (s *NotificationService) UnreadCountForCurrentUser(ctx context.Context, u *
 func (s *NotificationService) UnreadCountForAdmin(ctx context.Context) (int, error) {
 	if s == nil || s.repo == nil {
 		return 0, nil
-	}
-	if err := s.EnsureAdminQuotaNotifications(ctx); err != nil {
-		s.logger.Warn("failed to ensure admin quota notifications", zap.Error(err))
 	}
 	return s.repo.UnreadCountForRole(ctx, notification.RecipientRoleAdmin)
 }

@@ -270,6 +270,9 @@ func (c *Container) initServices() error {
 	c.WebDAVAccessKeyService = service.NewWebDAVAccessKeyService(c.WebDAVAccessKeyRepo)
 	// 站内消息服务
 	c.NotificationService = service.NewNotificationService(c.NotificationRepo, c.UserRepository, c.Logger)
+	if c.QuotaReconciler != nil {
+		c.QuotaReconciler.SetNotificationService(c.NotificationService)
+	}
 	// 定向分享服务
 	c.ShareUserService = service.NewShareUserService(
 		c.UserShareRepository,
