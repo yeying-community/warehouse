@@ -3,14 +3,21 @@ import { ref, onMounted, onBeforeUnmount, computed, watch, defineAsyncComponent,
 import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User, Lock, Unlock } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
+import { getSupportedCipherSuites, type CipherSuiteInfo } from '@yeying-community/web3-bs'
 import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
 import { AUTH_CHANGED_EVENT, isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider } from '@/plugins/auth'
 import { decryptBlobContent, encryptFileContent, encryptTextContent } from '@/utils/crypto'
 import {
+  buildEncryptedDirectoryPasswordContext,
   buildEncryptedDirectoryMetadata,
   buildEncryptedDirectoryMetadataPath,
+  DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+  DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE,
+  type EncryptedDirectoryMetadata,
+  type EncryptedDirectoryPasswordSource,
   getEncryptedDirectoryPassword,
   isEncryptedDirectoryMetadataFileName,
+  normalizeEncryptedDirectoryPasswordSource,
   resolveEncryptedRoot,
   setEncryptedDirectoryPassword
 } from '@/utils/encryptedDirectory'
@@ -26,7 +33,7 @@ import FileTableView from './components/FileTableView.vue'
 import ShareTableView from './components/ShareTableView.vue'
 import SharedWithMeTableView from './components/SharedWithMeTableView.vue'
 import RecycleTableView from './components/RecycleTableView.vue'
-import type { DropEntry, FileItem, UploadItem, UploadTask } from './types'
+import type { CipherSuiteOption, DropEntry, FileItem, UploadItem, UploadTask } from './types'
 
 const FilePreviewDialog = defineAsyncComponent(() => import('./components/FilePreviewDialog.vue'))
 const DAV_PREFIX = normalizeDavPrefix((import.meta as any)?.env?.VITE_WEBDAV_PREFIX || '/dav')
@@ -165,6 +172,8 @@ const createFolderMode = ref<'file' | 'shared' | null>(null)
 const createFolderForm = ref({
   name: '',
   encrypted: false,
+  cipherSuite: DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+  passwordSource: DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE as EncryptedDirectoryPasswordSource,
   password: '',
   confirmPassword: ''
 })
@@ -193,19 +202,34 @@ const previewSourceUrl = ref('')
 const previewReadOnly = ref(false)
 let previewRequestSeq = 0
 const encryptedDirectoryRoots = ref<string[]>([])
+const encryptedDirectoryMetadata = ref<Record<string, EncryptedDirectoryMetadata>>({})
+const cipherSuiteOptions = ref<CipherSuiteOption[]>([
+  {
+    name: DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+    description: '国际默认',
+    mode: 'symmetric'
+  }
+])
 const currentEncryptedRoot = computed(() => {
   if (showRecycle.value || showShare.value || showSharedWithMe.value) return null
   return resolveEncryptedRootForPath(currentPath.value)
 })
 const currentEncryptedDirectoryPasswordCached = computed(() => {
   const root = currentEncryptedRoot.value
-  return root ? Boolean(getEncryptedDirectoryPassword(root)) : false
+  return root ? isEncryptedDirectoryPasswordCachedForRoot(root) : false
+})
+const currentEncryptedDirectoryRequiresPassword = computed(() => {
+  const root = currentEncryptedRoot.value
+  return root ? requiresEncryptedDirectoryExtraPassword(root) : false
 })
 const currentEncryptedDirectoryStatusText = computed(() => {
   const root = currentEncryptedRoot.value
   if (!root) return ''
   const normalizedCurrent = normalizeEncryptedRootPath(currentPath.value)
   const scope = root === normalizedCurrent ? '当前目录' : `继承自 ${root}`
+  if (!requiresEncryptedDirectoryExtraPassword(root)) {
+    return `${scope}，${getEncryptedDirectoryProtectionLabelForRoot(root)}`
+  }
   return currentEncryptedDirectoryPasswordCached.value ? `${scope}，已解锁` : `${scope}，未解锁`
 })
 
@@ -218,7 +242,9 @@ function getEncryptedDirectoryRootForItem(item: FileItem | null | undefined): st
 
 function isEncryptedDirectoryPasswordCachedForRoot(rootPath: string | null): boolean {
   if (!rootPath) return false
-  return Boolean(getEncryptedDirectoryPassword(normalizeEncryptedRootPath(rootPath)))
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  if (!requiresEncryptedDirectoryExtraPassword(normalizedRoot)) return true
+  return Boolean(getEncryptedDirectoryPassword(normalizedRoot))
 }
 const VIEW_STORAGE_KEY = 'warehouse:lastView'
 const MANAGEMENT_SECTION_STORAGE_KEY = 'warehouse:lastManagementSection'
@@ -922,14 +948,126 @@ function normalizeEncryptedRootPath(path: string): string {
   return withLeadingSlash.replace(/\/{2,}/g, '/').replace(/\/+$/, '') || '/'
 }
 
-function registerEncryptedDirectoryRoot(path: string) {
+function normalizeCipherSuite(value: unknown): string {
+  const suite = String(value || '').trim()
+  return suite || DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE
+}
+
+function normalizeEncryptedDirectoryMetadata(value: unknown): EncryptedDirectoryMetadata {
+  const payload = value && typeof value === 'object' ? value as Partial<EncryptedDirectoryMetadata> : {}
+  return {
+    version: 1,
+    encrypted: true,
+    cipherSuite: normalizeCipherSuite(payload.cipherSuite),
+    passwordSource: normalizeEncryptedDirectoryPasswordSource(payload.passwordSource),
+    createdAt: typeof payload.createdAt === 'string' && payload.createdAt ? payload.createdAt : new Date(0).toISOString()
+  }
+}
+
+function registerEncryptedDirectoryRoot(path: string, metadata?: EncryptedDirectoryMetadata) {
   const normalized = normalizeEncryptedRootPath(path)
-  if (encryptedDirectoryRoots.value.includes(normalized)) return
-  encryptedDirectoryRoots.value = [...encryptedDirectoryRoots.value, normalized]
+  if (!encryptedDirectoryRoots.value.includes(normalized)) {
+    encryptedDirectoryRoots.value = [...encryptedDirectoryRoots.value, normalized]
+  }
+  if (metadata) {
+    encryptedDirectoryMetadata.value = {
+      ...encryptedDirectoryMetadata.value,
+      [normalized]: normalizeEncryptedDirectoryMetadata(metadata)
+    }
+  }
 }
 
 function resolveEncryptedRootForPath(path: string): string | null {
   return resolveEncryptedRoot(normalizeEncryptedRootPath(path), encryptedDirectoryRoots.value)
+}
+
+function getEncryptedDirectoryCipherSuite(rootPath: string | null | undefined): string {
+  if (!rootPath) return DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  return normalizeCipherSuite(encryptedDirectoryMetadata.value[normalizedRoot]?.cipherSuite)
+}
+
+function getEncryptedDirectoryPasswordSource(rootPath: string | null | undefined): EncryptedDirectoryPasswordSource {
+  if (!rootPath) return DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  const metadata = encryptedDirectoryMetadata.value[normalizedRoot]
+  if (!metadata) return DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE
+  return normalizeEncryptedDirectoryPasswordSource(metadata.passwordSource)
+}
+
+function requiresEncryptedDirectoryExtraPassword(rootPath: string | null | undefined): boolean {
+  return getEncryptedDirectoryPasswordSource(rootPath) !== 'wallet'
+}
+
+function getEncryptedDirectoryProtectionLabelForRoot(rootPath: string | null | undefined): string {
+  const passwordSource = getEncryptedDirectoryPasswordSource(rootPath)
+  if (passwordSource === 'wallet') return '钱包密钥'
+  if (passwordSource === 'wallet+password') return '钱包密钥 + 额外密码'
+  return '目录密码'
+}
+
+async function buildEncryptedDirectoryCryptoOptions(rootPath: string, suite?: string) {
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  const passwordSource = getEncryptedDirectoryPasswordSource(normalizedRoot)
+  const password = passwordSource === 'wallet' ? '' : await ensureEncryptedDirectoryPassword(normalizedRoot)
+  return {
+    password,
+    passwordSource,
+    passwordContext: buildEncryptedDirectoryPasswordContext(normalizedRoot),
+    suite: suite || getEncryptedDirectoryCipherSuite(normalizedRoot)
+  }
+}
+
+async function fetchEncryptedDirectoryMetadata(rootPath: string): Promise<EncryptedDirectoryMetadata | null> {
+  const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  const cached = encryptedDirectoryMetadata.value[normalizedRoot]
+  if (cached) return cached
+
+  const token = localStorage.getItem('authToken') || ''
+  const response = await fetch(buildDavPath(buildEncryptedDirectoryMetadataPath(normalizedRoot)), {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json'
+    }
+  })
+  if (!response.ok) return null
+
+  try {
+    const metadata = normalizeEncryptedDirectoryMetadata(await response.json())
+    registerEncryptedDirectoryRoot(normalizedRoot, metadata)
+    return metadata
+  } catch (error) {
+    console.warn('解析加密目录元数据失败:', normalizedRoot, error)
+    registerEncryptedDirectoryRoot(normalizedRoot)
+    return null
+  }
+}
+
+async function loadCipherSuiteOptions(): Promise<void> {
+  try {
+    const suites = await getSupportedCipherSuites()
+    const supportedSymmetricSuiteNames = new Set((suites || [])
+      .filter((suite: CipherSuiteInfo) => suite?.mode === 'symmetric' && typeof suite.name === 'string' && suite.name.trim())
+      .map((suite: CipherSuiteInfo) => suite.name.trim()))
+    const simplifiedSuites: CipherSuiteOption[] = [
+      {
+        name: DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+        description: '国际默认',
+        mode: 'symmetric'
+      }
+    ]
+    if (supportedSymmetricSuiteNames.has('sm4-cbc-hmac-sm3')) {
+      simplifiedSuites.push({
+        name: 'sm4-cbc-hmac-sm3',
+        description: '国密对称',
+        mode: 'symmetric'
+      })
+    }
+    cipherSuiteOptions.value = simplifiedSuites
+  } catch (error) {
+    console.warn('获取钱包加密算法列表失败，使用默认算法:', error)
+  }
 }
 
 function isEncryptedItem(item: FileItem | null | undefined): boolean {
@@ -972,17 +1110,21 @@ async function ensureEncryptedDirectoryPassword(rootPath: string): Promise<strin
   const normalizedRoot = normalizeEncryptedRootPath(rootPath)
   const cached = getEncryptedDirectoryPassword(normalizedRoot)
   if (cached) return cached
+  const passwordSource = getEncryptedDirectoryPasswordSource(normalizedRoot)
+  if (passwordSource === 'wallet') return ''
+
+  const label = passwordSource === 'wallet+password' ? '额外密码' : '目录密码'
 
   const { value } = await ElMessageBox.prompt(
-    `请输入加密目录 ${normalizedRoot} 的目录密码`,
+    `请输入加密目录 ${normalizedRoot} 的${label}`,
     '解锁加密目录',
     {
       confirmButtonText: '确认',
       cancelButtonText: '取消',
       inputType: 'password',
-      inputPlaceholder: '目录密码',
+      inputPlaceholder: label,
       inputPattern: /.+/,
-      inputErrorMessage: '请输入目录密码'
+      inputErrorMessage: `请输入${label}`
     }
   )
   const password = String(value || '')
@@ -1007,9 +1149,13 @@ function isPromptCanceled(error: unknown): boolean {
 async function unlockCurrentEncryptedDirectory(forceReset = false) {
   const root = currentEncryptedRoot.value
   if (!root) return
+  if (!requiresEncryptedDirectoryExtraPassword(root)) {
+    showInfo('当前加密目录使用钱包密钥，无需额外解锁')
+    return
+  }
   try {
     await promptEncryptedDirectoryPassword(root, forceReset)
-    showSuccess(forceReset ? '目录密码已重新输入' : '加密目录已解锁')
+    showSuccess(forceReset ? '密码已重新输入' : '加密目录已解锁')
   } catch (error) {
     if (isPromptCanceled(error)) return
     throw error
@@ -1018,9 +1164,13 @@ async function unlockCurrentEncryptedDirectory(forceReset = false) {
 
 async function unlockEncryptedDirectoryByRoot(rootPath: string, forceReset = false) {
   const normalizedRoot = normalizeEncryptedRootPath(rootPath)
+  if (!requiresEncryptedDirectoryExtraPassword(normalizedRoot)) {
+    showInfo('当前加密目录使用钱包密钥，无需额外解锁')
+    return
+  }
   try {
     await promptEncryptedDirectoryPassword(normalizedRoot, forceReset)
-    showSuccess(forceReset ? '目录密码已重新输入' : '加密目录已解锁')
+    showSuccess(forceReset ? '密码已重新输入' : '加密目录已解锁')
   } catch (error) {
     if (isPromptCanceled(error)) return
     throw error
@@ -1031,13 +1181,13 @@ function clearCurrentEncryptedDirectoryPassword() {
   const root = currentEncryptedRoot.value
   if (!root) return
   setEncryptedDirectoryPassword(root, '')
-  showSuccess('已清除目录密码缓存')
+  showSuccess('已清除密码缓存')
 }
 
 function clearEncryptedDirectoryPasswordByRoot(rootPath: string) {
   const normalizedRoot = normalizeEncryptedRootPath(rootPath)
   setEncryptedDirectoryPassword(normalizedRoot, '')
-  showSuccess('已清除目录密码缓存')
+  showSuccess('已清除密码缓存')
 }
 
 function collectAncestorDirectories(path: string): string[] {
@@ -1078,6 +1228,7 @@ async function discoverEncryptedRootForPath(path: string): Promise<string | null
     const items = parsePropfindResponse(xml, davPath, DAV_PREFIX)
     if (items.some(item => isEncryptedDirectoryMetadataFileName(item.name))) {
       registerEncryptedDirectoryRoot(candidate)
+      void fetchEncryptedDirectoryMetadata(candidate)
       return normalizeEncryptedRootPath(candidate)
     }
   }
@@ -1099,15 +1250,14 @@ async function readEncryptedFileBytes(item: FileItem, rootPath: string): Promise
   const blob = await response.blob()
   const normalizedRoot = normalizeEncryptedRootPath(rootPath)
   const cachedPassword = getEncryptedDirectoryPassword(normalizedRoot)
-  if (cachedPassword) {
+  if (cachedPassword && requiresEncryptedDirectoryExtraPassword(normalizedRoot)) {
     try {
-      return await decryptBlobContent(blob, cachedPassword)
+      return await decryptBlobContent(blob, await buildEncryptedDirectoryCryptoOptions(normalizedRoot))
     } catch {
       setEncryptedDirectoryPassword(normalizedRoot, '')
     }
   }
-  const password = await ensureEncryptedDirectoryPassword(normalizedRoot)
-  return decryptBlobContent(blob, password)
+  return decryptBlobContent(blob, await buildEncryptedDirectoryCryptoOptions(normalizedRoot))
 }
 
 function inferFileMimeType(fileName: string, fallbackType = 'application/octet-stream'): string {
@@ -1544,6 +1694,7 @@ async function fetchFiles(path: string = '/') {
     const hasEncryptionMarker = parsedItems.some(item => isEncryptedDirectoryMetadataFileName(item.name))
     if (hasEncryptionMarker) {
       registerEncryptedDirectoryRoot(currentDirRoot)
+      void fetchEncryptedDirectoryMetadata(currentDirRoot)
     }
     const encryptedRoot = hasEncryptionMarker
       ? currentDirRoot
@@ -2187,7 +2338,10 @@ async function savePreview() {
       fetchSharedEntries(sharedPath.value)
     } else {
       const body = previewTarget.value.encryptedRoot
-        ? await encryptTextContent(previewContent.value, await ensureEncryptedDirectoryPassword(previewTarget.value.encryptedRoot))
+        ? await encryptTextContent(
+          previewContent.value,
+          await buildEncryptedDirectoryCryptoOptions(previewTarget.value.encryptedRoot)
+        )
         : previewContent.value
       const response = await fetch(buildDavPath(previewTarget.value.path), {
         method: 'PUT',
@@ -2781,7 +2935,7 @@ function buildTargetPath(basePath: string, relativePath: string): string {
   return '/' + cleanBase + '/' + cleanRelative
 }
 
-function createUploadTask(item: UploadItem, options: { basePath: string; isShared: boolean; shareId?: string; encryptedRoot?: string | null }): UploadTask {
+function createUploadTask(item: UploadItem, options: { basePath: string; isShared: boolean; shareId?: string; encryptedRoot?: string | null; cipherSuite?: string }): UploadTask {
   const relativePath = normalizeRelativePath(item.relativePath || item.file.name) || item.file.name
   const now = Date.now()
   return {
@@ -2798,7 +2952,8 @@ function createUploadTask(item: UploadItem, options: { basePath: string; isShare
     isShared: options.isShared,
     shareId: options.shareId,
     sharePath: options.isShared ? relativePath : undefined,
-    encryptedRoot: options.encryptedRoot || undefined
+    encryptedRoot: options.encryptedRoot || undefined,
+    cipherSuite: options.cipherSuite || undefined
   }
 }
 
@@ -2887,8 +3042,10 @@ async function performUploadTask(task: UploadTask) {
   try {
     let uploadBody: Blob = task.file
     if (!task.isShared && task.encryptedRoot) {
-      const password = await ensureEncryptedDirectoryPassword(task.encryptedRoot)
-      uploadBody = await encryptFileContent(task.file, password)
+      uploadBody = await encryptFileContent(
+        task.file,
+        await buildEncryptedDirectoryCryptoOptions(task.encryptedRoot, task.cipherSuite || getEncryptedDirectoryCipherSuite(task.encryptedRoot))
+      )
     }
     await uploadFileWithProgress(url, uploadBody, token, useMultipart, progress => {
       updateUploadTask(task, { progress })
@@ -2904,6 +3061,7 @@ async function uploadFilesWithDirectories(files: UploadItem[], extraDirectories?
   const ensuredDirs = new Set<string>()
   const token = localStorage.getItem('authToken') || ''
   const encryptedRoot = resolveEncryptedRootForPath(currentPath.value)
+  const cipherSuite = getEncryptedDirectoryCipherSuite(encryptedRoot)
 
   const directories = new Set<string>()
   if (extraDirectories) {
@@ -2919,7 +3077,7 @@ async function uploadFilesWithDirectories(files: UploadItem[], extraDirectories?
     if (relativeDir) directories.add(relativeDir)
   }
 
-  const tasks = files.map(item => createUploadTask(item, { basePath: cleanPath, isShared: false, encryptedRoot }))
+  const tasks = files.map(item => createUploadTask(item, { basePath: cleanPath, isShared: false, encryptedRoot, cipherSuite }))
   addUploadTasks(tasks)
 
   const dirsToCreate = Array.from(directories).filter(Boolean).sort((a, b) => a.split('/').length - b.split('/').length)
@@ -4144,6 +4302,8 @@ function openCreateFolderDialog(mode: 'file' | 'shared') {
   createFolderForm.value = {
     name: '',
     encrypted: false,
+    cipherSuite: DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+    passwordSource: DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE,
     password: '',
     confirmPassword: ''
   }
@@ -4158,16 +4318,22 @@ function createFolder() {
   openCreateFolderDialog('file')
 }
 
-async function createEncryptedDirectoryMarker(directoryPath: string, password: string) {
+async function createEncryptedDirectoryMarker(
+  directoryPath: string,
+  password: string,
+  cipherSuite: string,
+  passwordSource: EncryptedDirectoryPasswordSource
+) {
   const token = localStorage.getItem('authToken') || ''
   const metadataPath = buildEncryptedDirectoryMetadataPath(directoryPath)
+  const metadata = buildEncryptedDirectoryMetadata(cipherSuite, passwordSource)
   const response = await fetch(buildDavPath(metadataPath), {
     method: 'PUT',
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json; charset=utf-8'
     },
-    body: JSON.stringify(buildEncryptedDirectoryMetadata())
+    body: JSON.stringify(metadata)
   })
 
   if (!response.ok) {
@@ -4175,11 +4341,21 @@ async function createEncryptedDirectoryMarker(directoryPath: string, password: s
     throw new Error(normalizeUserFacingErrorMessage(text, `创建加密目录失败: ${response.status}`))
   }
 
-  registerEncryptedDirectoryRoot(directoryPath)
-  setEncryptedDirectoryPassword(directoryPath, password)
+  registerEncryptedDirectoryRoot(directoryPath, metadata)
+  if (passwordSource === 'wallet') {
+    setEncryptedDirectoryPassword(directoryPath, '')
+  } else {
+    setEncryptedDirectoryPassword(directoryPath, password)
+  }
 }
 
-async function createFolderWithName(name: string, encrypted = false, password = '') {
+async function createFolderWithName(
+  name: string,
+  encrypted = false,
+  password = '',
+  cipherSuite = DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+  passwordSource: EncryptedDirectoryPasswordSource = DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE
+) {
   const cleanPath = currentPath.value.replace(/^\/+/, '').replace(/\/$/, '')
   const targetPath = cleanPath ? '/' + cleanPath + '/' + name : '/' + name
   const apiPath = buildDavPath(targetPath)
@@ -4193,7 +4369,7 @@ async function createFolderWithName(name: string, encrypted = false, password = 
 
   if (response.ok || response.status === 405) {
     if (response.ok && encrypted) {
-      await createEncryptedDirectoryMarker(targetPath, password)
+      await createEncryptedDirectoryMarker(targetPath, password, cipherSuite, passwordSource)
     }
     fetchFiles(currentPath.value)
     if (response.status === 405) {
@@ -4228,6 +4404,8 @@ async function submitCreateFolder() {
   if (!mode) return
   const name = createFolderForm.value.name.trim()
   const encrypted = mode === 'file' && createFolderForm.value.encrypted
+  const cipherSuite = normalizeCipherSuite(createFolderForm.value.cipherSuite)
+  const passwordSource = normalizeEncryptedDirectoryPasswordSource(createFolderForm.value.passwordSource)
   const password = createFolderForm.value.password
   const confirmPassword = createFolderForm.value.confirmPassword
   if (!name) {
@@ -4238,12 +4416,12 @@ async function submitCreateFolder() {
     showError('名称不能包含 "/"')
     return
   }
-  if (encrypted && !password) {
-    showError('请输入目录密码')
+  if (encrypted && passwordSource !== 'wallet' && !password) {
+    showError(passwordSource === 'wallet+password' ? '请输入额外密码' : '请输入目录密码')
     return
   }
-  if (encrypted && password !== confirmPassword) {
-    showError('两次输入的目录密码不一致')
+  if (encrypted && passwordSource !== 'wallet' && password !== confirmPassword) {
+    showError(passwordSource === 'wallet+password' ? '两次输入的额外密码不一致' : '两次输入的目录密码不一致')
     return
   }
   createFolderSubmitting.value = true
@@ -4251,7 +4429,7 @@ async function submitCreateFolder() {
     if (mode === 'shared') {
       await createSharedFolderWithName(name)
     } else {
-      await createFolderWithName(name, encrypted, password)
+      await createFolderWithName(name, encrypted, password, cipherSuite, passwordSource)
     }
     createFolderDialogVisible.value = false
   } catch (error: any) {
@@ -4521,6 +4699,8 @@ watch(createFolderDialogVisible, visible => {
   createFolderForm.value = {
     name: '',
     encrypted: false,
+    cipherSuite: DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+    passwordSource: DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE,
     password: '',
     confirmPassword: ''
   }
@@ -4636,6 +4816,7 @@ onMounted(() => {
   stopWalletProviderWatch = watchWalletProvider((present) => {
     walletPresent.value = present
   })
+  void loadCipherSuiteOptions()
   syncWalletHistory()
   void (async () => {
     stopAccountWatch = await watchWalletAccounts(({ account }) => {
@@ -5113,6 +5294,7 @@ onBeforeUnmount(() => {
                     <span class="crypto-pill-text">{{ currentEncryptedDirectoryStatusText }}</span>
                     <div class="crypto-pill-actions">
                       <el-button
+                        v-if="currentEncryptedDirectoryRequiresPassword"
                         size="small"
                         text
                         type="primary"
@@ -5121,7 +5303,7 @@ onBeforeUnmount(() => {
                         {{ currentEncryptedDirectoryPasswordCached ? '重新输入密码' : '解锁' }}
                       </el-button>
                       <el-button
-                        v-if="currentEncryptedDirectoryPasswordCached"
+                        v-if="currentEncryptedDirectoryRequiresPassword && currentEncryptedDirectoryPasswordCached"
                         size="small"
                         text
                         @click="clearCurrentEncryptedDirectoryPassword"
@@ -5785,6 +5967,8 @@ onBeforeUnmount(() => {
         :open-access-key-dialog="openAccessKeyDialogFromDirectory"
         :get-encrypted-directory-root="getEncryptedDirectoryRootForItem"
         :is-encrypted-directory-password-cached="isEncryptedDirectoryPasswordCachedForRoot"
+        :requires-encrypted-directory-password="requiresEncryptedDirectoryExtraPassword"
+        :get-encrypted-directory-protection-label="getEncryptedDirectoryProtectionLabelForRoot"
         :unlock-encrypted-directory="unlockEncryptedDirectoryByRoot"
         :clear-encrypted-directory-password-cache="clearEncryptedDirectoryPasswordByRoot"
         :enter-shared-root="enterSharedRoot"
@@ -5809,6 +5993,7 @@ onBeforeUnmount(() => {
         v-model:create-folder-dialog-visible="createFolderDialogVisible"
         :create-folder-submitting="createFolderSubmitting"
         :create-folder-form="createFolderForm"
+        :cipher-suite-options="cipherSuiteOptions"
         :submit-create-folder="submitCreateFolder"
         v-model:rename-dialog-visible="renameDialogVisible"
         :rename-submitting="renameSubmitting"

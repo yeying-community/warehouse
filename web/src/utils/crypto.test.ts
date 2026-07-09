@@ -47,6 +47,8 @@ describe('crypto helpers', () => {
     expect(encryptMock).toHaveBeenCalledWith({
       data: bytes,
       password: 'secret',
+      passwordSource: 'manual',
+      passwordContext: undefined,
       suite: 'aes-256-gcm'
     })
   })
@@ -89,11 +91,15 @@ describe('crypto helpers', () => {
 
     expect(decryptMock).toHaveBeenNthCalledWith(1, {
       ciphertext: 'ciphertext-3',
-      password: 'secret'
+      password: 'secret',
+      passwordSource: 'manual',
+      passwordContext: undefined
     })
     expect(decryptMock).toHaveBeenNthCalledWith(2, {
       ciphertext: 'ciphertext-3',
-      password: 'secret'
+      password: 'secret',
+      passwordSource: 'manual',
+      passwordContext: undefined
     })
     expect(decryptedBytes).toBe(bytes)
     expect(decryptedText).toBe('Hello')
@@ -108,7 +114,9 @@ describe('crypto helpers', () => {
 
     expect(decryptMock).toHaveBeenCalledWith({
       ciphertext: 'ciphertext-from-server',
-      password: 'secret'
+      password: 'secret',
+      passwordSource: 'manual',
+      passwordContext: undefined
     })
     expect(Array.from(decryptedBytes)).toEqual([1, 3, 5, 7])
   })

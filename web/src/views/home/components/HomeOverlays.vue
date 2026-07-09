@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { ManagedGroup, DirectShareItem, GroupMember, RecycleItem, ShareExpiryUnit, ShareItem, ShareMode } from '@/api'
-import type { FileItem } from '../types'
+import type { CipherSuiteOption, FileItem } from '../types'
+import type { EncryptedDirectoryPasswordSource } from '@/utils/encryptedDirectory'
 import { shortenAddress } from '@/utils/address'
 
 const props = defineProps<{
@@ -32,6 +33,8 @@ const props = defineProps<{
   openAccessKeyDialog: (item: FileItem) => void
   getEncryptedDirectoryRoot: (item: FileItem) => string | null
   isEncryptedDirectoryPasswordCached: (rootPath: string | null) => boolean
+  requiresEncryptedDirectoryPassword: (rootPath: string | null) => boolean
+  getEncryptedDirectoryProtectionLabel: (rootPath: string | null) => string
   unlockEncryptedDirectory: (rootPath: string, forceReset?: boolean) => void | Promise<void>
   clearEncryptedDirectoryPasswordCache: (rootPath: string) => void
   enterSharedRoot: (item: DirectShareItem) => void
@@ -77,9 +80,12 @@ const props = defineProps<{
   createFolderForm: {
     name: string
     encrypted: boolean
+    cipherSuite: string
+    passwordSource: EncryptedDirectoryPasswordSource
     password: string
     confirmPassword: string
   }
+  cipherSuiteOptions: CipherSuiteOption[]
   submitCreateFolder: () => void
   renameDialogVisible: boolean
   renameSubmitting: boolean
@@ -236,6 +242,14 @@ function isDetailEncryptedPasswordCached(item: FileItem | null): boolean {
   return props.isEncryptedDirectoryPasswordCached(getDetailEncryptedRoot(item))
 }
 
+function detailRequiresEncryptedPassword(item: FileItem | null): boolean {
+  return props.requiresEncryptedDirectoryPassword(getDetailEncryptedRoot(item))
+}
+
+function detailEncryptedProtectionLabel(item: FileItem | null): string {
+  return props.getEncryptedDirectoryProtectionLabel(getDetailEncryptedRoot(item))
+}
+
 async function handleUnlockEncryptedDirectory(item: FileItem | null, forceReset = false) {
   const root = getDetailEncryptedRoot(item)
   if (!root) return
@@ -316,11 +330,15 @@ onBeforeUnmount(() => {
           <span class="detail-value mono">{{ getDetailEncryptedRoot(detailFile) }}</span>
         </div>
         <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-row">
-          <span class="detail-label">目录密码</span>
+          <span class="detail-label">保护方式</span>
+          <span class="detail-value">{{ detailEncryptedProtectionLabel(detailFile) }}</span>
+        </div>
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile) && detailRequiresEncryptedPassword(detailFile)" class="detail-row">
+          <span class="detail-label">密码状态</span>
           <span class="detail-value">{{ isDetailEncryptedPasswordCached(detailFile) ? '已缓存' : '未缓存' }}</span>
         </div>
-        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)" class="detail-note">
-          目录密码仅缓存在当前浏览器会话中，重新输入不会重加密已有文件。
+        <div v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile) && detailRequiresEncryptedPassword(detailFile)" class="detail-note">
+          额外密码仅缓存在当前浏览器会话中，重新输入不会重加密已有文件。
         </div>
         <div class="detail-row">
           <span class="detail-label">修改时间</span>
@@ -334,7 +352,7 @@ onBeforeUnmount(() => {
         <el-button size="small" @click="handleOpenAccessKeyDialog(detailFile)">
           授权密钥
         </el-button>
-        <template v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile)">
+        <template v-if="detailFile.encrypted && getDetailEncryptedRoot(detailFile) && detailRequiresEncryptedPassword(detailFile)">
           <el-button size="small" @click="handleUnlockEncryptedDirectory(detailFile, isDetailEncryptedPasswordCached(detailFile))">
             {{ isDetailEncryptedPasswordCached(detailFile) ? '重新输入密码' : '解锁目录' }}
           </el-button>
@@ -793,20 +811,47 @@ onBeforeUnmount(() => {
         <div class="share-group-meta">加密目录内的文件会在浏览器端加密后再上传到服务端。</div>
       </el-form-item>
       <template v-if="createFolderForm.encrypted">
-        <el-form-item label="目录密码">
+        <el-form-item label="加密算法">
+          <el-select
+            v-model="createFolderForm.cipherSuite"
+            class="create-folder-cipher-select"
+            placeholder="请选择加密算法"
+          >
+            <el-option
+              v-for="suite in cipherSuiteOptions"
+              :key="suite.name"
+              :label="suite.description || suite.name"
+              :value="suite.name"
+            >
+              <div class="cipher-suite-option">
+                <span>{{ suite.description || suite.name }}</span>
+              </div>
+            </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="密钥来源">
+          <el-radio-group v-model="createFolderForm.passwordSource">
+            <el-radio-button label="wallet">钱包密钥</el-radio-button>
+            <el-radio-button label="wallet+password">钱包密钥 + 额外密码</el-radio-button>
+          </el-radio-group>
+          <div class="share-group-meta">
+            钱包密钥模式无需记忆目录密码；增加额外密码后，需要钱包和额外密码一起解密。
+          </div>
+        </el-form-item>
+        <el-form-item v-if="createFolderForm.passwordSource === 'wallet+password'" label="额外密码">
           <el-input
             v-model="createFolderForm.password"
             type="password"
             show-password
-            placeholder="请输入目录密码"
+            placeholder="请输入额外密码"
           />
         </el-form-item>
-        <el-form-item label="确认目录密码">
+        <el-form-item v-if="createFolderForm.passwordSource === 'wallet+password'" label="确认额外密码">
           <el-input
             v-model="createFolderForm.confirmPassword"
             type="password"
             show-password
-            placeholder="请再次输入目录密码"
+            placeholder="请再次输入额外密码"
           />
         </el-form-item>
       </template>

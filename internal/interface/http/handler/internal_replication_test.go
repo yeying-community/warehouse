@@ -113,6 +113,26 @@ func (s *fakeReconcileStore) GetLatestJob(_ context.Context, sourceNodeID, targe
 	return s.latestJob, nil
 }
 
+func (s *fakeReconcileStore) GetLatestUnfinishedJob(_ context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.ReconcileJob, error) {
+	for i := len(s.jobs) - 1; i >= 0; i-- {
+		job := s.jobs[i]
+		if job == nil {
+			continue
+		}
+		if job.SourceNodeID != sourceNodeID || job.TargetNodeID != targetNodeID {
+			continue
+		}
+		if job.Status != replication.ReconcileJobStatusRunning {
+			continue
+		}
+		if !sameOptionalInt64(job.AssignmentGeneration, assignmentGeneration) {
+			continue
+		}
+		return job, nil
+	}
+	return nil, replication.ErrReconcileJobNotFound
+}
+
 func (s *fakeReconcileStore) ListPendingItems(_ context.Context, _ int64, limit int) ([]*replication.ReconcileItem, error) {
 	if len(s.items) == 0 {
 		return nil, nil
@@ -156,6 +176,13 @@ func (s *fakeReconcileStore) CountPendingItems(_ context.Context, _ int64) (int6
 		}
 	}
 	return count, nil
+}
+
+func sameOptionalInt64(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 type fakeReconcileScanner struct {
@@ -1192,6 +1219,123 @@ func TestRunStartupReconcileFansOutToAllTargets(t *testing.T) {
 	}
 	if reconcileStore.jobs[0].TargetNodeID != "node-b" || reconcileStore.jobs[1].TargetNodeID != "node-c" {
 		t.Fatalf("unexpected reconcile fan-out targets: %#v", reconcileStore.jobs)
+	}
+}
+
+func TestRunStartupReconcileResumesRunningJob(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Node.ID = "node-a"
+	cfg.Node.Role = "active"
+	cfg.Replication.Enabled = true
+	cfg.Replication.SharedSecret = "shared-secret"
+	cfg.Replication.RequestTimeout = 5 * time.Second
+
+	generation := int64(6)
+	reconcileStore := &fakeReconcileStore{
+		items: []*replication.ReconcileItem{
+			{ID: 11, JobID: 9, Path: "/history", IsDir: true, State: replication.ReconcileItemStatePending},
+		},
+		jobs: []*replication.ReconcileJob{
+			{
+				ID:                   9,
+				SourceNodeID:         "node-a",
+				TargetNodeID:         "node-b",
+				AssignmentGeneration: &generation,
+				WatermarkOutboxID:    17,
+				Status:               replication.ReconcileJobStatusRunning,
+				ScannedItems:         1,
+				PendingItems:         1,
+				StartedAt:            time.Now().Add(-time.Minute),
+			},
+		},
+	}
+	reconcileStore.latestJob = reconcileStore.jobs[0]
+
+	assignments := &fakeHandlerAssignmentRepository{
+		pairAssignments: map[string]*cluster.ReplicationAssignment{
+			"node-a->node-b": {
+				ActiveNodeID:       "node-a",
+				StandbyNodeID:      "node-b",
+				State:              cluster.AssignmentStateReconciling,
+				Generation:         generation,
+				LastReconcileJobID: int64Pointer(9),
+				LeaseExpiresAt:     timePointer(time.Now().UTC().Add(time.Minute)),
+			},
+		},
+	}
+
+	var reconcileRequests int
+	var bootstrapRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/internal/replication/reconcile/apply-batch":
+			reconcileRequests++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"applied":1}`))
+		case "/api/v1/internal/replication/bootstrap/mark":
+			bootstrapRequests++
+			var req internalReplicationBootstrapMarkRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode bootstrap request: %v", err)
+			}
+			if req.OutboxID == nil || *req.OutboxID != 17 {
+				t.Fatalf("unexpected bootstrap outbox id: %#v", req.OutboxID)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"lastAppliedOutboxId":17}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	handler := NewInternalReplicationHandler(
+		cfg,
+		zap.NewNop(),
+		nil,
+		nil,
+		reconcileStore,
+		fakeReconcileScanner{
+			err: fmt.Errorf("startup resume should not rescan local data"),
+		},
+		fakeHandlerPeerResolver{
+			targets: []*service.ResolvedReplicationPeer{
+				{NodeID: "node-b", AssignmentGeneration: &generation},
+			},
+			dispatchTargets: []*service.ResolvedReplicationPeer{
+				{
+					NodeID:               "node-b",
+					BaseURL:              server.URL,
+					Healthy:              true,
+					AssignmentGeneration: &generation,
+				},
+			},
+		},
+		assignments,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	handler.RunStartupReconcile(ctx)
+
+	if len(reconcileStore.jobs) != 1 {
+		t.Fatalf("expected startup resume to reuse existing job, got %d jobs", len(reconcileStore.jobs))
+	}
+	if reconcileRequests != 1 {
+		t.Fatalf("expected 1 reconcile apply request, got %d", reconcileRequests)
+	}
+	if bootstrapRequests != 1 {
+		t.Fatalf("expected 1 bootstrap mark request, got %d", bootstrapRequests)
+	}
+	if reconcileStore.latestJob.Status != replication.ReconcileJobStatusReady {
+		t.Fatalf("expected resumed job to be ready, got %#v", reconcileStore.latestJob)
+	}
+	if reconcileStore.latestJob.PendingItems != 0 {
+		t.Fatalf("expected resumed job pending count to be 0, got %d", reconcileStore.latestJob.PendingItems)
+	}
+	assignment := assignments.pairAssignments["node-a->node-b"]
+	if assignment == nil || assignment.State != cluster.AssignmentStateReplicating {
+		t.Fatalf("expected resumed assignment to advance to replicating, got %#v", assignment)
 	}
 }
 

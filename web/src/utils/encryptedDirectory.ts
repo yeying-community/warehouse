@@ -5,8 +5,11 @@ export interface EncryptedDirectoryMetadata {
   version: 1
   encrypted: true
   cipherSuite: string
+  passwordSource?: EncryptedDirectoryPasswordSource
   createdAt: string
 }
+
+export type EncryptedDirectoryPasswordSource = 'manual' | 'wallet' | 'wallet+password'
 
 function normalizePath(path: string): string {
   const raw = String(path || '/').trim().replace(/\\/g, '/')
@@ -24,11 +27,33 @@ export function normalizeDirectoryRoot(path: string): string {
   return normalizePath(path)
 }
 
-export function buildEncryptedDirectoryMetadata(cipherSuite = 'default'): EncryptedDirectoryMetadata {
+export const DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE = 'aes-256-gcm'
+export const DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE: EncryptedDirectoryPasswordSource = 'wallet'
+
+export function normalizeEncryptedDirectoryPasswordSource(
+  value: unknown,
+  fallback: EncryptedDirectoryPasswordSource = 'manual'
+): EncryptedDirectoryPasswordSource {
+  const source = String(value || '').trim()
+  if (source === 'wallet' || source === 'wallet+password' || source === 'manual') {
+    return source
+  }
+  return fallback
+}
+
+export function buildEncryptedDirectoryPasswordContext(rootPath: string): string {
+  return normalizeDirectoryRoot(rootPath)
+}
+
+export function buildEncryptedDirectoryMetadata(
+  cipherSuite = DEFAULT_ENCRYPTED_DIRECTORY_CIPHER_SUITE,
+  passwordSource: EncryptedDirectoryPasswordSource = DEFAULT_ENCRYPTED_DIRECTORY_PASSWORD_SOURCE
+): EncryptedDirectoryMetadata {
   return {
     version: 1,
     encrypted: true,
     cipherSuite,
+    passwordSource,
     createdAt: new Date().toISOString()
   }
 }

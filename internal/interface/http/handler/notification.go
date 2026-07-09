@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -61,6 +62,9 @@ func (h *NotificationHandler) HandleList(w http.ResponseWriter, r *http.Request)
 	}
 	items, err := h.service.ListForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u), parseLimit(r, 20))
 	if err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to list notifications", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to list notifications")
 		return
@@ -83,6 +87,9 @@ func (h *NotificationHandler) HandleUnreadCount(w http.ResponseWriter, r *http.R
 	}
 	count, err := h.service.UnreadCountForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u))
 	if err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to count notifications", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to count notifications")
 		return
@@ -108,6 +115,9 @@ func (h *NotificationHandler) HandleMarkRead(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.service.MarkReadForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u), req.IDs); err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to mark notifications read", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to mark notifications read")
 		return
@@ -126,6 +136,9 @@ func (h *NotificationHandler) HandleMarkAllRead(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := h.service.MarkAllReadForCurrentUser(r.Context(), u, h.canReceiveAdminNotifications(u)); err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to mark all notifications read", zap.String("username", u.Username), zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to mark all notifications read")
 		return
@@ -190,6 +203,9 @@ func (h *NotificationHandler) HandleAdminList(w http.ResponseWriter, r *http.Req
 	}
 	items, err := h.service.ListForAdmin(r.Context(), parseLimit(r, 20))
 	if err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to list admin notifications", zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to list admin notifications")
 		return
@@ -204,6 +220,9 @@ func (h *NotificationHandler) HandleAdminUnreadCount(w http.ResponseWriter, r *h
 	}
 	count, err := h.service.UnreadCountForAdmin(r.Context())
 	if err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to count admin notifications", zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to count admin notifications")
 		return
@@ -224,6 +243,9 @@ func (h *NotificationHandler) HandleAdminMarkRead(w http.ResponseWriter, r *http
 		return
 	}
 	if err := h.service.MarkReadForAdmin(r.Context(), req.IDs); err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to mark admin notifications read", zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to mark admin notifications read")
 		return
@@ -237,6 +259,9 @@ func (h *NotificationHandler) HandleAdminMarkAllRead(w http.ResponseWriter, r *h
 		return
 	}
 	if err := h.service.MarkAllReadForAdmin(r.Context()); err != nil {
+		if isRequestCanceled(err) {
+			return
+		}
 		h.logger.Error("failed to mark all admin notifications read", zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "Failed to mark all admin notifications read")
 		return
@@ -321,6 +346,10 @@ func notificationResponses(items []*notification.Notification) []notificationRes
 	return resp
 }
 
+func isRequestCanceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func parseLimit(r *http.Request, fallback int) int {
 	value := r.URL.Query().Get("limit")
 	if value == "" {
@@ -346,6 +375,9 @@ func (h *NotificationHandler) streamCounts(w http.ResponseWriter, r *http.Reques
 	write := func() bool {
 		counts, err := load(r.Context())
 		if err != nil {
+			if isRequestCanceled(err) {
+				return false
+			}
 			h.logger.Warn("failed to load notification stream counts", zap.Error(err))
 			counts = map[string]int{}
 		}

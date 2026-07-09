@@ -31,6 +31,14 @@ export type UploadTask = {
   shareId?: string
   sharePath?: string
   encryptedRoot?: string
+  cipherSuite?: string
+  passwordSource?: 'manual' | 'wallet' | 'wallet+password'
+}
+
+export type CipherSuiteOption = {
+  name: string
+  description: string
+  mode: 'hash' | 'symmetric'
 }
 
 export type DropEntry = {
