@@ -8,6 +8,7 @@ import 'element-plus/es/components/message-box/style/css'
 import 'element-plus/es/components/loading/style/css'
 import './assets/css/index.scss'
 import { createRouter, createWebHistory } from 'vue-router'
+import { initializeAuthSession } from './plugins/auth'
 
 const app = createApp(App)
 
@@ -22,4 +23,6 @@ app.use(createPinia())
 app.use(ElLoading)
 app.use(router)
 
-app.mount('#app')
+void initializeAuthSession().finally(() => {
+  app.mount('#app')
+})

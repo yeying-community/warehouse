@@ -6,6 +6,7 @@ import {
   clearAccessToken,
   getAccessToken,
   setAccessToken,
+  refreshAccessToken,
   watchAccounts,
   watchProvider,
   focusPendingApproval,
@@ -19,8 +20,14 @@ const API_BASE = import.meta.env.VITE_API_BASE || ''
 const AUTH_BASE = API_BASE ? `${API_BASE.replace(/\/+$/, '')}/api/v1/public/auth` : '/api/v1/public/auth'
 const ACCOUNT_HISTORY_KEY = 'warehouse:accountHistory'
 export const AUTH_CHANGED_EVENT = 'warehouse:auth-changed'
+const ACCESS_TOKEN_COOKIE_MAX_AGE = 24 * 60 * 60
+const ACCESS_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000
+const MIN_REFRESH_DELAY_MS = 30 * 1000
 
 let currentWalletProvider: Eip1193Provider | null = null
+let refreshTimer: number | null = null
+let refreshPromise: Promise<string | null> | null = null
+let authSessionInitialized = false
 
 export function watchWalletProvider(handler: (present: boolean) => void): () => void {
   return watchProvider(({ provider, present }) => {
@@ -37,6 +44,140 @@ export function getWalletName(): string {
   if ((provider as unknown as { isYeYing?: boolean }).isYeYing) return '夜莺钱包'
   if (provider.isMetaMask) return 'MetaMask'
   return 'Web3 钱包'
+}
+
+function clearRefreshTimer(): void {
+  if (refreshTimer !== null) {
+    window.clearTimeout(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+function setAuthTokenCookie(token: string | null, maxAgeSeconds: number = ACCESS_TOKEN_COOKIE_MAX_AGE): void {
+  if (typeof document === 'undefined') return
+  if (!token) {
+    document.cookie = 'authToken=; path=/; max-age=0'
+    return
+  }
+  document.cookie = `authToken=${encodeURIComponent(token)}; path=/; max-age=${Math.max(0, Math.floor(maxAgeSeconds))}`
+}
+
+function decodeTokenPayload(token: string | null): Record<string, unknown> | null {
+  if (!token) return null
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return null
+    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+  } catch {
+    return null
+  }
+}
+
+function getTokenExpiry(token: string | null): number | null {
+  const payload = decodeTokenPayload(token)
+  const exp = Number(payload?.exp)
+  if (!Number.isFinite(exp) || exp <= 0) return null
+  return exp * 1000
+}
+
+function isTokenExpired(token: string | null, skewMs = 0): boolean {
+  const expiresAt = getTokenExpiry(token)
+  if (!expiresAt) return true
+  return expiresAt <= Date.now() + Math.max(0, skewMs)
+}
+
+function applyAccessToken(token: string | null): void {
+  if (token) {
+    setAccessToken(token)
+  } else {
+    clearAccessToken()
+  }
+  setAuthTokenCookie(token)
+}
+
+function scheduleTokenRefresh(token: string | null): void {
+  clearRefreshTimer()
+  if (typeof window === 'undefined' || !token) return
+
+  const expiresAt = getTokenExpiry(token)
+  if (!expiresAt) return
+
+  const delay = Math.max(MIN_REFRESH_DELAY_MS, expiresAt - Date.now() - ACCESS_TOKEN_REFRESH_SKEW_MS)
+  refreshTimer = window.setTimeout(() => {
+    void refreshSessionToken({ silent: true })
+  }, delay)
+}
+
+async function refreshSessionToken(options: { silent?: boolean } = {}): Promise<string | null> {
+  const currentToken = getAccessToken()
+  if (!currentToken) {
+    clearRefreshTimer()
+    return null
+  }
+
+  if (refreshPromise) {
+    return await refreshPromise
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const refreshed = await refreshAccessToken({ baseUrl: AUTH_BASE })
+      applyAccessToken(refreshed.token)
+      scheduleTokenRefresh(refreshed.token)
+      window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
+      return refreshed.token
+    } catch (error) {
+      clearRefreshTimer()
+      if (!options.silent) {
+        console.warn('refresh access token failed:', error)
+      }
+      return null
+    } finally {
+      refreshPromise = null
+    }
+  })()
+
+  return await refreshPromise
+}
+
+async function ensureFreshAccessToken(options: { silent?: boolean } = {}): Promise<string | null> {
+  const token = getAccessToken()
+  if (!token) {
+    clearRefreshTimer()
+    setAuthTokenCookie(null)
+    return null
+  }
+
+  if (!isTokenExpired(token, ACCESS_TOKEN_REFRESH_SKEW_MS)) {
+    applyAccessToken(token)
+    scheduleTokenRefresh(token)
+    return token
+  }
+
+  return await refreshSessionToken(options)
+}
+
+function bindSessionRefreshEvents(): void {
+  if (typeof window === 'undefined' || authSessionInitialized) return
+
+  const handleVisibility = () => {
+    if (document.visibilityState === 'visible') {
+      void ensureFreshAccessToken({ silent: true })
+    }
+  }
+  const handleFocus = () => {
+    void ensureFreshAccessToken({ silent: true })
+  }
+
+  document.addEventListener('visibilitychange', handleVisibility)
+  window.addEventListener('focus', handleFocus)
+  window.addEventListener('online', handleFocus)
+  authSessionInitialized = true
+}
+
+export async function initializeAuthSession(): Promise<void> {
+  bindSessionRefreshEvents()
+  await ensureFreshAccessToken({ silent: true })
 }
 
 function formatWalletLoginError(error: unknown): string {
@@ -170,8 +311,8 @@ export async function loginWithWallet(preferredAccount?: string): Promise<void> 
     })
 
     if (result.token) {
-      // 用于 Range/下载请求携带认证
-      document.cookie = `authToken=${result.token}; path=/; max-age=86400`
+      applyAccessToken(result.token)
+      scheduleTokenRefresh(result.token)
     }
     window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
   } catch (error) {
@@ -206,7 +347,8 @@ export async function loginWithPassword(username: string, password: string): Pro
     throw new Error('登录失败：未返回 token')
   }
 
-  setAccessToken(token)
+  applyAccessToken(token)
+  scheduleTokenRefresh(token)
 
   if (data.address) {
     localStorage.setItem('currentAccount', data.address)
@@ -220,7 +362,6 @@ export async function loginWithPassword(username: string, password: string): Pro
     localStorage.setItem('username', data.username)
   }
 
-  document.cookie = `authToken=${token}; path=/; max-age=86400`
   window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
 }
 
@@ -275,7 +416,8 @@ export async function loginWithEmailCode(email: string, code: string): Promise<v
     throw new Error('登录失败：未返回 token')
   }
 
-  setAccessToken(token)
+  applyAccessToken(token)
+  scheduleTokenRefresh(token)
 
   const account = data.email || email
   if (account) {
@@ -287,7 +429,6 @@ export async function loginWithEmailCode(email: string, code: string): Promise<v
     localStorage.setItem('username', data.username)
   }
 
-  document.cookie = `authToken=${token}; path=/; max-age=86400`
   window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
 }
 
@@ -297,14 +438,14 @@ export function logout(options: { reload?: boolean } = {}): void {
   void sdkLogout({ baseUrl: AUTH_BASE }).catch((error) => {
     console.warn('logout failed:', error)
   })
+  clearRefreshTimer()
   clearAccessToken()
   localStorage.removeItem('currentAccount')
   localStorage.removeItem('username')
   localStorage.removeItem('walletAddress')
   localStorage.removeItem('permissions')
   localStorage.removeItem('createdAt')
-  // 清除 cookie
-  document.cookie = 'authToken=; path=/; max-age=0'
+  setAuthTokenCookie(null)
   window.dispatchEvent(new CustomEvent(AUTH_CHANGED_EVENT))
   if (shouldReload) {
     window.location.reload()
@@ -315,14 +456,7 @@ export function logout(options: { reload?: boolean } = {}): void {
 export function isLoggedIn(): boolean {
   const token = getAccessToken()
   if (!token) return false
-
-  try {
-    const payload = token.split('.')[1]
-    const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
-    return decoded.exp * 1000 > Date.now()
-  } catch {
-    return false
-  }
+  return !isTokenExpired(token)
 }
 
 // 获取 token
@@ -336,14 +470,7 @@ export function getUsername(): string | null {
 }
 
 function parseTokenPayload(): Record<string, unknown> | null {
-  const token = getAccessToken()
-  if (!token) return null
-  try {
-    const payload = token.split('.')[1]
-    return JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
-  } catch {
-    return null
-  }
+  return decodeTokenPayload(getAccessToken())
 }
 
 export function getUserPermissions(): string[] {
