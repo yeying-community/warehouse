@@ -30,6 +30,7 @@ type Router struct {
 	webdavAccessKeyHandler     *handler.WebDAVAccessKeyHandler
 	groupHandler               *handler.GroupHandler
 	notificationHandler        *handler.NotificationHandler
+	s3CredentialHandler        *handler.S3CredentialHandler
 	logger                     *zap.Logger
 }
 
@@ -52,6 +53,7 @@ func NewRouter(
 	webdavAccessKeyHandler *handler.WebDAVAccessKeyHandler,
 	groupHandler *handler.GroupHandler,
 	notificationHandler *handler.NotificationHandler,
+	s3CredentialHandler *handler.S3CredentialHandler,
 	logger *zap.Logger,
 ) *Router {
 	return &Router{
@@ -72,6 +74,7 @@ func NewRouter(
 		webdavAccessKeyHandler:     webdavAccessKeyHandler,
 		groupHandler:               groupHandler,
 		notificationHandler:        notificationHandler,
+		s3CredentialHandler:        s3CredentialHandler,
 		logger:                     logger,
 	}
 }
@@ -167,6 +170,11 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/public/webdav/access-keys/create", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleCreate)))
 		mux.Handle("/api/v1/public/webdav/access-keys/bind", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleBind)))
 		mux.Handle("/api/v1/public/webdav/access-keys/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleRevoke)))
+	}
+	if r.s3CredentialHandler != nil {
+		mux.Handle("/api/v1/public/s3/credentials/list", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleList)))
+		mux.Handle("/api/v1/public/s3/credentials/create", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleCreate)))
+		mux.Handle("/api/v1/public/s3/credentials/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleRevoke)))
 	}
 
 	// 分享路由

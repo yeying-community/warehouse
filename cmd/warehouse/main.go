@@ -134,6 +134,11 @@ func runServer(args []string) {
 		c.Logger.Info("starting http server")
 		serverErrors <- c.Server.Start()
 	}()
+	if c.S3Server != nil {
+		go func() {
+			serverErrors <- c.S3Server.Start()
+		}()
+	}
 
 	// 等待中断信号或服务器错误
 	waitForShutdown(c, serverErrors, stopBackground, backgroundDone)
@@ -422,6 +427,12 @@ func waitForShutdown(c *container.Container, serverErrors <-chan error, stopBack
 	if err := c.Server.Shutdown(ctx); err != nil {
 		c.Logger.Error("failed to shutdown server gracefully", zap.Error(err))
 		os.Exit(1)
+	}
+	if c.S3Server != nil {
+		if err := c.S3Server.Shutdown(ctx); err != nil {
+			c.Logger.Error("failed to shutdown s3 server gracefully", zap.Error(err))
+			os.Exit(1)
+		}
 	}
 
 	c.Logger.Info("server stopped gracefully")

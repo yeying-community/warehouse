@@ -155,6 +155,33 @@ func (l *Loader) overrideFromEnv(config *Config) {
 			config.Quota.AutoReconcileInterval = d
 		}
 	}
+	if v := os.Getenv("WAREHOUSE_S3_ENABLED"); v != "" {
+		// Environment variables intentionally override the YAML deployment default.
+		config.S3.Enabled = parseEnvBool(v)
+	}
+	if v := os.Getenv("WAREHOUSE_S3_ADDRESS"); v != "" {
+		config.S3.Address = v
+	}
+	if v := os.Getenv("WAREHOUSE_S3_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			config.S3.Port = port
+		}
+	}
+	if v := os.Getenv("WAREHOUSE_S3_TLS"); v != "" {
+		config.S3.TLS = parseEnvBool(v)
+	}
+	if v := os.Getenv("WAREHOUSE_S3_CERT_FILE"); v != "" {
+		config.S3.CertFile = v
+	}
+	if v := os.Getenv("WAREHOUSE_S3_KEY_FILE"); v != "" {
+		config.S3.KeyFile = v
+	}
+	if v := os.Getenv("WAREHOUSE_S3_REGION"); v != "" {
+		config.S3.Region = v
+	}
+	if v := os.Getenv("WAREHOUSE_S3_CREDENTIAL_MASTER_KEY"); v != "" {
+		config.S3.CredentialMasterKey = v
+	}
 	if v := os.Getenv("WEBDAV_PREFIX"); v != "" {
 		config.WebDAV.Prefix = v
 	}
@@ -291,6 +318,9 @@ func (l *Loader) validate(config *Config) error {
 	if err := l.validateQuota(config); err != nil {
 		return fmt.Errorf("quota config: %w", err)
 	}
+	if err := l.validateS3(config); err != nil {
+		return fmt.Errorf("s3 config: %w", err)
+	}
 	if err := l.validateWebDAV(config); err != nil {
 		return fmt.Errorf("webdav config: %w", err)
 	}
@@ -312,6 +342,39 @@ func (l *Loader) validateQuota(config *Config) error {
 	}
 	if config.Quota.AutoReconcileInterval <= 0 {
 		return errors.New("quota.auto_reconcile_interval must be greater than zero when auto_reconcile_enabled is true")
+	}
+	return nil
+}
+
+func (l *Loader) validateS3(config *Config) error {
+	s3 := &config.S3
+	s3.Address = strings.TrimSpace(s3.Address)
+	if s3.Address == "" {
+		s3.Address = "127.0.0.1"
+	}
+	if s3.Port < 1 || s3.Port > 65535 {
+		return errors.New("invalid port number")
+	}
+	if s3.Port == config.Server.Port {
+		return errors.New("s3 port must be different from server port")
+	}
+	s3.Region = strings.TrimSpace(s3.Region)
+	if s3.Region == "" {
+		s3.Region = "us-east-1"
+	}
+	if s3.TLS {
+		if s3.CertFile == "" || s3.KeyFile == "" {
+			return errors.New("cert_file and key_file are required when TLS is enabled")
+		}
+		if _, err := os.Stat(s3.CertFile); err != nil {
+			return fmt.Errorf("s3 cert file not found: %w", err)
+		}
+		if _, err := os.Stat(s3.KeyFile); err != nil {
+			return fmt.Errorf("s3 key file not found: %w", err)
+		}
+	}
+	if s3.Enabled && strings.TrimSpace(s3.CredentialMasterKey) == "" {
+		return errors.New("credential master key is required when s3 is enabled")
 	}
 	return nil
 }

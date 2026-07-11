@@ -111,6 +111,21 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			UNIQUE(access_key_id, root_path)
 		)`,
 
+		// S3 Signature V4 凭证；secret 只保存 AES-256-GCM 密文
+		`CREATE TABLE IF NOT EXISTS s3_credentials (
+			id VARCHAR(50) PRIMARY KEY,
+			owner_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			name VARCHAR(255) NOT NULL,
+			access_key_id VARCHAR(100) UNIQUE NOT NULL,
+			secret_ciphertext TEXT NOT NULL,
+			secret_key_version INTEGER NOT NULL DEFAULT 1,
+			status VARCHAR(20) NOT NULL DEFAULT 'active',
+			expires_at TIMESTAMP NULL,
+			last_used_at TIMESTAMP NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+
 		// 创建回收站表
 		`CREATE TABLE IF NOT EXISTS recycle_items (
 			id VARCHAR(50) PRIMARY KEY,
@@ -452,6 +467,10 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON webdav_access_keys(owner_user_id, status, created_at DESC)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_webdav_access_keys_owner_name
 			ON webdav_access_keys(owner_user_id, name)`,
+		`CREATE INDEX IF NOT EXISTS idx_s3_credentials_owner_status
+			ON s3_credentials(owner_user_id, status, created_at DESC)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_s3_credentials_owner_name
+			ON s3_credentials(owner_user_id, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_webdav_access_key_bindings_key
 			ON webdav_access_key_bindings(access_key_id, root_path)`,
 		`CREATE INDEX IF NOT EXISTS idx_webdav_access_key_bindings_owner

@@ -13,6 +13,7 @@ import (
 	apphealth "github.com/yeying-community/warehouse/internal/health"
 	infraAuth "github.com/yeying-community/warehouse/internal/infrastructure/auth"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
+	infraCrypto "github.com/yeying-community/warehouse/internal/infrastructure/crypto"
 	"github.com/yeying-community/warehouse/internal/infrastructure/database"
 	infraEmail "github.com/yeying-community/warehouse/internal/infrastructure/email"
 	"github.com/yeying-community/warehouse/internal/infrastructure/logger"
@@ -20,6 +21,7 @@ import (
 	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
 	"github.com/yeying-community/warehouse/internal/interface/http"
 	"github.com/yeying-community/warehouse/internal/interface/http/handler"
+	"github.com/yeying-community/warehouse/internal/interface/s3"
 	"go.uber.org/zap"
 	"golang.org/x/net/webdav"
 )
@@ -39,6 +41,7 @@ type Container struct {
 	UserShareRepository   repository.UserShareRepository
 	GroupRepository       repository.GroupRepository
 	WebDAVAccessKeyRepo   repository.WebDAVAccessKeyRepository
+	S3CredentialRepo      repository.S3CredentialRepository
 	NotificationRepo      repository.NotificationRepository
 	ReplicationOutboxRepo repository.ReplicationOutboxRepository
 	ReplicationOffsetRepo repository.ReplicationOffsetRepository
@@ -65,10 +68,13 @@ type Container struct {
 	NotificationService    *service.NotificationService
 
 	// Authenticators
-	Authenticators []auth.Authenticator
-	AccessKeyAuth  *infraAuth.AccessKeyAuthenticator
-	BasicAuth      *infraAuth.BasicAuthenticator
-	Web3Auth       *infraAuth.Web3Authenticator
+	Authenticators       []auth.Authenticator
+	AccessKeyAuth        *infraAuth.AccessKeyAuthenticator
+	BasicAuth            *infraAuth.BasicAuthenticator
+	Web3Auth             *infraAuth.Web3Authenticator
+	S3SecretBox          *infraCrypto.SecretBox
+	S3CredentialResolver s3.CredentialResolver
+	ObjectService        *service.ObjectService
 
 	// Handlers
 	HealthHandler              *handler.HealthHandler
@@ -86,10 +92,12 @@ type Container struct {
 	WebDAVAccessKeyHandler     *handler.WebDAVAccessKeyHandler
 	GroupHandler               *handler.GroupHandler
 	NotificationHandler        *handler.NotificationHandler
+	S3CredentialHandler        *handler.S3CredentialHandler
 
 	// HTTP
-	Router *http.Router
-	Server *http.Server
+	Router   *http.Router
+	Server   *http.Server
+	S3Server *s3.Server
 }
 
 // NewContainer 创建容器
@@ -195,6 +203,15 @@ func (c *Container) initRepositories() error {
 	c.GroupRepository = repository.NewPostgresGroupRepository(c.DB.DB)
 	// WebDAV 访问密钥仓储
 	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
+	if c.Config.S3.Enabled {
+		secretBox, err := infraCrypto.NewSecretBoxBase64(c.Config.S3.CredentialMasterKey)
+		if err != nil {
+			return fmt.Errorf("failed to initialize s3 credential encryption: %w", err)
+		}
+		c.S3SecretBox = secretBox
+		c.S3CredentialRepo = repository.NewPostgresS3CredentialRepository(c.DB.DB, secretBox)
+		c.S3CredentialResolver = s3.NewRepositoryCredentialResolver(c.S3CredentialRepo)
+	}
 	// 站内消息仓储
 	c.NotificationRepo = repository.NewPostgresNotificationRepository(c.DB.DB)
 	// 复制仓储
@@ -212,6 +229,7 @@ func (c *Container) initRepositories() error {
 // initServices 初始化服务
 func (c *Container) initServices() error {
 	c.AssetSpaceManager = assetspace.NewManager(c.Config, c.Logger)
+	c.ObjectService = service.NewObjectService(c.Config.WebDAV.Directory)
 	c.PeerResolver = service.NewReplicationPeerResolver(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo)
 	c.NodeHeartbeat = service.NewNodeHeartbeatRegistrar(c.Config, c.ClusterNodeRepo, c.Logger)
 	c.AssignmentAllocator = service.NewReplicationAssignmentAllocator(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo, c.Logger)
@@ -449,6 +467,9 @@ func (c *Container) initHandlers() error {
 		c.Config.Security.AdminAddresses,
 		c.Logger,
 	)
+	if c.S3CredentialRepo != nil {
+		c.S3CredentialHandler = handler.NewS3CredentialHandler(c.S3CredentialRepo, c.Logger)
+	}
 
 	c.Logger.Info("handlers initialized")
 
@@ -476,11 +497,15 @@ func (c *Container) initHTTP() error {
 		c.WebDAVAccessKeyHandler,
 		c.GroupHandler,
 		c.NotificationHandler,
+		c.S3CredentialHandler,
 		c.Logger,
 	)
 
 	// 服务器
 	c.Server = http.NewServer(c.Config, c.Router, c.Logger)
+	if c.Config.S3.Enabled {
+		c.S3Server = s3.NewServer(c.Config.S3, c.S3CredentialResolver, c.ObjectService, c.UserRepository, c.Logger)
+	}
 	c.Logger.Info("http components initialized")
 
 	return nil
