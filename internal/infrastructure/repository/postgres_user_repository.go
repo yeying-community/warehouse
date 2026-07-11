@@ -459,6 +459,30 @@ func (r *PostgresUserRepository) UpdateUsedSpaceDelta(ctx context.Context, usern
 	return usedSpace, nil
 }
 
+// ReserveUsedSpaceDelta atomically applies a quota-checked delta.
+func (r *PostgresUserRepository) ReserveUsedSpaceDelta(ctx context.Context, username string, delta int64) (int64, error) {
+	query := `
+		UPDATE users
+		SET used_space = used_space + $1
+		WHERE username = $2 AND used_space + $1 >= 0
+		  AND (quota = 0 OR used_space + $1 <= quota)
+		RETURNING used_space
+	`
+	var usedSpace int64
+	if err := r.db.DB.QueryRowContext(ctx, query, delta, username).Scan(&usedSpace); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, user.ErrQuotaExceeded
+		}
+		return 0, fmt.Errorf("failed to reserve used space delta: %w", err)
+	}
+	return usedSpace, nil
+}
+
+func (r *PostgresUserRepository) ReleaseUsedSpaceDelta(ctx context.Context, username string, delta int64) error {
+	_, err := r.UpdateUsedSpaceDelta(ctx, username, -delta)
+	return err
+}
+
 // UpdateQuota 更新用户配额
 func (r *PostgresUserRepository) UpdateQuota(ctx context.Context, username string, quota int64) error {
 	query := "UPDATE users SET quota = $1 WHERE username = $2"

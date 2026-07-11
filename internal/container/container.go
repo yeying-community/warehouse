@@ -42,6 +42,7 @@ type Container struct {
 	GroupRepository       repository.GroupRepository
 	WebDAVAccessKeyRepo   repository.WebDAVAccessKeyRepository
 	S3CredentialRepo      repository.S3CredentialRepository
+	S3MultipartRepo       repository.S3MultipartRepository
 	NotificationRepo      repository.NotificationRepository
 	ReplicationOutboxRepo repository.ReplicationOutboxRepository
 	ReplicationOffsetRepo repository.ReplicationOffsetRepository
@@ -73,6 +74,7 @@ type Container struct {
 	BasicAuth            *infraAuth.BasicAuthenticator
 	Web3Auth             *infraAuth.Web3Authenticator
 	S3SecretBox          *infraCrypto.SecretBox
+	MultipartService     *service.MultipartService
 	S3CredentialResolver s3.CredentialResolver
 	ObjectService        *service.ObjectService
 
@@ -203,6 +205,7 @@ func (c *Container) initRepositories() error {
 	c.GroupRepository = repository.NewPostgresGroupRepository(c.DB.DB)
 	// WebDAV 访问密钥仓储
 	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
+	c.S3MultipartRepo = repository.NewPostgresS3MultipartRepository(c.DB.DB)
 	if c.Config.S3.Enabled {
 		secretBox, err := infraCrypto.NewSecretBoxBase64(c.Config.S3.CredentialMasterKey)
 		if err != nil {
@@ -230,6 +233,9 @@ func (c *Container) initRepositories() error {
 func (c *Container) initServices() error {
 	c.AssetSpaceManager = assetspace.NewManager(c.Config, c.Logger)
 	c.ObjectService = service.NewObjectService(c.Config.WebDAV.Directory)
+	c.ObjectService.SetGuards(c.QuotaService, c.UserRepository, c.MutationRecorder)
+	c.MultipartService = service.NewMultipartService(c.Config.WebDAV.Directory, c.S3MultipartRepo)
+	c.MultipartService.SetObjectService(c.ObjectService)
 	c.PeerResolver = service.NewReplicationPeerResolver(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo)
 	c.NodeHeartbeat = service.NewNodeHeartbeatRegistrar(c.Config, c.ClusterNodeRepo, c.Logger)
 	c.AssignmentAllocator = service.NewReplicationAssignmentAllocator(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo, c.Logger)
@@ -504,7 +510,7 @@ func (c *Container) initHTTP() error {
 	// 服务器
 	c.Server = http.NewServer(c.Config, c.Router, c.Logger)
 	if c.Config.S3.Enabled {
-		c.S3Server = s3.NewServer(c.Config.S3, c.S3CredentialResolver, c.ObjectService, c.UserRepository, c.Logger)
+		c.S3Server = s3.NewServer(c.Config.S3, c.S3CredentialResolver, c.ObjectService, c.UserRepository, c.MultipartService, c.Logger)
 	}
 	c.Logger.Info("http components initialized")
 

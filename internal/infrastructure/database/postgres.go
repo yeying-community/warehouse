@@ -130,6 +130,32 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`ALTER TABLE IF EXISTS s3_credentials ADD COLUMN IF NOT EXISTS root_path TEXT NOT NULL DEFAULT '/'`,
 		`ALTER TABLE IF EXISTS s3_credentials ADD COLUMN IF NOT EXISTS permissions VARCHAR(40) NOT NULL DEFAULT 'read'`,
 
+		// S3 Multipart 上传会话和分片元数据；分片文件只存在 active 节点 staging 目录
+		`CREATE TABLE IF NOT EXISTS s3_multipart_uploads (
+			id VARCHAR(100) PRIMARY KEY,
+			owner_user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			bucket VARCHAR(63) NOT NULL,
+			object_key TEXT NOT NULL,
+			staging_path TEXT NOT NULL,
+			status VARCHAR(20) NOT NULL DEFAULT 'active',
+			content_type TEXT,
+			initiated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			expires_at TIMESTAMP NOT NULL,
+			completed_at TIMESTAMP NULL,
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS s3_multipart_parts (
+			upload_id VARCHAR(100) NOT NULL REFERENCES s3_multipart_uploads(id) ON DELETE CASCADE,
+			part_number INTEGER NOT NULL,
+			staging_path TEXT NOT NULL,
+			etag VARCHAR(255) NOT NULL,
+			size BIGINT NOT NULL,
+			checksum_sha256 VARCHAR(255),
+			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (upload_id, part_number)
+		)`,
+
 		// 创建回收站表
 		`CREATE TABLE IF NOT EXISTS recycle_items (
 			id VARCHAR(50) PRIMARY KEY,
@@ -473,6 +499,10 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			ON webdav_access_keys(owner_user_id, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_s3_credentials_owner_status
 			ON s3_credentials(owner_user_id, status, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_s3_multipart_owner_status
+			ON s3_multipart_uploads(owner_user_id, status, expires_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_s3_multipart_expiry
+			ON s3_multipart_uploads(status, expires_at)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_s3_credentials_owner_name
 			ON s3_credentials(owner_user_id, name)`,
 		`CREATE INDEX IF NOT EXISTS idx_webdav_access_key_bindings_key
