@@ -2,17 +2,25 @@ package service
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
+	"hash"
+	"hash/crc32"
 	"io"
 	"mime"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	objectpath "github.com/yeying-community/warehouse/internal/domain/object"
+	"github.com/yeying-community/warehouse/internal/domain/quota"
+	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/atomicfile"
 )
 
@@ -33,11 +41,169 @@ type ObjectList struct {
 
 // ObjectService contains filesystem operations shared by protocol adapters.
 type ObjectService struct {
-	webdavRoot string
+	webdavRoot       string
+	quotaService     quota.Service
+	userRepo         user.Repository
+	mutationRecorder MutationRecorder
+	locks            sync.Map
+}
+
+type quotaReserveRepository interface {
+	ReserveUsedSpaceDelta(context.Context, string, int64) (int64, error)
+	ReleaseUsedSpaceDelta(context.Context, string, int64) error
+}
+
+func (s *ObjectService) lockPath(path string) func() {
+	value, _ := s.locks.LoadOrStore(path, &sync.Mutex{})
+	mutex := value.(*sync.Mutex)
+	mutex.Lock()
+	return mutex.Unlock
 }
 
 func NewObjectService(webdavRoot string) *ObjectService {
 	return &ObjectService{webdavRoot: filepath.Clean(webdavRoot)}
+}
+
+func (s *ObjectService) SetGuards(quotaService quota.Service, userRepo user.Repository, mutationRecorder MutationRecorder) {
+	s.quotaService = quotaService
+	s.userRepo = userRepo
+	s.mutationRecorder = mutationRecorder
+}
+
+func (s *ObjectService) PutForUser(ctx context.Context, owner *user.User, bucket, key string, src io.Reader) (ObjectInfo, error) {
+	return s.PutForUserChecked(ctx, owner, bucket, key, src, "", "", "")
+}
+
+func (s *ObjectService) PutForUserChecked(ctx context.Context, owner *user.User, bucket, key string, src io.Reader, expectedMD5, expectedSHA256, expectedCRC32 string) (ObjectInfo, error) {
+	if owner == nil {
+		return ObjectInfo{}, fmt.Errorf("user is nil")
+	}
+	fullPath, err := objectpath.ResolvePath(s.webdavRoot, owner.Directory, bucket, key)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	unlock := s.lockPath(fullPath)
+	defer unlock()
+	var oldSize int64
+	if info, statErr := os.Stat(fullPath); statErr == nil && !info.IsDir() {
+		oldSize = info.Size()
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return ObjectInfo{}, statErr
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return ObjectInfo{}, err
+	}
+	tmp, err := atomicfile.Open(fullPath, 0o644)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	md5Hash := md5.New()
+	sha256Hash := sha256.New()
+	crc32Hash := crc32.NewIEEE()
+	writer := io.MultiWriter(tmp, md5Hash, sha256Hash, crc32Hash)
+	size, err := io.Copy(writer, src)
+	if err != nil {
+		tmp.Abort()
+		return ObjectInfo{}, err
+	}
+	if err := validateChecksum(expectedMD5, md5Hash, expectedSHA256, sha256Hash, expectedCRC32, crc32Hash); err != nil {
+		tmp.Abort()
+		return ObjectInfo{}, err
+	}
+	delta := size - oldSize
+	reserved := false
+	var reservedUsed int64
+	if reserveRepo, ok := s.userRepo.(quotaReserveRepository); ok && delta != 0 {
+		reservedUsed, err = reserveRepo.ReserveUsedSpaceDelta(ctx, owner.Username, delta)
+		if err != nil {
+			tmp.Abort()
+			return ObjectInfo{}, err
+		}
+		reserved = true
+	} else if s.quotaService != nil {
+		if err := s.quotaService.CheckQuota(ctx, owner, delta); err != nil {
+			tmp.Abort()
+			return ObjectInfo{}, err
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		if reserved {
+			_ = s.userRepo.(quotaReserveRepository).ReleaseUsedSpaceDelta(ctx, owner.Username, delta)
+		}
+		return ObjectInfo{}, err
+	}
+	if reserved {
+		owner.UpdateUsedSpace(reservedUsed)
+	} else if s.userRepo != nil && delta != 0 {
+		used, err := s.userRepo.UpdateUsedSpaceDelta(ctx, owner.Username, delta)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
+		owner.UpdateUsedSpace(used)
+	}
+	if s.mutationRecorder != nil {
+		if err := s.mutationRecorder.UpsertFile(ctx, fullPath); err != nil {
+			return ObjectInfo{}, err
+		}
+	}
+	return s.statObject(bucket, key, fullPath)
+}
+
+func validateChecksum(expectedMD5 string, md5Hash hash.Hash, expectedSHA256 string, sha256Hash hash.Hash, expectedCRC32 string, crc32Hash hash.Hash) error {
+	checks := []struct {
+		name, expected string
+		actual         hash.Hash
+	}{
+		{"Content-MD5", expectedMD5, md5Hash},
+		{"x-amz-checksum-sha256", expectedSHA256, sha256Hash},
+		{"x-amz-checksum-crc32", expectedCRC32, crc32Hash},
+	}
+	for _, check := range checks {
+		if strings.TrimSpace(check.expected) == "" {
+			continue
+		}
+		actual := base64.StdEncoding.EncodeToString(check.actual.Sum(nil))
+		if actual != strings.TrimSpace(check.expected) {
+			return fmt.Errorf("%s mismatch", check.name)
+		}
+	}
+	return nil
+}
+
+func (s *ObjectService) DeleteForUser(ctx context.Context, owner *user.User, bucket, key string) error {
+	if owner == nil {
+		return fmt.Errorf("user is nil")
+	}
+	fullPath, err := objectpath.ResolvePath(s.webdavRoot, owner.Directory, bucket, key)
+	if err != nil {
+		return err
+	}
+	unlock := s.lockPath(fullPath)
+	defer unlock()
+	info, err := os.Stat(fullPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("cannot delete directory object")
+	}
+	if err := os.Remove(fullPath); err != nil {
+		return err
+	}
+	if s.userRepo != nil && info.Size() != 0 {
+		used, err := s.userRepo.UpdateUsedSpaceDelta(ctx, owner.Username, -info.Size())
+		if err != nil {
+			return err
+		}
+		owner.UpdateUsedSpace(used)
+	}
+	if s.mutationRecorder != nil {
+		return s.mutationRecorder.RemovePath(ctx, fullPath, false)
+	}
+	return nil
 }
 
 func (s *ObjectService) List(ctx context.Context, userDirectory, bucket, prefix string, delimiter rune) (ObjectList, error) {

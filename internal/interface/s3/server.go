@@ -2,12 +2,16 @@ package s3
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,10 +31,11 @@ type Server struct {
 	resolver   CredentialResolver
 	objects    *service.ObjectService
 	users      user.Repository
+	multipart  *service.MultipartService
 }
 
-func NewServer(cfg config.S3Config, resolver CredentialResolver, objects *service.ObjectService, users user.Repository, logger *zap.Logger) *Server {
-	return &Server{config: cfg, resolver: resolver, objects: objects, users: users, logger: logger}
+func NewServer(cfg config.S3Config, resolver CredentialResolver, objects *service.ObjectService, users user.Repository, multipart *service.MultipartService, logger *zap.Logger) *Server {
+	return &Server{config: cfg, resolver: resolver, objects: objects, users: users, multipart: multipart, logger: logger}
 }
 
 func (s *Server) Start() error {
@@ -140,6 +145,23 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 		s.writeError(w, http.StatusForbidden, "AccessDenied", "credential is not bound to this path")
 		return
 	}
+	query := req.URL.Query()
+	if req.Method == http.MethodPost && query.Has("uploads") {
+		s.handleCreateMultipart(w, req, credential, owner, bucket, key)
+		return
+	}
+	if req.Method == http.MethodPost && query.Get("uploadId") != "" {
+		s.handleCompleteMultipart(w, req, credential, owner, query.Get("uploadId"))
+		return
+	}
+	if req.Method == http.MethodPut && query.Get("uploadId") != "" && query.Get("partNumber") != "" {
+		s.handleUploadPart(w, req, credential, owner, query.Get("uploadId"), query.Get("partNumber"))
+		return
+	}
+	if req.Method == http.MethodDelete && query.Get("uploadId") != "" {
+		s.handleAbortMultipart(w, req, owner, query.Get("uploadId"))
+		return
+	}
 	switch req.Method {
 	case http.MethodGet:
 		if !hasS3Permission(credential.Permissions, "read") {
@@ -147,7 +169,7 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 			return
 		}
 		if key == "" {
-			s.handleList(w, req.Context(), userDirectory, bucket, req.URL.Query().Get("prefix"))
+			s.handleList(w, req, credential, userDirectory, bucket)
 			return
 		}
 		file, info, err := s.objects.Open(req.Context(), userDirectory, bucket, key)
@@ -157,10 +179,18 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 		}
 		defer file.Close()
 		setObjectHeaders(w, info)
-		_, _ = io.Copy(w, file)
+		http.ServeContent(w, req, key, info.ModifiedAt, file)
 	case http.MethodHead:
 		if !hasS3Permission(credential.Permissions, "read") {
 			s.writeError(w, http.StatusForbidden, "AccessDenied", "read permission is required")
+			return
+		}
+		if key == "" {
+			if _, err := s.objects.Stat(req.Context(), userDirectory, bucket, ""); err != nil {
+				s.writeObjectError(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
 			return
 		}
 		info, err := s.objects.Stat(req.Context(), userDirectory, bucket, key)
@@ -186,7 +216,10 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		info, err := s.objects.Put(req.Context(), userDirectory, bucket, key, req.Body)
+		info, err := s.objects.PutForUserChecked(req.Context(), owner, bucket, key, req.Body,
+			req.Header.Get("Content-MD5"),
+			req.Header.Get("X-Amz-Checksum-Sha256"),
+			req.Header.Get("X-Amz-Checksum-Crc32"))
 		if err != nil {
 			s.writeObjectError(w, err)
 			return
@@ -198,7 +231,7 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 			s.writeError(w, http.StatusForbidden, "AccessDenied", "delete permission is required")
 			return
 		}
-		if err := s.objects.Delete(req.Context(), userDirectory, bucket, key); err != nil {
+		if err := s.objects.DeleteForUser(req.Context(), owner, bucket, key); err != nil {
 			s.writeObjectError(w, err)
 			return
 		}
@@ -206,6 +239,89 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 	default:
 		s.writeError(w, http.StatusNotImplemented, "NotImplemented", "operation is not implemented")
 	}
+}
+
+func (s *Server) handleCreateMultipart(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential, owner *user.User, bucket, key string) {
+	if s.multipart == nil || !hasS3Permission(credential.Permissions, "create") {
+		s.writeError(w, http.StatusForbidden, "AccessDenied", "create permission is required")
+		return
+	}
+	upload, err := s.multipart.Create(req.Context(), owner, bucket, key, req.Header.Get("Content-Type"))
+	if err != nil {
+		s.writeObjectError(w, err)
+		return
+	}
+	response := struct {
+		XMLName  xml.Name `xml:"InitiateMultipartUploadResult"`
+		Bucket   string   `xml:"Bucket"`
+		Key      string   `xml:"Key"`
+		UploadID string   `xml:"UploadId"`
+	}{Bucket: bucket, Key: key, UploadID: upload.ID}
+	w.Header().Set("Content-Type", "application/xml")
+	_ = xml.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handleUploadPart(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential, owner *user.User, uploadID, rawPartNumber string) {
+	if s.multipart == nil || !hasS3Permission(credential.Permissions, "create") {
+		s.writeError(w, http.StatusForbidden, "AccessDenied", "create permission is required")
+		return
+	}
+	partNumber, err := strconv.Atoi(rawPartNumber)
+	if err != nil {
+		s.writeError(w, http.StatusBadRequest, "InvalidPart", "invalid part number")
+		return
+	}
+	part, err := s.multipart.UploadPart(req.Context(), owner, uploadID, partNumber, req.Body)
+	if err != nil {
+		s.writeObjectError(w, err)
+		return
+	}
+	w.Header().Set("ETag", fmt.Sprintf("%q", part.ETag))
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleAbortMultipart(w http.ResponseWriter, req *http.Request, owner *user.User, uploadID string) {
+	if s.multipart == nil {
+		s.writeError(w, http.StatusNotImplemented, "NotImplemented", "multipart is not configured")
+		return
+	}
+	if err := s.multipart.Abort(req.Context(), owner, uploadID); err != nil {
+		s.writeObjectError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleCompleteMultipart(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential, owner *user.User, uploadID string) {
+	if s.multipart == nil || !hasS3Permission(credential.Permissions, "create") {
+		s.writeError(w, http.StatusForbidden, "AccessDenied", "create permission is required")
+		return
+	}
+	var request struct {
+		Parts []struct {
+			PartNumber int    `xml:"PartNumber"`
+			ETag       string `xml:"ETag"`
+		} `xml:"Part"`
+	}
+	if err := xml.NewDecoder(req.Body).Decode(&request); err != nil {
+		s.writeError(w, http.StatusBadRequest, "MalformedXML", "invalid complete multipart request")
+		return
+	}
+	parts := make([]service.CompletePart, 0, len(request.Parts))
+	for _, part := range request.Parts {
+		parts = append(parts, service.CompletePart{PartNumber: part.PartNumber, ETag: strings.Trim(part.ETag, `"`)})
+	}
+	info, err := s.multipart.Complete(req.Context(), owner, uploadID, parts)
+	if err != nil {
+		s.writeObjectError(w, err)
+		return
+	}
+	response := struct {
+		XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
+		ETag    string   `xml:"ETag"`
+	}{ETag: fmt.Sprintf("%q", info.ETag)}
+	w.Header().Set("Content-Type", "application/xml")
+	_ = xml.NewEncoder(w).Encode(response)
 }
 
 func hasS3Permission(value, permission string) bool {
@@ -224,13 +340,15 @@ func (s *Server) pathAllowed(rootPath, requestedPath string) bool {
 }
 
 type listBucketResult struct {
-	XMLName     xml.Name     `xml:"ListBucketResult"`
-	Name        string       `xml:"Name"`
-	Prefix      string       `xml:"Prefix,omitempty"`
-	KeyCount    int          `xml:"KeyCount,omitempty"`
-	MaxKeys     int          `xml:"MaxKeys,omitempty"`
-	IsTruncated bool         `xml:"IsTruncated"`
-	Contents    []listObject `xml:"Contents"`
+	XMLName               xml.Name     `xml:"ListBucketResult"`
+	Name                  string       `xml:"Name"`
+	Prefix                string       `xml:"Prefix,omitempty"`
+	KeyCount              int          `xml:"KeyCount,omitempty"`
+	MaxKeys               int          `xml:"MaxKeys,omitempty"`
+	IsTruncated           bool         `xml:"IsTruncated"`
+	NextMarker            string       `xml:"NextMarker,omitempty"`
+	NextContinuationToken string       `xml:"NextContinuationToken,omitempty"`
+	Contents              []listObject `xml:"Contents"`
 }
 
 type listObject struct {
@@ -240,18 +358,90 @@ type listObject struct {
 	Size         int64  `xml:"Size"`
 }
 
-func (s *Server) handleList(w http.ResponseWriter, ctx context.Context, userDirectory, bucket, prefix string) {
-	result, err := s.objects.List(ctx, userDirectory, bucket, prefix, 0)
+func (s *Server) handleList(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential, userDirectory, bucket string) {
+	query := req.URL.Query()
+	prefix := query.Get("prefix")
+	result, err := s.objects.List(req.Context(), userDirectory, bucket, prefix, 0)
 	if err != nil {
 		s.writeObjectError(w, err)
 		return
 	}
-	response := listBucketResult{Name: bucket, Prefix: prefix, KeyCount: len(result.Objects), MaxKeys: 1000, Contents: make([]listObject, 0, len(result.Objects))}
-	for _, item := range result.Objects {
+	maxKeys := 1000
+	if raw := query.Get("max-keys"); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed >= 0 && parsed <= 1000 {
+			maxKeys = parsed
+		}
+	}
+	marker := query.Get("marker")
+	if query.Get("list-type") == "2" && query.Get("continuation-token") != "" {
+		var token continuationToken
+		if err := decodeContinuationToken(query.Get("continuation-token"), credential.Secret, &token); err != nil || token.Bucket != bucket || token.Prefix != prefix {
+			s.writeError(w, http.StatusBadRequest, "InvalidToken", "invalid continuation token")
+			return
+		}
+		marker = token.Key
+	}
+	items := result.Objects
+	if marker != "" {
+		start := 0
+		for start < len(items) && items[start].Key <= marker {
+			start++
+		}
+		items = items[start:]
+	}
+	truncated := len(items) > maxKeys
+	if truncated {
+		items = items[:maxKeys]
+	}
+	response := listBucketResult{Name: bucket, Prefix: prefix, KeyCount: len(items), MaxKeys: maxKeys, IsTruncated: truncated, Contents: make([]listObject, 0, len(items))}
+	if truncated && len(items) > 0 {
+		if query.Get("list-type") == "2" {
+			next, err := encodeContinuationToken(continuationToken{Bucket: bucket, Prefix: prefix, Key: items[len(items)-1].Key}, credential.Secret)
+			if err != nil {
+				s.writeError(w, http.StatusInternalServerError, "InternalError", "failed to create continuation token")
+				return
+			}
+			response.NextContinuationToken = next
+		} else {
+			response.NextMarker = items[len(items)-1].Key
+		}
+	}
+	for _, item := range items {
 		response.Contents = append(response.Contents, listObject{Key: item.Key, LastModified: item.ModifiedAt.UTC().Format(time.RFC3339), ETag: fmt.Sprintf("%q", item.ETag), Size: item.Size})
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	_ = xml.NewEncoder(w).Encode(response)
+}
+
+type continuationToken struct {
+	Bucket string `json:"bucket"`
+	Prefix string `json:"prefix"`
+	Key    string `json:"key"`
+}
+
+func encodeContinuationToken(token continuationToken, secret string) (string, error) {
+	payload, err := json.Marshal(token)
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	data := append(payload, mac.Sum(nil)...)
+	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func decodeContinuationToken(raw, secret string, token *continuationToken) error {
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil || len(data) < sha256.Size {
+		return fmt.Errorf("invalid token")
+	}
+	payload, signature := data[:len(data)-sha256.Size], data[len(data)-sha256.Size:]
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return fmt.Errorf("invalid token signature")
+	}
+	return json.Unmarshal(payload, token)
 }
 
 func setObjectHeaders(w http.ResponseWriter, info service.ObjectInfo) {

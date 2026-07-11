@@ -119,6 +119,9 @@ func runServer(args []string) {
 	if c.QuotaReconciler != nil && c.QuotaReconciler.Enabled() {
 		startBackground(c.QuotaReconciler.Run)
 	}
+	if c.MultipartService != nil && c.Config.Node.Role != "standby" {
+		startBackground(c.MultipartService.Run)
+	}
 	if c.InternalReplicationHandler != nil {
 		startBackground(c.InternalReplicationHandler.RunAutoReconcile)
 	}
