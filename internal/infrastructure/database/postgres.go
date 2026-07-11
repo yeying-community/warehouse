@@ -119,12 +119,16 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			access_key_id VARCHAR(100) UNIQUE NOT NULL,
 			secret_ciphertext TEXT NOT NULL,
 			secret_key_version INTEGER NOT NULL DEFAULT 1,
+			root_path TEXT NOT NULL DEFAULT '/',
+			permissions VARCHAR(40) NOT NULL DEFAULT 'read',
 			status VARCHAR(20) NOT NULL DEFAULT 'active',
 			expires_at TIMESTAMP NULL,
 			last_used_at TIMESTAMP NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
+		`ALTER TABLE IF EXISTS s3_credentials ADD COLUMN IF NOT EXISTS root_path TEXT NOT NULL DEFAULT '/'`,
+		`ALTER TABLE IF EXISTS s3_credentials ADD COLUMN IF NOT EXISTS permissions VARCHAR(40) NOT NULL DEFAULT 'read'`,
 
 		// 创建回收站表
 		`CREATE TABLE IF NOT EXISTS recycle_items (

@@ -38,7 +38,7 @@ func (h *S3CredentialHandler) HandleList(w http.ResponseWriter, r *http.Request)
 	}
 	rows := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		rows = append(rows, map[string]any{"id": item.ID, "name": item.Name, "accessKeyId": item.AccessKeyID, "status": item.Status, "createdAt": item.CreatedAt})
+		rows = append(rows, map[string]any{"id": item.ID, "name": item.Name, "accessKeyId": item.AccessKeyID, "rootPath": item.RootPath, "permissions": item.Permissions, "status": item.Status, "createdAt": item.CreatedAt})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"items": rows})
 }
@@ -50,7 +50,9 @@ func (h *S3CredentialHandler) HandleCreate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Name string `json:"name"`
+		Name        string   `json:"name"`
+		RootPath    string   `json:"rootPath"`
+		Permissions []string `json:"permissions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", 400)
@@ -61,18 +63,45 @@ func (h *S3CredentialHandler) HandleCreate(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "name is required", 400)
 		return
 	}
+	permissions := normalizeS3Permissions(req.Permissions)
+	if permissions == "" {
+		http.Error(w, "permissions must include read, create, update, or delete", http.StatusBadRequest)
+		return
+	}
+	rootPath := strings.TrimSpace(req.RootPath)
+	if rootPath == "" {
+		rootPath = "/"
+	}
 	secretBytes := make([]byte, 32)
 	if _, err := rand.Read(secretBytes); err != nil {
 		http.Error(w, "failed to generate secret", 500)
 		return
 	}
-	credential := &s3credential.Credential{ID: uuid.NewString(), OwnerUserID: u.ID, Name: req.Name, AccessKeyID: "AK" + randomID(), Secret: base64.RawURLEncoding.EncodeToString(secretBytes), Status: s3credential.StatusActive}
+	credential := &s3credential.Credential{ID: uuid.NewString(), OwnerUserID: u.ID, Name: req.Name, AccessKeyID: "AK" + randomID(), Secret: base64.RawURLEncoding.EncodeToString(secretBytes), RootPath: rootPath, Permissions: permissions, Status: s3credential.StatusActive}
 	if err := h.repo.Create(r.Context(), credential); err != nil {
 		h.logger.Error("failed to create s3 credential", zap.Error(err))
 		http.Error(w, "Failed to create S3 credential", 500)
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"id": credential.ID, "name": credential.Name, "accessKeyId": credential.AccessKeyID, "secret": credential.Secret, "status": credential.Status, "warning": "The secret is shown once and cannot be recovered."})
+}
+
+func normalizeS3Permissions(values []string) string {
+	allowed := map[string]bool{"read": true, "create": true, "update": true, "delete": true}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if allowed[value] {
+			seen[value] = true
+		}
+	}
+	ordered := make([]string, 0, len(seen))
+	for _, value := range []string{"read", "create", "update", "delete"} {
+		if seen[value] {
+			ordered = append(ordered, value)
+		}
+	}
+	return strings.Join(ordered, ",")
 }
 
 func (h *S3CredentialHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
