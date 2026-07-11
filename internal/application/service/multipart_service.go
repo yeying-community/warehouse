@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -290,9 +291,22 @@ func (s *MultipartService) Complete(ctx context.Context, owner *user.User, uploa
 	if err := s.repo.SetUploadStatus(ctx, uploadID, s3multipart.StatusCompleted, &now); err != nil {
 		return nil, err
 	}
+	info.ETag = multipartETag(parts)
 	s.releaseStaging(ctx, owner.ID, uploadID)
 	if err := os.RemoveAll(upload.StagingPath); err != nil {
 		return nil, err
 	}
 	return &info, nil
+}
+
+func multipartETag(parts []*s3multipart.Part) string {
+	hash := md5.New()
+	for _, part := range parts {
+		digest, err := hex.DecodeString(part.ETag)
+		if err != nil || len(digest) != md5.Size {
+			return ""
+		}
+		_, _ = hash.Write(digest)
+	}
+	return hex.EncodeToString(hash.Sum(nil)) + "-" + strconv.Itoa(len(parts))
 }
