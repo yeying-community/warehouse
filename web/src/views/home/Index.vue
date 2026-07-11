@@ -1585,7 +1585,11 @@ async function submitS3Credential() {
   }
   s3CredentialSubmitting.value = true
   try {
-    s3CredentialCreateResult.value = await s3CredentialApi.create(name)
+    s3CredentialCreateResult.value = await s3CredentialApi.create({
+      name,
+      rootPath: '/personal',
+      permissions: ['read', 'create', 'update', 'delete']
+    })
     await fetchS3Credentials()
     showSuccess('S3 凭证已创建，请立即保存 Secret')
   } catch (error: any) {
@@ -5873,6 +5877,8 @@ onBeforeUnmount(() => {
                   <el-table-column prop="accessKeyId" label="Access Key ID" min-width="230">
                     <template #default="{ row }"><span class="mono">{{ row.accessKeyId }}</span></template>
                   </el-table-column>
+                  <el-table-column prop="rootPath" label="目录范围" min-width="140" />
+                  <el-table-column prop="permissions" label="权限" min-width="220" />
                   <el-table-column label="状态" width="100">
                     <template #default="{ row }">
                       <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag>

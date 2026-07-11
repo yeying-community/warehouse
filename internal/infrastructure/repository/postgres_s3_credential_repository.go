@@ -58,11 +58,11 @@ func (r *PostgresS3CredentialRepository) Create(ctx context.Context, credential 
 	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO s3_credentials (
 			id, owner_user_id, name, access_key_id, secret_ciphertext,
-			secret_key_version, status, expires_at, last_used_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			secret_key_version, root_path, permissions, status, expires_at, last_used_at, created_at, updated_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 	`, credential.ID, credential.OwnerUserID, credential.Name, credential.AccessKeyID,
-		ciphertext, credential.SecretKeyVersion, credential.Status, credential.ExpiresAt,
-		credential.LastUsedAt, credential.CreatedAt, credential.UpdatedAt)
+		ciphertext, credential.SecretKeyVersion, credential.RootPath, credential.Permissions, credential.Status,
+		credential.ExpiresAt, credential.LastUsedAt, credential.CreatedAt, credential.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("create s3 credential: %w", err)
 	}
@@ -72,7 +72,7 @@ func (r *PostgresS3CredentialRepository) Create(ctx context.Context, credential 
 func (r *PostgresS3CredentialRepository) ListByOwner(ctx context.Context, ownerUserID string) ([]*s3credential.Credential, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, owner_user_id, name, access_key_id, secret_ciphertext,
-			secret_key_version, status, expires_at, last_used_at, created_at, updated_at
+			secret_key_version, root_path, permissions, status, expires_at, last_used_at, created_at, updated_at
 		FROM s3_credentials WHERE owner_user_id = $1 ORDER BY created_at DESC
 	`, ownerUserID)
 	if err != nil {
@@ -85,7 +85,7 @@ func (r *PostgresS3CredentialRepository) ListByOwner(ctx context.Context, ownerU
 func (r *PostgresS3CredentialRepository) FindByAccessKeyID(ctx context.Context, accessKeyID string) (*s3credential.Credential, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, owner_user_id, name, access_key_id, secret_ciphertext,
-			secret_key_version, status, expires_at, last_used_at, created_at, updated_at
+			secret_key_version, root_path, permissions, status, expires_at, last_used_at, created_at, updated_at
 		FROM s3_credentials WHERE access_key_id = $1
 	`, accessKeyID)
 	credential, err := r.scanRow(row)
@@ -148,7 +148,7 @@ func (r *PostgresS3CredentialRepository) scanRow(scanner s3CredentialScanner) (*
 	var expiresAt, lastUsedAt sql.NullTime
 	item := &s3credential.Credential{}
 	if err := scanner.Scan(&item.ID, &item.OwnerUserID, &item.Name, &item.AccessKeyID,
-		&ciphertext, &item.SecretKeyVersion, &item.Status, &expiresAt, &lastUsedAt,
+		&ciphertext, &item.SecretKeyVersion, &item.RootPath, &item.Permissions, &item.Status, &expiresAt, &lastUsedAt,
 		&item.CreatedAt, &item.UpdatedAt); err != nil {
 		return nil, err
 	}

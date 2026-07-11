@@ -132,8 +132,20 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 		return
 	}
 	userDirectory := owner.Directory
+	requestedPath := "/" + bucket
+	if key != "" {
+		requestedPath += "/" + key
+	}
+	if !s.pathAllowed(credential.RootPath, requestedPath) {
+		s.writeError(w, http.StatusForbidden, "AccessDenied", "credential is not bound to this path")
+		return
+	}
 	switch req.Method {
 	case http.MethodGet:
+		if !hasS3Permission(credential.Permissions, "read") {
+			s.writeError(w, http.StatusForbidden, "AccessDenied", "read permission is required")
+			return
+		}
 		if key == "" {
 			s.handleList(w, req.Context(), userDirectory, bucket, req.URL.Query().Get("prefix"))
 			return
@@ -147,6 +159,10 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 		setObjectHeaders(w, info)
 		_, _ = io.Copy(w, file)
 	case http.MethodHead:
+		if !hasS3Permission(credential.Permissions, "read") {
+			s.writeError(w, http.StatusForbidden, "AccessDenied", "read permission is required")
+			return
+		}
 		info, err := s.objects.Stat(req.Context(), userDirectory, bucket, key)
 		if err != nil {
 			s.writeObjectError(w, err)
@@ -154,6 +170,14 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 		}
 		setObjectHeaders(w, info)
 	case http.MethodPut:
+		permission := "create"
+		if _, statErr := s.objects.Stat(req.Context(), userDirectory, bucket, key); statErr == nil {
+			permission = "update"
+		}
+		if !hasS3Permission(credential.Permissions, permission) {
+			s.writeError(w, http.StatusForbidden, "AccessDenied", permission+" permission is required")
+			return
+		}
 		if key == "" {
 			if err := s.objects.EnsureBucket(req.Context(), userDirectory, bucket); err != nil {
 				s.writeObjectError(w, err)
@@ -170,6 +194,10 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 		w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 		w.WriteHeader(http.StatusOK)
 	case http.MethodDelete:
+		if !hasS3Permission(credential.Permissions, "delete") {
+			s.writeError(w, http.StatusForbidden, "AccessDenied", "delete permission is required")
+			return
+		}
 		if err := s.objects.Delete(req.Context(), userDirectory, bucket, key); err != nil {
 			s.writeObjectError(w, err)
 			return
@@ -178,6 +206,21 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 	default:
 		s.writeError(w, http.StatusNotImplemented, "NotImplemented", "operation is not implemented")
 	}
+}
+
+func hasS3Permission(value, permission string) bool {
+	for _, item := range strings.Split(value, ",") {
+		if strings.TrimSpace(item) == permission {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) pathAllowed(rootPath, requestedPath string) bool {
+	rootPath = path.Clean("/" + strings.TrimSpace(rootPath))
+	requestedPath = path.Clean("/" + strings.TrimSpace(requestedPath))
+	return rootPath == "/" || requestedPath == rootPath || strings.HasPrefix(requestedPath, rootPath+"/")
 }
 
 type listBucketResult struct {

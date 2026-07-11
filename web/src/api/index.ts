@@ -380,6 +380,8 @@ export interface S3CredentialItem {
   id: string
   name: string
   accessKeyId: string
+  rootPath: string
+  permissions: string
   status: 'active' | 'revoked' | string
   createdAt: string
 }
@@ -387,6 +389,12 @@ export interface S3CredentialItem {
 export interface CreateS3CredentialResult extends S3CredentialItem {
   secret: string
   warning?: string
+}
+
+export interface CreateS3CredentialPayload {
+  name: string
+  rootPath: string
+  permissions: string[]
 }
 
 // 分享 API
@@ -440,7 +448,7 @@ export const directShareApi = {
   }) {
     return request<DirectShareItem>('/api/v1/public/share/user/create', {
       method: 'POST',
-      body: payload
+      body: payload as unknown as Record<string, unknown>
     })
   },
 
@@ -506,10 +514,10 @@ export const s3CredentialApi = {
   list() {
     return request<{ items: S3CredentialItem[] }>('/api/v1/public/s3/credentials/list')
   },
-  create(name: string) {
+  create(payload: CreateS3CredentialPayload) {
     return request<CreateS3CredentialResult>('/api/v1/public/s3/credentials/create', {
       method: 'POST',
-      body: { name }
+      body: payload as unknown as Record<string, unknown>
     })
   },
   revoke(id: string) {

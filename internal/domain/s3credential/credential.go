@@ -25,6 +25,8 @@ type Credential struct {
 	AccessKeyID      string
 	Secret           string
 	SecretKeyVersion int
+	RootPath         string
+	Permissions      string
 	Status           string
 	ExpiresAt        *time.Time
 	LastUsedAt       *time.Time
