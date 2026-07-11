@@ -271,7 +271,7 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, req *http.Request, cred
 		s.writeError(w, http.StatusBadRequest, "InvalidPart", "invalid part number")
 		return
 	}
-	part, err := s.multipart.UploadPart(req.Context(), owner, uploadID, partNumber, req.Body)
+	part, err := s.multipart.UploadPart(req.Context(), owner, uploadID, partNumber, req.Header.Get("x-amz-checksum-sha256"), req.Body)
 	if err != nil {
 		s.writeObjectError(w, err)
 		return

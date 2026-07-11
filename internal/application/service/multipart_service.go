@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -69,7 +70,7 @@ func (s *MultipartService) Create(ctx context.Context, owner *user.User, bucket,
 	return item, nil
 }
 
-func (s *MultipartService) UploadPart(ctx context.Context, owner *user.User, uploadID string, partNumber int, src io.Reader) (*s3multipart.Part, error) {
+func (s *MultipartService) UploadPart(ctx context.Context, owner *user.User, uploadID string, partNumber int, expectedChecksum string, src io.Reader) (*s3multipart.Part, error) {
 	if owner == nil || s.repo == nil {
 		return nil, fmt.Errorf("multipart service is not configured")
 	}
@@ -107,6 +108,13 @@ func (s *MultipartService) UploadPart(ctx context.Context, owner *user.User, upl
 	if size > maxMultipartPartSize {
 		_ = os.Remove(tmpPath)
 		return nil, fmt.Errorf("multipart part exceeds 5 GiB limit")
+	}
+	if expectedChecksum != "" {
+		decoded, err := base64.StdEncoding.DecodeString(expectedChecksum)
+		if err != nil || hex.EncodeToString(decoded) != hex.EncodeToString(shaHash.Sum(nil)) {
+			_ = os.Remove(tmpPath)
+			return nil, fmt.Errorf("checksum mismatch")
+		}
 	}
 	existing, err := s.repo.ListParts(ctx, uploadID)
 	if err != nil {
