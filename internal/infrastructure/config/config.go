@@ -11,6 +11,7 @@ type Config struct {
 	Node        NodeConfig        `yaml:"node"`
 	Replication ReplicationConfig `yaml:"replication"`
 	Quota       QuotaConfig       `yaml:"quota"`
+	S3          S3Config          `yaml:"s3"`
 	WebDAV      WebDAVConfig      `yaml:"webdav"`
 	Web3        Web3Config        `yaml:"web3"`
 	Email       EmailConfig       `yaml:"email"`
@@ -70,6 +71,23 @@ type ReplicationConfig struct {
 type QuotaConfig struct {
 	AutoReconcileEnabled  bool          `yaml:"auto_reconcile_enabled"`
 	AutoReconcileInterval time.Duration `yaml:"auto_reconcile_interval"`
+}
+
+// S3Config controls the optional S3-compatible endpoint. Values in the YAML
+// file are loaded first; WAREHOUSE_S3_* environment variables override them.
+type S3Config struct {
+	Enabled             bool          `yaml:"enabled"`
+	Address             string        `yaml:"address"`
+	Port                int           `yaml:"port"`
+	TLS                 bool          `yaml:"tls"`
+	CertFile            string        `yaml:"cert_file"`
+	KeyFile             string        `yaml:"key_file"`
+	Region              string        `yaml:"region"`
+	ReadTimeout         time.Duration `yaml:"read_timeout"`
+	WriteTimeout        time.Duration `yaml:"write_timeout"`
+	IdleTimeout         time.Duration `yaml:"idle_timeout"`
+	ShutdownTimeout     time.Duration `yaml:"shutdown_timeout"`
+	CredentialMasterKey string        `yaml:"-"`
 }
 
 // WebDAVConfig WebDAV 配置
@@ -199,6 +217,16 @@ func DefaultConfig() *Config {
 		Quota: QuotaConfig{
 			AutoReconcileEnabled:  false,
 			AutoReconcileInterval: 6 * time.Hour,
+		},
+		S3: S3Config{
+			Enabled:         false,
+			Address:         "127.0.0.1",
+			Port:            6066,
+			Region:          "us-east-1",
+			ReadTimeout:     5 * time.Minute,
+			WriteTimeout:    5 * time.Minute,
+			IdleTimeout:     60 * time.Second,
+			ShutdownTimeout: 10 * time.Second,
 		},
 		WebDAV: WebDAVConfig{
 			Prefix:              "/dav",

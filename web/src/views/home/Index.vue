@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { ArrowLeft, ArrowUp, Delete, Expand, Fold, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User, Lock, Unlock } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { getSupportedCipherSuites, type CipherSuiteInfo } from '@yeying-community/web3-bs'
-import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type AdminUserItem } from '@/api'
+import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, s3CredentialApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type S3CredentialItem, type CreateS3CredentialResult, type AdminUserItem } from '@/api'
 import { AUTH_CHANGED_EVENT, isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, loginWithPassword, sendEmailCode, loginWithEmailCode, getAccountHistory, watchWalletAccounts, watchWalletProvider } from '@/plugins/auth'
 import { decryptBlobContent, encryptFileContent, encryptTextContent } from '@/utils/crypto'
 import {
@@ -152,6 +152,12 @@ const accessKeyScopeLocked = ref(false)
 const accessKeyBindTargetID = ref('')
 const accessKeys = ref<WebDAVAccessKeyItem[]>([])
 const accessKeyCreateResult = ref<CreateWebDAVAccessKeyResult | null>(null)
+const s3CredentialLoading = ref(false)
+const s3CredentialSubmitting = ref(false)
+const s3CredentialDialogVisible = ref(false)
+const s3Credentials = ref<S3CredentialItem[]>([])
+const s3CredentialCreateResult = ref<CreateS3CredentialResult | null>(null)
+const s3CredentialName = ref('')
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const groupStore = useGroupStore()
 const { groupLoading, managedGroups, activeGroupMembers } = storeToRefs(groupStore)
@@ -1548,6 +1554,60 @@ async function fetchAccessKeys(withLoading = false) {
   }
 }
 
+async function fetchS3Credentials(withLoading = false) {
+  if (withLoading) s3CredentialLoading.value = true
+  try {
+    const data = await s3CredentialApi.list()
+    s3Credentials.value = Array.isArray(data.items) ? data.items : []
+  } catch (error) {
+    console.error('获取 S3 凭证失败:', error)
+    if (withLoading) showError('获取 S3 凭证失败')
+  } finally {
+    if (withLoading) s3CredentialLoading.value = false
+  }
+}
+
+function openS3CredentialDialog() {
+  s3CredentialName.value = ''
+  s3CredentialCreateResult.value = null
+  s3CredentialDialogVisible.value = true
+}
+
+async function submitS3Credential() {
+  const name = s3CredentialName.value.trim()
+  if (!name) {
+    showError('请输入 S3 凭证名称')
+    return
+  }
+  if (s3Credentials.value.some(item => item.name === name)) {
+    showError('凭证名称已存在，请更换名称')
+    return
+  }
+  s3CredentialSubmitting.value = true
+  try {
+    s3CredentialCreateResult.value = await s3CredentialApi.create(name)
+    await fetchS3Credentials()
+    showSuccess('S3 凭证已创建，请立即保存 Secret')
+  } catch (error: any) {
+    console.error('创建 S3 凭证失败:', error)
+    showError(error?.message || '创建 S3 凭证失败')
+  } finally {
+    s3CredentialSubmitting.value = false
+  }
+}
+
+async function revokeS3Credential(item: S3CredentialItem) {
+  if (item.status !== 'active') return
+  if (!(await confirmAction(`确定撤销 S3 凭证 ${item.name} 吗？`, '撤销 S3 凭证'))) return
+  try {
+    await s3CredentialApi.revoke(item.id)
+    await fetchS3Credentials()
+    showSuccess('S3 凭证已撤销')
+  } catch (error: any) {
+    showError(error?.message || '撤销 S3 凭证失败')
+  }
+}
+
 async function handleWalletLogin() {
   if (walletLoginSubmitting.value) {
     await focusPendingWalletApproval()
@@ -1789,7 +1849,7 @@ async function fetchUserCenter() {
   quotaManageLoading.value = true
   try {
     await fetchUserInfo()
-    const tasks: Array<Promise<unknown>> = [fetchQuota(), fetchAccessKeys()]
+    const tasks: Array<Promise<unknown>> = [fetchQuota(), fetchAccessKeys(), fetchS3Credentials()]
     if (managementSection.value === 'adminUsers' && canManageUsers.value) {
       tasks.push(fetchAdminUsers())
     }
@@ -5796,6 +5856,35 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
+              <div v-if="managementSection === 'keys'" class="user-card user-card-full s3-credential-card" v-loading="s3CredentialLoading">
+                <div class="card-head">
+                  <div>
+                    <div class="card-title">S3 凭证</div>
+                    <div class="card-subtitle">用于 mc、rclone、AWS CLI 等 S3 客户端</div>
+                  </div>
+                  <div class="user-actions">
+                    <el-button size="small" @click="fetchS3Credentials(true)">刷新</el-button>
+                    <el-button size="small" type="primary" @click="openS3CredentialDialog">新建 S3 凭证</el-button>
+                  </div>
+                </div>
+                <el-empty v-if="!s3Credentials.length && !s3CredentialLoading" description="暂无 S3 凭证" />
+                <el-table v-else :data="s3Credentials" size="small">
+                  <el-table-column prop="name" label="名称" min-width="160" />
+                  <el-table-column prop="accessKeyId" label="Access Key ID" min-width="230">
+                    <template #default="{ row }"><span class="mono">{{ row.accessKeyId }}</span></template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="100">
+                    <template #default="{ row }">
+                      <el-button text type="danger" size="small" :disabled="row.status !== 'active'" @click="revokeS3Credential(row)">撤销</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
               <div v-if="managementSection === 'group'" class="user-card user-card-full" v-loading="groupLoading && !manualRefresh">
                 <GroupView embedded @refresh="refreshCurrentView" />
               </div>
@@ -6156,6 +6245,31 @@ onBeforeUnmount(() => {
         <template #footer>
           <el-button @click="closeAccessKeyDialog">关闭</el-button>
           <el-button v-if="!accessKeyScopeLocked" type="primary" :loading="accessKeySubmitting" @click="submitAccessKey">创建密钥</el-button>
+        </template>
+      </el-dialog>
+      <el-dialog v-model="s3CredentialDialogVisible" title="新建 S3 凭证" width="560px">
+        <el-form label-position="top">
+          <el-form-item label="凭证名称">
+            <el-input v-model="s3CredentialName" placeholder="例如：本地 mc" :disabled="!!s3CredentialCreateResult" />
+          </el-form-item>
+        </el-form>
+        <div v-if="s3CredentialCreateResult" class="access-key-created">
+          <div class="access-key-created-title">创建成功，请立即保存以下凭据（Secret 仅显示一次）</div>
+          <div class="access-key-created-row">
+            <span class="access-key-created-label">Access Key ID</span>
+            <span class="access-key-created-value mono">{{ s3CredentialCreateResult.accessKeyId }}</span>
+            <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(s3CredentialCreateResult.accessKeyId, 'Access Key ID')">复制</el-button>
+          </div>
+          <div class="access-key-created-row">
+            <span class="access-key-created-label">Secret</span>
+            <span class="access-key-created-value mono">{{ s3CredentialCreateResult.secret }}</span>
+            <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(s3CredentialCreateResult.secret, 'Secret')">复制</el-button>
+          </div>
+          <div class="access-key-permission-help">关闭弹窗后 Secret 无法恢复，只能撤销凭证并重新创建。</div>
+        </div>
+        <template #footer>
+          <el-button @click="s3CredentialDialogVisible = false">关闭</el-button>
+          <el-button v-if="!s3CredentialCreateResult" type="primary" :loading="s3CredentialSubmitting" @click="submitS3Credential">创建凭证</el-button>
         </template>
       </el-dialog>
       <el-dialog

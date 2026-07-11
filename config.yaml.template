@@ -50,6 +50,25 @@ quota:
                                # 对账口径 = 用户目录实际文件大小 + recycle_items 中该用户回收站记录大小
                                # 建议：单机或小规模先用 6h；用户量较大时再按负载调大
 
+# S3-compatible endpoint
+# `s3.enabled` is the YAML default. If WAREHOUSE_S3_ENABLED is set, the
+# environment variable takes precedence over this value. Use the environment
+# variable for deployment-level overrides; do not set both to conflicting values.
+# The credential master key is intentionally environment-only and must remain
+# stable across restarts: WAREHOUSE_S3_CREDENTIAL_MASTER_KEY.
+s3:
+  enabled: false
+  address: "127.0.0.1"
+  port: 6066
+  tls: false
+  cert_file: ""
+  key_file: ""
+  region: "us-east-1"
+  read_timeout: 5m
+  write_timeout: 5m
+  idle_timeout: 60s
+  shutdown_timeout: 10s
+
 # WebDAV Configuration
 webdav:
   prefix: "/dav"

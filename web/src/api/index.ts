@@ -376,6 +376,19 @@ export interface CreateWebDAVAccessKeyResult extends WebDAVAccessKeyItem {
   keySecret: string
 }
 
+export interface S3CredentialItem {
+  id: string
+  name: string
+  accessKeyId: string
+  status: 'active' | 'revoked' | string
+  createdAt: string
+}
+
+export interface CreateS3CredentialResult extends S3CredentialItem {
+  secret: string
+  warning?: string
+}
+
 // 分享 API
 export const shareApi = {
   create(path: string, expiry?: {
@@ -485,6 +498,24 @@ export const webdavAccessKeyApi = {
     return request<{ message: string }>('/api/v1/public/webdav/access-keys/bind', {
       method: 'POST',
       body: { id, path }
+    })
+  }
+}
+
+export const s3CredentialApi = {
+  list() {
+    return request<{ items: S3CredentialItem[] }>('/api/v1/public/s3/credentials/list')
+  },
+  create(name: string) {
+    return request<CreateS3CredentialResult>('/api/v1/public/s3/credentials/create', {
+      method: 'POST',
+      body: { name }
+    })
+  },
+  revoke(id: string) {
+    return request<{ message?: string }>('/api/v1/public/s3/credentials/revoke', {
+      method: 'POST',
+      body: { id }
     })
   }
 }
