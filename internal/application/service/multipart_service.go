@@ -27,6 +27,10 @@ type MultipartService struct {
 	uploadLocks  sync.Map
 }
 
+type stagingQuotaRepository interface {
+	ReserveStaging(context.Context, string, int64, int64, int64) error
+}
+
 const (
 	minMultipartPartSize   int64 = 5 * 1024 * 1024
 	maxMultipartPartSize   int64 = 5 * 1024 * 1024 * 1024
@@ -121,18 +125,34 @@ func (s *MultipartService) UploadPart(ctx context.Context, owner *user.User, upl
 			_ = os.Remove(tmpPath)
 			return nil, err
 		}
-		if quotaInfo.Available >= 0 && staged-oldSize+size > quotaInfo.Available {
+		delta := size - oldSize
+		if quotaRepo, ok := s.repo.(stagingQuotaRepository); ok {
+			if err := quotaRepo.ReserveStaging(ctx, owner.ID, quotaInfo.Used, quotaInfo.Quota, delta); err != nil {
+				_ = os.Remove(tmpPath)
+				return nil, err
+			}
+		} else if quotaInfo.Available >= 0 && staged-oldSize+size > quotaInfo.Available {
 			_ = os.Remove(tmpPath)
 			return nil, fmt.Errorf("multipart staging quota exceeded")
 		}
 	}
 	if err := os.Rename(tmpPath, partPath); err != nil {
+		if quotaRepo, ok := s.repo.(stagingQuotaRepository); ok && s.quotaService != nil {
+			if info, quotaErr := s.quotaService.GetQuota(ctx, owner.ID); quotaErr == nil {
+				_ = quotaRepo.ReserveStaging(ctx, owner.ID, info.Used, info.Quota, -(size - oldSize))
+			}
+		}
 		_ = os.Remove(tmpPath)
 		return nil, err
 	}
 	now := time.Now()
 	part := &s3multipart.Part{UploadID: uploadID, PartNumber: partNumber, StagingPath: partPath, ETag: hex.EncodeToString(md5Hash.Sum(nil)), Size: size, ChecksumSHA256: hex.EncodeToString(shaHash.Sum(nil)), CreatedAt: now, UpdatedAt: now}
 	if err := s.repo.UpsertPart(ctx, part); err != nil {
+		if quotaRepo, ok := s.repo.(stagingQuotaRepository); ok && s.quotaService != nil {
+			if info, quotaErr := s.quotaService.GetQuota(ctx, owner.ID); quotaErr == nil {
+				_ = quotaRepo.ReserveStaging(ctx, owner.ID, info.Used, info.Quota, -(size - oldSize))
+			}
+		}
 		_ = os.Remove(partPath)
 		return nil, err
 	}
@@ -153,7 +173,26 @@ func (s *MultipartService) Abort(ctx context.Context, owner *user.User, uploadID
 	if err := s.repo.SetUploadStatus(ctx, uploadID, s3multipart.StatusAborted, nil); err != nil {
 		return err
 	}
+	s.releaseStaging(ctx, owner.ID, uploadID)
 	return os.RemoveAll(upload.StagingPath)
+}
+
+func (s *MultipartService) releaseStaging(ctx context.Context, userID, uploadID string) {
+	quotaRepo, ok := s.repo.(stagingQuotaRepository)
+	if !ok || s.quotaService == nil {
+		return
+	}
+	parts, err := s.repo.ListParts(ctx, uploadID)
+	if err != nil {
+		return
+	}
+	var total int64
+	for _, part := range parts {
+		total += part.Size
+	}
+	if info, err := s.quotaService.GetQuota(ctx, userID); err == nil {
+		_ = quotaRepo.ReserveStaging(ctx, userID, info.Used, info.Quota, -total)
+	}
 }
 
 func (s *MultipartService) CleanupExpired(ctx context.Context, now time.Time) (int, error) {
@@ -169,6 +208,7 @@ func (s *MultipartService) CleanupExpired(ctx context.Context, now time.Time) (i
 		if err := s.repo.SetUploadStatus(ctx, item.ID, s3multipart.StatusAborted, nil); err != nil {
 			return cleaned, err
 		}
+		s.releaseStaging(ctx, item.OwnerUserID, item.ID)
 		if err := os.RemoveAll(item.StagingPath); err != nil {
 			return cleaned, err
 		}
@@ -250,6 +290,7 @@ func (s *MultipartService) Complete(ctx context.Context, owner *user.User, uploa
 	if err := s.repo.SetUploadStatus(ctx, uploadID, s3multipart.StatusCompleted, &now); err != nil {
 		return nil, err
 	}
+	s.releaseStaging(ctx, owner.ID, uploadID)
 	if err := os.RemoveAll(upload.StagingPath); err != nil {
 		return nil, err
 	}

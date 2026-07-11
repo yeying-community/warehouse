@@ -21,6 +21,37 @@ type S3MultipartRepository interface {
 
 type PostgresS3MultipartRepository struct{ db *sql.DB }
 
+// ReserveStaging atomically reserves or releases temporary multipart bytes.
+// A positive delta is accepted only when formal and staged usage fit the quota.
+func (r *PostgresS3MultipartRepository) ReserveStaging(ctx context.Context, userID string, usedSpace, quota, delta int64) error {
+	if delta == 0 {
+		return nil
+	}
+	query := `
+		INSERT INTO s3_multipart_staging_usage (user_id, bytes, updated_at)
+		SELECT $1, $2, NOW()
+		WHERE $5 >= 0 AND ($3 = 0 OR $4 + $2 <= $3)
+		ON CONFLICT (user_id) DO UPDATE
+		SET bytes = s3_multipart_staging_usage.bytes + $5, updated_at = NOW()
+		WHERE s3_multipart_staging_usage.bytes + $5 >= 0
+		  AND ($3 = 0 OR $4 + s3_multipart_staging_usage.bytes + $5 <= $3)`
+	var initial int64
+	if delta > 0 {
+		initial = delta
+	}
+	result, err := r.db.ExecContext(ctx, query, userID, initial, quota, usedSpace, delta)
+	if err != nil {
+		return fmt.Errorf("reserve multipart staging: %w", err)
+	}
+	if n, err := result.RowsAffected(); err != nil || n == 0 {
+		if err != nil {
+			return fmt.Errorf("check multipart staging reservation: %w", err)
+		}
+		return fmt.Errorf("multipart staging quota exceeded")
+	}
+	return nil
+}
+
 func NewPostgresS3MultipartRepository(db *sql.DB) *PostgresS3MultipartRepository {
 	return &PostgresS3MultipartRepository{db: db}
 }

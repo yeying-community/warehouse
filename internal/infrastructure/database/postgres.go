@@ -155,6 +155,11 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			PRIMARY KEY (upload_id, part_number)
 		)`,
+		`CREATE TABLE IF NOT EXISTS s3_multipart_staging_usage (
+			user_id VARCHAR(50) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			bytes BIGINT NOT NULL DEFAULT 0 CHECK (bytes >= 0),
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+		)`,
 
 		// 创建回收站表
 		`CREATE TABLE IF NOT EXISTS recycle_items (
