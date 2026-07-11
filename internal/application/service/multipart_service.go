@@ -9,26 +9,38 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/yeying-community/warehouse/internal/domain/quota"
 	"github.com/yeying-community/warehouse/internal/domain/s3multipart"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/repository"
 )
 
 type MultipartService struct {
-	root    string
-	repo    repository.S3MultipartRepository
-	objects *ObjectService
+	root         string
+	repo         repository.S3MultipartRepository
+	objects      *ObjectService
+	quotaService quota.Service
+	uploadLocks  sync.Map
 }
 
 const (
-	minMultipartPartSize int64 = 5 * 1024 * 1024
-	maxMultipartPartSize int64 = 5 * 1024 * 1024 * 1024
+	minMultipartPartSize   int64 = 5 * 1024 * 1024
+	maxMultipartPartSize   int64 = 5 * 1024 * 1024 * 1024
+	maxMultipartObjectSize int64 = 100 * 1024 * 1024 * 1024
 )
 
-func (s *MultipartService) SetObjectService(objects *ObjectService) { s.objects = objects }
+func (s *MultipartService) SetObjectService(objects *ObjectService)    { s.objects = objects }
+func (s *MultipartService) SetQuotaService(quotaService quota.Service) { s.quotaService = quotaService }
+func (s *MultipartService) lockUpload(id string) func() {
+	value, _ := s.uploadLocks.LoadOrStore(id, &sync.Mutex{})
+	mutex := value.(*sync.Mutex)
+	mutex.Lock()
+	return mutex.Unlock
+}
 
 func NewMultipartService(root string, repo repository.S3MultipartRepository) *MultipartService {
 	return &MultipartService{root: filepath.Clean(root), repo: repo}
@@ -66,8 +78,11 @@ func (s *MultipartService) UploadPart(ctx context.Context, owner *user.User, upl
 	if upload.OwnerUserID != owner.ID || upload.Status != s3multipart.StatusActive || time.Now().After(upload.ExpiresAt) {
 		return nil, s3multipart.ErrNotFound
 	}
+	unlock := s.lockUpload(uploadID)
+	defer unlock()
 	partPath := filepath.Join(upload.StagingPath, fmt.Sprintf("part-%05d", partNumber))
-	file, err := os.OpenFile(partPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	tmpPath := partPath + ".tmp"
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -77,16 +92,43 @@ func (s *MultipartService) UploadPart(ctx context.Context, owner *user.User, upl
 	size, copyErr := io.Copy(io.MultiWriter(file, md5Hash, shaHash), limited)
 	closeErr := file.Close()
 	if copyErr != nil {
-		_ = os.Remove(partPath)
+		_ = os.Remove(tmpPath)
 		return nil, copyErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(partPath)
+		_ = os.Remove(tmpPath)
 		return nil, closeErr
 	}
 	if size > maxMultipartPartSize {
-		_ = os.Remove(partPath)
+		_ = os.Remove(tmpPath)
 		return nil, fmt.Errorf("multipart part exceeds 5 GiB limit")
+	}
+	existing, err := s.repo.ListParts(ctx, uploadID)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
+	}
+	var staged, oldSize int64
+	for _, item := range existing {
+		staged += item.Size
+		if item.PartNumber == partNumber {
+			oldSize = item.Size
+		}
+	}
+	if s.quotaService != nil {
+		quotaInfo, err := s.quotaService.GetQuota(ctx, owner.ID)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return nil, err
+		}
+		if quotaInfo.Available >= 0 && staged-oldSize+size > quotaInfo.Available {
+			_ = os.Remove(tmpPath)
+			return nil, fmt.Errorf("multipart staging quota exceeded")
+		}
+	}
+	if err := os.Rename(tmpPath, partPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, err
 	}
 	now := time.Now()
 	part := &s3multipart.Part{UploadID: uploadID, PartNumber: partNumber, StagingPath: partPath, ETag: hex.EncodeToString(md5Hash.Sum(nil)), Size: size, ChecksumSHA256: hex.EncodeToString(shaHash.Sum(nil)), CreatedAt: now, UpdatedAt: now}
@@ -170,6 +212,13 @@ func (s *MultipartService) Complete(ctx context.Context, owner *user.User, uploa
 	}
 	if len(parts) == 0 || len(parts) != len(requested) {
 		return nil, fmt.Errorf("invalid multipart part list")
+	}
+	var totalSize int64
+	for _, part := range parts {
+		totalSize += part.Size
+		if totalSize > maxMultipartObjectSize {
+			return nil, fmt.Errorf("multipart object exceeds 100 GiB limit")
+		}
 	}
 	files := make([]*os.File, 0, len(parts))
 	readers := make([]io.Reader, 0, len(parts))
