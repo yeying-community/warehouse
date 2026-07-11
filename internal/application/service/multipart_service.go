@@ -113,7 +113,7 @@ func (s *MultipartService) UploadPart(ctx context.Context, owner *user.User, upl
 		decoded, err := base64.StdEncoding.DecodeString(expectedChecksum)
 		if err != nil || hex.EncodeToString(decoded) != hex.EncodeToString(shaHash.Sum(nil)) {
 			_ = os.Remove(tmpPath)
-			return nil, fmt.Errorf("checksum mismatch")
+			return nil, s3multipart.ErrChecksumMismatch
 		}
 	}
 	existing, err := s.repo.ListParts(ctx, uploadID)

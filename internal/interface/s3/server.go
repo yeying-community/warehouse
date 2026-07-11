@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/s3credential"
+	"github.com/yeying-community/warehouse/internal/domain/s3multipart"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
 	"go.uber.org/zap"
@@ -452,6 +454,10 @@ func setObjectHeaders(w http.ResponseWriter, info service.ObjectInfo) {
 }
 
 func (s *Server) writeObjectError(w http.ResponseWriter, err error) {
+	if errors.Is(err, s3multipart.ErrChecksumMismatch) {
+		s.writeError(w, http.StatusBadRequest, "BadDigest", "the provided checksum does not match the object")
+		return
+	}
 	if os.IsNotExist(err) {
 		s.writeError(w, http.StatusNotFound, "NoSuchKey", "object not found")
 		return
