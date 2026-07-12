@@ -160,6 +160,15 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 			bytes BIGINT NOT NULL DEFAULT 0 CHECK (bytes >= 0),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS s3_object_metadata (
+			user_directory TEXT NOT NULL,
+			bucket VARCHAR(63) NOT NULL,
+			object_key TEXT NOT NULL,
+			etag VARCHAR(255) NOT NULL,
+			content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (user_directory, bucket, object_key)
+		)`,
 
 		// 创建回收站表
 		`CREATE TABLE IF NOT EXISTS recycle_items (

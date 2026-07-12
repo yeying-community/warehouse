@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yeying-community/warehouse/internal/domain/user"
 )
 
 func TestObjectServicePutListOpenDelete(t *testing.T) {
@@ -62,4 +64,97 @@ func TestObjectServiceListReturnsPrefixes(t *testing.T) {
 	if len(listed.Prefixes) != 1 || listed.Prefixes[0] != "docs/" {
 		t.Fatalf("unexpected prefixes: %+v", listed.Prefixes)
 	}
+}
+
+func TestObjectServiceListDoesNotInventObjectsForMissingPrefix(t *testing.T) {
+	root := t.TempDir()
+	svc := NewObjectService(root)
+	ctx := context.Background()
+	if _, err := svc.Put(ctx, "alice", "personal", "other/file.txt", strings.NewReader("hello")); err != nil {
+		t.Fatalf("put object: %v", err)
+	}
+	listed, err := svc.List(ctx, "alice", "personal", "missing/", '/')
+	if err != nil {
+		t.Fatalf("list objects: %v", err)
+	}
+	if len(listed.Objects) != 0 || len(listed.Prefixes) != 0 {
+		t.Fatalf("unexpected list result for missing prefix: %+v", listed)
+	}
+}
+
+func TestObjectServicePersistsAndReadsMetadata(t *testing.T) {
+	root := t.TempDir()
+	svc := NewObjectService(root)
+	repo := &testObjectMetadataRepo{items: make(map[string]ObjectMetadata)}
+	svc.SetMetadataRepository(repo)
+	owner := &user.User{Username: "alice", Directory: "alice"}
+	ctx := context.Background()
+
+	info, err := svc.PutForUserWithOptions(ctx, owner, "personal", "docs/report.bin", strings.NewReader("hello"), ObjectWriteOptions{
+		ETag:        "custom-etag",
+		ContentType: "application/custom",
+	})
+	if err != nil {
+		t.Fatalf("put object with metadata: %v", err)
+	}
+	if info.ETag != "custom-etag" || info.ContentType != "application/custom" {
+		t.Fatalf("unexpected info: %+v", info)
+	}
+
+	stat, err := svc.Stat(ctx, "alice", "personal", "docs/report.bin")
+	if err != nil {
+		t.Fatalf("stat object: %v", err)
+	}
+	if stat.ETag != "custom-etag" || stat.ContentType != "application/custom" {
+		t.Fatalf("unexpected stat: %+v", stat)
+	}
+
+	if err := svc.DeleteForUser(ctx, owner, "personal", "docs/report.bin"); err != nil {
+		t.Fatalf("delete object: %v", err)
+	}
+	if _, ok := repo.items["alice|personal|docs/report.bin"]; ok {
+		t.Fatal("expected metadata to be deleted")
+	}
+}
+
+type testObjectMetadataRepo struct {
+	items map[string]ObjectMetadata
+}
+
+func (r *testObjectMetadataRepo) Upsert(_ context.Context, userDirectory, bucket, key string, metadata ObjectMetadata) error {
+	r.items[r.key(userDirectory, bucket, key)] = metadata
+	return nil
+}
+
+func (r *testObjectMetadataRepo) Find(_ context.Context, userDirectory, bucket, key string) (*ObjectMetadata, error) {
+	item, ok := r.items[r.key(userDirectory, bucket, key)]
+	if !ok {
+		return nil, nil
+	}
+	copy := item
+	return &copy, nil
+}
+
+func (r *testObjectMetadataRepo) Delete(_ context.Context, userDirectory, bucket, key string) error {
+	delete(r.items, r.key(userDirectory, bucket, key))
+	return nil
+}
+
+func (r *testObjectMetadataRepo) ListByPrefix(_ context.Context, userDirectory, bucket, prefix string) (map[string]ObjectMetadata, error) {
+	result := make(map[string]ObjectMetadata)
+	for composite, item := range r.items {
+		parts := strings.SplitN(composite, "|", 4)
+		if len(parts) != 4 || parts[0] != userDirectory || parts[1] != bucket {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(parts[3], prefix) {
+			continue
+		}
+		result[parts[3]] = item
+	}
+	return result, nil
+}
+
+func (r *testObjectMetadataRepo) key(userDirectory, bucket, key string) string {
+	return userDirectory + "|" + bucket + "|" + key
 }
