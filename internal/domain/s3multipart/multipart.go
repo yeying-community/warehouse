@@ -6,6 +6,7 @@ import (
 )
 
 var ErrNotFound = errors.New("multipart upload not found")
+var ErrChecksumMismatch = errors.New("multipart checksum mismatch")
 
 const (
 	StatusActive    = "active"

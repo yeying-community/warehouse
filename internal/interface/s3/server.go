@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/s3credential"
+	"github.com/yeying-community/warehouse/internal/domain/s3multipart"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
 	"go.uber.org/zap"
@@ -107,12 +110,16 @@ func (s *Server) authenticate(req *http.Request) (*s3credential.Credential, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, err := VerifyHeaderSignature(req, credential.Secret, SignatureV4Config{
+	result, err := VerifyHeaderSignature(req, credential.Secret, SignatureV4Config{
 		Region:               s.config.Region,
 		Service:              "s3",
 		AllowUnsignedPayload: req.TLS != nil,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
+	}
+	if strings.HasPrefix(result.PayloadHash, "STREAMING-") {
+		req.Body = io.NopCloser(newAWSChunkedReader(req.Body, result.SigningKey, req.Header.Get("X-Amz-Date"), result.ScopeDate+"/"+result.Region+"/"+result.Service+"/aws4_request", result.Signature))
 	}
 	return credential, nil
 }
@@ -271,7 +278,7 @@ func (s *Server) handleUploadPart(w http.ResponseWriter, req *http.Request, cred
 		s.writeError(w, http.StatusBadRequest, "InvalidPart", "invalid part number")
 		return
 	}
-	part, err := s.multipart.UploadPart(req.Context(), owner, uploadID, partNumber, req.Body)
+	part, err := s.multipart.UploadPart(req.Context(), owner, uploadID, partNumber, req.Header.Get("x-amz-checksum-sha256"), req.Body)
 	if err != nil {
 		s.writeObjectError(w, err)
 		return
@@ -452,6 +459,10 @@ func setObjectHeaders(w http.ResponseWriter, info service.ObjectInfo) {
 }
 
 func (s *Server) writeObjectError(w http.ResponseWriter, err error) {
+	if errors.Is(err, s3multipart.ErrChecksumMismatch) {
+		s.writeError(w, http.StatusBadRequest, "BadDigest", "the provided checksum does not match the object")
+		return
+	}
 	if os.IsNotExist(err) {
 		s.writeError(w, http.StatusNotFound, "NoSuchKey", "object not found")
 		return

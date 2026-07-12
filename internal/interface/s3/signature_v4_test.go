@@ -142,13 +142,9 @@ func TestVerifyHeaderSignatureRejectsMissingSignedHeader(t *testing.T) {
 	}
 }
 
-func TestVerifyHeaderSignatureRejectsStreamingPayload(t *testing.T) {
-	req := newSignedGetRequest(t)
-	req.Header.Set("X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD")
-
-	_, err := VerifyHeaderSignature(req, testSecretKey, testSignatureConfig())
-	if !errors.Is(err, ErrUnsupportedPayloadHash) {
-		t.Fatalf("expected unsupported payload hash, got %v", err)
+func TestValidatePayloadHashAcceptsAWSStreamingPayload(t *testing.T) {
+	if err := validatePayloadHash("STREAMING-AWS4-HMAC-SHA256-PAYLOAD", false); err != nil {
+		t.Fatalf("expected aws streaming payload to be accepted, got %v", err)
 	}
 }
 

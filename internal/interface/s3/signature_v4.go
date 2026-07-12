@@ -56,6 +56,8 @@ type SignatureV4Result struct {
 	RequestTime      time.Time
 	CanonicalRequest string
 	StringToSign     string
+	Signature        string
+	SigningKey       []byte
 }
 
 type parsedAuthorization struct {
@@ -156,7 +158,16 @@ func VerifyHeaderSignature(req *http.Request, secret string, cfg SignatureV4Conf
 		RequestTime:      requestTime,
 		CanonicalRequest: canonicalRequest,
 		StringToSign:     stringToSign,
+		Signature:        authorization.signature,
+		SigningKey:       deriveSigningKey(secret, authorization.scopeDate, authorization.region, authorization.service),
 	}, nil
+}
+
+func deriveSigningKey(secret, date, region, service string) []byte {
+	kDate := hmacSHA256([]byte("AWS4"+secret), date)
+	kRegion := hmacSHA256(kDate, region)
+	kService := hmacSHA256(kRegion, service)
+	return hmacSHA256(kService, signatureV4Terminator)
 }
 
 func normalizeSignatureV4Config(cfg SignatureV4Config) SignatureV4Config {
@@ -297,6 +308,9 @@ func validatePayloadHash(payloadHash string, allowUnsigned bool) error {
 		return nil
 	}
 	if strings.HasPrefix(payloadHash, "STREAMING-") {
+		if payloadHash == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+			return nil
+		}
 		return fmt.Errorf("%w: %s", ErrUnsupportedPayloadHash, payloadHash)
 	}
 	if len(payloadHash) != sha256.Size*2 {

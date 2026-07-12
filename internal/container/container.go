@@ -233,13 +233,14 @@ func (c *Container) initRepositories() error {
 func (c *Container) initServices() error {
 	c.AssetSpaceManager = assetspace.NewManager(c.Config, c.Logger)
 	c.ObjectService = service.NewObjectService(c.Config.WebDAV.Directory)
-	c.ObjectService.SetGuards(c.QuotaService, c.UserRepository, c.MutationRecorder)
-	c.MultipartService = service.NewMultipartService(c.Config.WebDAV.Directory, c.S3MultipartRepo)
-	c.MultipartService.SetObjectService(c.ObjectService)
 	c.PeerResolver = service.NewReplicationPeerResolver(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo)
 	c.NodeHeartbeat = service.NewNodeHeartbeatRegistrar(c.Config, c.ClusterNodeRepo, c.Logger)
 	c.AssignmentAllocator = service.NewReplicationAssignmentAllocator(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo, c.Logger)
 	c.MutationRecorder = service.NewMutationRecorder(c.Config, c.ReplicationOutboxRepo, c.PeerResolver, c.Logger)
+	c.ObjectService.SetGuards(c.QuotaService, c.UserRepository, c.MutationRecorder)
+	c.MultipartService = service.NewMultipartService(c.Config.WebDAV.Directory, c.S3MultipartRepo)
+	c.MultipartService.SetObjectService(c.ObjectService)
+	c.MultipartService.SetQuotaService(c.QuotaService)
 	c.ReplicationWorker = service.NewReplicationWorker(c.Config, c.ReplicationOutboxRepo, c.PeerResolver, c.Logger)
 	reconcileScanner, err := service.NewReconcileScanner(c.Config.WebDAV.Directory)
 	if err != nil {
