@@ -43,6 +43,7 @@ type Container struct {
 	WebDAVAccessKeyRepo   repository.WebDAVAccessKeyRepository
 	S3CredentialRepo      repository.S3CredentialRepository
 	S3MultipartRepo       repository.S3MultipartRepository
+	S3ObjectMetadataRepo  repository.S3ObjectMetadataRepository
 	NotificationRepo      repository.NotificationRepository
 	ReplicationOutboxRepo repository.ReplicationOutboxRepository
 	ReplicationOffsetRepo repository.ReplicationOffsetRepository
@@ -100,6 +101,65 @@ type Container struct {
 	Router   *http.Router
 	Server   *http.Server
 	S3Server *s3.Server
+}
+
+type s3ObjectMetadataRepoAdapter struct {
+	repo repository.S3ObjectMetadataRepository
+}
+
+func (a s3ObjectMetadataRepoAdapter) Upsert(ctx context.Context, userDirectory, bucket, key string, metadata service.ObjectMetadata) error {
+	if a.repo == nil {
+		return nil
+	}
+	return a.repo.Upsert(ctx, &repository.S3ObjectMetadata{
+		UserDirectory: userDirectory,
+		Bucket:        bucket,
+		ObjectKey:     key,
+		ETag:          metadata.ETag,
+		ContentType:   metadata.ContentType,
+		UpdatedAt:     metadata.UpdatedAt,
+	})
+}
+
+func (a s3ObjectMetadataRepoAdapter) Find(ctx context.Context, userDirectory, bucket, key string) (*service.ObjectMetadata, error) {
+	if a.repo == nil {
+		return nil, nil
+	}
+	item, err := a.repo.Find(ctx, userDirectory, bucket, key)
+	if err != nil || item == nil {
+		return nil, err
+	}
+	return &service.ObjectMetadata{
+		ETag:        item.ETag,
+		ContentType: item.ContentType,
+		UpdatedAt:   item.UpdatedAt,
+	}, nil
+}
+
+func (a s3ObjectMetadataRepoAdapter) Delete(ctx context.Context, userDirectory, bucket, key string) error {
+	if a.repo == nil {
+		return nil
+	}
+	return a.repo.Delete(ctx, userDirectory, bucket, key)
+}
+
+func (a s3ObjectMetadataRepoAdapter) ListByPrefix(ctx context.Context, userDirectory, bucket, prefix string) (map[string]service.ObjectMetadata, error) {
+	if a.repo == nil {
+		return nil, nil
+	}
+	items, err := a.repo.ListByPrefix(ctx, userDirectory, bucket, prefix)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]service.ObjectMetadata, len(items))
+	for key, item := range items {
+		result[key] = service.ObjectMetadata{
+			ETag:        item.ETag,
+			ContentType: item.ContentType,
+			UpdatedAt:   item.UpdatedAt,
+		}
+	}
+	return result, nil
 }
 
 // NewContainer 创建容器
@@ -206,6 +266,7 @@ func (c *Container) initRepositories() error {
 	// WebDAV 访问密钥仓储
 	c.WebDAVAccessKeyRepo = repository.NewPostgresWebDAVAccessKeyRepository(c.DB.DB)
 	c.S3MultipartRepo = repository.NewPostgresS3MultipartRepository(c.DB.DB)
+	c.S3ObjectMetadataRepo = repository.NewPostgresS3ObjectMetadataRepository(c.DB.DB)
 	if c.Config.S3.Enabled {
 		secretBox, err := infraCrypto.NewSecretBoxBase64(c.Config.S3.CredentialMasterKey)
 		if err != nil {
@@ -233,6 +294,7 @@ func (c *Container) initRepositories() error {
 func (c *Container) initServices() error {
 	c.AssetSpaceManager = assetspace.NewManager(c.Config, c.Logger)
 	c.ObjectService = service.NewObjectService(c.Config.WebDAV.Directory)
+	c.ObjectService.SetMetadataRepository(s3ObjectMetadataRepoAdapter{repo: c.S3ObjectMetadataRepo})
 	c.PeerResolver = service.NewReplicationPeerResolver(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo)
 	c.NodeHeartbeat = service.NewNodeHeartbeatRegistrar(c.Config, c.ClusterNodeRepo, c.Logger)
 	c.AssignmentAllocator = service.NewReplicationAssignmentAllocator(c.Config, c.ClusterNodeRepo, c.ClusterAssignmentRepo, c.Logger)

@@ -35,6 +35,20 @@ type ObjectInfo struct {
 	IsPrefix    bool
 }
 
+type ObjectWriteOptions struct {
+	ExpectedMD5    string
+	ExpectedSHA256 string
+	ExpectedCRC32  string
+	ETag           string
+	ContentType    string
+}
+
+type ObjectMetadata struct {
+	ETag        string
+	ContentType string
+	UpdatedAt   time.Time
+}
+
 type ObjectList struct {
 	Objects  []ObjectInfo
 	Prefixes []string
@@ -46,12 +60,20 @@ type ObjectService struct {
 	quotaService     quota.Service
 	userRepo         user.Repository
 	mutationRecorder MutationRecorder
+	metadataRepo     objectMetadataRepository
 	locks            sync.Map
 }
 
 type quotaReserveRepository interface {
 	ReserveUsedSpaceDelta(context.Context, string, int64) (int64, error)
 	ReleaseUsedSpaceDelta(context.Context, string, int64) error
+}
+
+type objectMetadataRepository interface {
+	Upsert(context.Context, string, string, string, ObjectMetadata) error
+	Find(context.Context, string, string, string) (*ObjectMetadata, error)
+	Delete(context.Context, string, string, string) error
+	ListByPrefix(context.Context, string, string, string) (map[string]ObjectMetadata, error)
 }
 
 func (s *ObjectService) lockPath(path string) func() {
@@ -71,11 +93,27 @@ func (s *ObjectService) SetGuards(quotaService quota.Service, userRepo user.Repo
 	s.mutationRecorder = mutationRecorder
 }
 
+func (s *ObjectService) SetMetadataRepository(repo objectMetadataRepository) {
+	s.metadataRepo = repo
+}
+
 func (s *ObjectService) PutForUser(ctx context.Context, owner *user.User, bucket, key string, src io.Reader) (ObjectInfo, error) {
-	return s.PutForUserChecked(ctx, owner, bucket, key, src, "", "", "")
+	return s.putForUserWithOptions(ctx, owner, bucket, key, src, ObjectWriteOptions{})
 }
 
 func (s *ObjectService) PutForUserChecked(ctx context.Context, owner *user.User, bucket, key string, src io.Reader, expectedMD5, expectedSHA256, expectedCRC32 string) (ObjectInfo, error) {
+	return s.putForUserWithOptions(ctx, owner, bucket, key, src, ObjectWriteOptions{
+		ExpectedMD5:    expectedMD5,
+		ExpectedSHA256: expectedSHA256,
+		ExpectedCRC32:  expectedCRC32,
+	})
+}
+
+func (s *ObjectService) PutForUserWithOptions(ctx context.Context, owner *user.User, bucket, key string, src io.Reader, options ObjectWriteOptions) (ObjectInfo, error) {
+	return s.putForUserWithOptions(ctx, owner, bucket, key, src, options)
+}
+
+func (s *ObjectService) putForUserWithOptions(ctx context.Context, owner *user.User, bucket, key string, src io.Reader, options ObjectWriteOptions) (ObjectInfo, error) {
 	if owner == nil {
 		return ObjectInfo{}, fmt.Errorf("user is nil")
 	}
@@ -107,7 +145,7 @@ func (s *ObjectService) PutForUserChecked(ctx context.Context, owner *user.User,
 		tmp.Abort()
 		return ObjectInfo{}, err
 	}
-	if err := validateChecksum(expectedMD5, md5Hash, expectedSHA256, sha256Hash, expectedCRC32, crc32Hash); err != nil {
+	if err := validateChecksum(options.ExpectedMD5, md5Hash, options.ExpectedSHA256, sha256Hash, options.ExpectedCRC32, crc32Hash); err != nil {
 		tmp.Abort()
 		return ObjectInfo{}, err
 	}
@@ -147,7 +185,21 @@ func (s *ObjectService) PutForUserChecked(ctx context.Context, owner *user.User,
 			return ObjectInfo{}, err
 		}
 	}
-	return s.statObject(bucket, key, fullPath)
+	metadata := ObjectMetadata{
+		ETag:        strings.TrimSpace(options.ETag),
+		ContentType: strings.TrimSpace(options.ContentType),
+		UpdatedAt:   time.Now(),
+	}
+	if metadata.ETag == "" {
+		metadata.ETag = hex.EncodeToString(md5Hash.Sum(nil))
+	}
+	if metadata.ContentType == "" {
+		metadata.ContentType = detectContentType(fullPath)
+	}
+	if err := s.upsertMetadata(ctx, owner.Directory, bucket, key, metadata); err != nil {
+		return ObjectInfo{}, err
+	}
+	return s.statObject(ctx, owner.Directory, bucket, key, fullPath, nil)
 }
 
 func validateChecksum(expectedMD5 string, md5Hash hash.Hash, expectedSHA256 string, sha256Hash hash.Hash, expectedCRC32 string, crc32Hash hash.Hash) error {
@@ -194,6 +246,9 @@ func (s *ObjectService) DeleteForUser(ctx context.Context, owner *user.User, buc
 	if err := os.Remove(fullPath); err != nil {
 		return err
 	}
+	if err := s.deleteMetadata(ctx, owner.Directory, bucket, key); err != nil {
+		return err
+	}
 	if s.userRepo != nil && info.Size() != 0 {
 		used, err := s.userRepo.UpdateUsedSpaceDelta(ctx, owner.Username, -info.Size())
 		if err != nil {
@@ -223,6 +278,13 @@ func (s *ObjectService) List(ctx context.Context, userDirectory, bucket, prefix 
 	prefix = normalizeObjectKeyPrefix(prefix)
 	result := ObjectList{Objects: make([]ObjectInfo, 0), Prefixes: make([]string, 0)}
 	prefixes := make(map[string]struct{})
+	var metadataByKey map[string]ObjectMetadata
+	if s.metadataRepo != nil {
+		metadataByKey, err = s.metadataRepo.ListByPrefix(ctx, userDirectory, bucket, prefix)
+		if err != nil {
+			return ObjectList{}, err
+		}
+	}
 	err = filepath.WalkDir(base, func(current string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -262,7 +324,7 @@ func (s *ObjectService) List(ctx context.Context, userDirectory, bucket, prefix 
 				return nil
 			}
 		}
-		item, err := s.statObject(bucket, key, current)
+		item, err := s.statObject(ctx, userDirectory, bucket, key, current, metadataByKey)
 		if err != nil {
 			return err
 		}
@@ -320,7 +382,7 @@ func (s *ObjectService) Stat(ctx context.Context, userDirectory, bucket, key str
 	if err != nil {
 		return ObjectInfo{}, err
 	}
-	return s.statObject(bucket, key, fullPath)
+	return s.statObject(ctx, userDirectory, bucket, key, fullPath, nil)
 }
 
 func (s *ObjectService) Open(ctx context.Context, userDirectory, bucket, key string) (*os.File, ObjectInfo, error) {
@@ -353,7 +415,8 @@ func (s *ObjectService) Put(ctx context.Context, userDirectory, bucket, key stri
 	if err := atomicfile.WriteAll(fullPath, src, 0o644); err != nil {
 		return ObjectInfo{}, err
 	}
-	return s.statObject(bucket, key, fullPath)
+	_ = s.deleteMetadata(ctx, userDirectory, bucket, key)
+	return s.statObject(ctx, userDirectory, bucket, key, fullPath, nil)
 }
 
 func (s *ObjectService) Delete(ctx context.Context, userDirectory, bucket, key string) error {
@@ -367,10 +430,10 @@ func (s *ObjectService) Delete(ctx context.Context, userDirectory, bucket, key s
 	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return nil
+	return s.deleteMetadata(ctx, userDirectory, bucket, key)
 }
 
-func (s *ObjectService) statObject(bucket, key, fullPath string) (ObjectInfo, error) {
+func (s *ObjectService) statObject(ctx context.Context, userDirectory, bucket, key, fullPath string, metadataByKey map[string]ObjectMetadata) (ObjectInfo, error) {
 	stat, err := os.Stat(fullPath)
 	if err != nil {
 		return ObjectInfo{}, err
@@ -378,15 +441,57 @@ func (s *ObjectService) statObject(bucket, key, fullPath string) (ObjectInfo, er
 	if stat.IsDir() {
 		return ObjectInfo{Bucket: bucket, Key: strings.TrimSuffix(key, "/") + "/", IsPrefix: true, ModifiedAt: stat.ModTime()}, nil
 	}
-	etag, err := fallbackETag(fullPath, stat)
-	if err != nil {
+	contentType := detectContentType(fullPath)
+	etag := ""
+	if metadata, ok := metadataByKey[key]; ok {
+		etag = strings.TrimSpace(metadata.ETag)
+		if strings.TrimSpace(metadata.ContentType) != "" {
+			contentType = strings.TrimSpace(metadata.ContentType)
+		}
+	} else if metadata, err := s.findMetadata(ctx, userDirectory, bucket, key); err != nil {
 		return ObjectInfo{}, err
+	} else if metadata != nil {
+		etag = strings.TrimSpace(metadata.ETag)
+		if strings.TrimSpace(metadata.ContentType) != "" {
+			contentType = strings.TrimSpace(metadata.ContentType)
+		}
 	}
-	contentType := mime.TypeByExtension(filepath.Ext(fullPath))
-	if contentType == "" {
-		contentType = "application/octet-stream"
+	if etag == "" {
+		etag, err = fallbackETag(fullPath, stat)
+		if err != nil {
+			return ObjectInfo{}, err
+		}
 	}
 	return ObjectInfo{Bucket: bucket, Key: key, Size: stat.Size(), ETag: etag, ContentType: contentType, ModifiedAt: stat.ModTime()}, nil
+}
+
+func detectContentType(fullPath string) string {
+	contentType := mime.TypeByExtension(filepath.Ext(fullPath))
+	if contentType == "" {
+		return "application/octet-stream"
+	}
+	return contentType
+}
+
+func (s *ObjectService) findMetadata(ctx context.Context, userDirectory, bucket, key string) (*ObjectMetadata, error) {
+	if s.metadataRepo == nil || ctx == nil {
+		return nil, nil
+	}
+	return s.metadataRepo.Find(ctx, userDirectory, bucket, key)
+}
+
+func (s *ObjectService) upsertMetadata(ctx context.Context, userDirectory, bucket, key string, metadata ObjectMetadata) error {
+	if s.metadataRepo == nil {
+		return nil
+	}
+	return s.metadataRepo.Upsert(ctx, userDirectory, bucket, key, metadata)
+}
+
+func (s *ObjectService) deleteMetadata(ctx context.Context, userDirectory, bucket, key string) error {
+	if s.metadataRepo == nil {
+		return nil
+	}
+	return s.metadataRepo.Delete(ctx, userDirectory, bucket, key)
 }
 
 func fallbackETag(path string, stat os.FileInfo) (string, error) {

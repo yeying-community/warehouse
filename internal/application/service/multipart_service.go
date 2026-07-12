@@ -291,7 +291,10 @@ func (s *MultipartService) Complete(ctx context.Context, owner *user.User, uploa
 		files = append(files, file)
 		readers = append(readers, file)
 	}
-	info, err := s.objects.PutForUser(ctx, owner, upload.Bucket, upload.ObjectKey, io.MultiReader(readers...))
+	info, err := s.objects.PutForUserWithOptions(ctx, owner, upload.Bucket, upload.ObjectKey, io.MultiReader(readers...), ObjectWriteOptions{
+		ETag:        multipartETag(parts),
+		ContentType: upload.ContentType,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +302,6 @@ func (s *MultipartService) Complete(ctx context.Context, owner *user.User, uploa
 	if err := s.repo.SetUploadStatus(ctx, uploadID, s3multipart.StatusCompleted, &now); err != nil {
 		return nil, err
 	}
-	info.ETag = multipartETag(parts)
 	s.releaseStaging(ctx, owner.ID, uploadID)
 	if err := os.RemoveAll(upload.StagingPath); err != nil {
 		return nil, err

@@ -113,7 +113,7 @@ func (s *Server) authenticate(req *http.Request) (*s3credential.Credential, erro
 	result, err := VerifyHeaderSignature(req, credential.Secret, SignatureV4Config{
 		Region:               s.config.Region,
 		Service:              "s3",
-		AllowUnsignedPayload: req.TLS != nil,
+		AllowUnsignedPayload: allowUnsignedPayload(req),
 	})
 	if err != nil {
 		return nil, err
@@ -122,6 +122,23 @@ func (s *Server) authenticate(req *http.Request) (*s3credential.Credential, erro
 		req.Body = io.NopCloser(newAWSChunkedReader(req.Body, result.SigningKey, req.Header.Get("X-Amz-Date"), result.ScopeDate+"/"+result.Region+"/"+result.Service+"/aws4_request", result.Signature))
 	}
 	return credential, nil
+}
+
+func allowUnsignedPayload(req *http.Request) bool {
+	if req == nil {
+		return false
+	}
+	if req.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")), "https") {
+		return true
+	}
+	contentLength := req.ContentLength
+	if contentLength < 0 {
+		contentLength = 0
+	}
+	return contentLength == 0
 }
 
 func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential) {
@@ -227,10 +244,12 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		info, err := s.objects.PutForUserChecked(req.Context(), owner, bucket, key, req.Body,
-			req.Header.Get("Content-MD5"),
-			req.Header.Get("X-Amz-Checksum-Sha256"),
-			req.Header.Get("X-Amz-Checksum-Crc32"))
+		info, err := s.objects.PutForUserWithOptions(req.Context(), owner, bucket, key, req.Body, service.ObjectWriteOptions{
+			ExpectedMD5:    req.Header.Get("Content-MD5"),
+			ExpectedSHA256: req.Header.Get("X-Amz-Checksum-Sha256"),
+			ExpectedCRC32:  req.Header.Get("X-Amz-Checksum-Crc32"),
+			ContentType:    req.Header.Get("Content-Type"),
+		})
 		if err != nil {
 			s.writeObjectError(w, err)
 			return
@@ -392,10 +411,22 @@ func (s *Server) handleCompleteMultipart(w http.ResponseWriter, req *http.Reques
 		s.writeObjectError(w, err)
 		return
 	}
+	scheme := "http"
+	if req.TLS != nil || strings.EqualFold(strings.TrimSpace(req.Header.Get("X-Forwarded-Proto")), "https") {
+		scheme = "https"
+	}
 	response := struct {
-		XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
-		ETag    string   `xml:"ETag"`
-	}{ETag: fmt.Sprintf("%q", info.ETag)}
+		XMLName  xml.Name `xml:"CompleteMultipartUploadResult"`
+		Location string   `xml:"Location,omitempty"`
+		Bucket   string   `xml:"Bucket"`
+		Key      string   `xml:"Key"`
+		ETag     string   `xml:"ETag"`
+	}{
+		Location: scheme + "://" + req.Host + "/" + info.Bucket + "/" + info.Key,
+		Bucket:   info.Bucket,
+		Key:      info.Key,
+		ETag:     fmt.Sprintf("%q", info.ETag),
+	}
 	w.Header().Set("Content-Type", "application/xml")
 	_ = xml.NewEncoder(w).Encode(response)
 }
