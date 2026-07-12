@@ -32,7 +32,7 @@ func decodeAWSChunkHeader(line string) (int64, string, error) {
 // verifyAWSChunkSignature validates one payload chunk against the previous signature.
 func verifyAWSChunkSignature(key []byte, timestamp, scope, previous, signature string, payload []byte) bool {
 	h := sha256.Sum256(payload)
-	stringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + timestamp + "\n" + scope + "\n" + previous + "\n" + hex.EncodeToString(h[:])
+	stringToSign := "AWS4-HMAC-SHA256-PAYLOAD\n" + timestamp + "\n" + scope + "\n" + previous + "\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n" + hex.EncodeToString(h[:])
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte(stringToSign))
 	return hmac.Equal(mac.Sum(nil), mustDecodeHex(signature))
