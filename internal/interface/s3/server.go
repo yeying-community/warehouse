@@ -9,6 +9,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -109,12 +110,16 @@ func (s *Server) authenticate(req *http.Request) (*s3credential.Credential, erro
 	if err != nil {
 		return nil, err
 	}
-	if _, err := VerifyHeaderSignature(req, credential.Secret, SignatureV4Config{
+	result, err := VerifyHeaderSignature(req, credential.Secret, SignatureV4Config{
 		Region:               s.config.Region,
 		Service:              "s3",
 		AllowUnsignedPayload: req.TLS != nil,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
+	}
+	if strings.HasPrefix(result.PayloadHash, "STREAMING-") {
+		req.Body = io.NopCloser(newAWSChunkedReader(req.Body, result.SigningKey, req.Header.Get("X-Amz-Date"), result.ScopeDate+"/"+result.Region+"/"+result.Service+"/aws4_request", result.Signature))
 	}
 	return credential, nil
 }
