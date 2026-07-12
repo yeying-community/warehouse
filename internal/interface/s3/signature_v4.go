@@ -308,6 +308,9 @@ func validatePayloadHash(payloadHash string, allowUnsigned bool) error {
 		return nil
 	}
 	if strings.HasPrefix(payloadHash, "STREAMING-") {
+		if payloadHash == "STREAMING-AWS4-HMAC-SHA256-PAYLOAD" {
+			return nil
+		}
 		return fmt.Errorf("%w: %s", ErrUnsupportedPayloadHash, payloadHash)
 	}
 	if len(payloadHash) != sha256.Size*2 {
