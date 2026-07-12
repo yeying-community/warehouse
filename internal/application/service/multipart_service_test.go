@@ -12,8 +12,8 @@ func TestMultipartETag(t *testing.T) {
 		{ETag: "0cc175b9c0f1b6a831c399e269772661"},
 	}
 	got := multipartETag(parts)
-	if len(got) != 34 || got[len(got)-2:] != "-2" {
-		t.Fatalf("multipart ETag = %q, want 32 hex chars and -2 suffix", got)
+	if got != "68083ea43d0307eecfa2b4749f19df15-2" {
+		t.Fatalf("multipart ETag = %q, want standard multipart ETag", got)
 	}
 	if got := multipartETag([]*s3multipart.Part{{ETag: "not-md5"}}); got != "" {
 		t.Fatalf("invalid part ETag = %q, want empty", got)
