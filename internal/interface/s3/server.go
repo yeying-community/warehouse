@@ -157,6 +157,10 @@ func (s *Server) handleObject(w http.ResponseWriter, req *http.Request, credenti
 		s.handleCreateMultipart(w, req, credential, owner, bucket, key)
 		return
 	}
+	if req.Method == http.MethodPost && query.Has("delete") {
+		s.handleDeleteObjects(w, req, credential, owner, bucket, key)
+		return
+	}
 	if req.Method == http.MethodPost && query.Get("uploadId") != "" {
 		s.handleCompleteMultipart(w, req, credential, owner, query.Get("uploadId"))
 		return
@@ -268,6 +272,71 @@ func (s *Server) handleCreateMultipart(w http.ResponseWriter, req *http.Request,
 	_ = xml.NewEncoder(w).Encode(response)
 }
 
+type deleteObjectsRequest struct {
+	Quiet   bool                  `xml:"Quiet"`
+	Objects []deleteObjectRequest `xml:"Object"`
+}
+
+type deleteObjectRequest struct {
+	Key string `xml:"Key"`
+}
+
+type deleteObjectsResult struct {
+	XMLName xml.Name            `xml:"DeleteResult"`
+	Deleted []deletedObject     `xml:"Deleted,omitempty"`
+	Errors  []deleteObjectError `xml:"Error,omitempty"`
+}
+
+type deletedObject struct {
+	Key string `xml:"Key"`
+}
+
+type deleteObjectError struct {
+	Key     string `xml:"Key"`
+	Code    string `xml:"Code"`
+	Message string `xml:"Message"`
+}
+
+func (s *Server) handleDeleteObjects(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential, owner *user.User, bucket, key string) {
+	if key != "" {
+		s.writeError(w, http.StatusBadRequest, "InvalidRequest", "DeleteObjects must target a bucket")
+		return
+	}
+	if !hasS3Permission(credential.Permissions, "delete") {
+		s.writeError(w, http.StatusForbidden, "AccessDenied", "delete permission is required")
+		return
+	}
+	var payload deleteObjectsRequest
+	if err := xml.NewDecoder(req.Body).Decode(&payload); err != nil {
+		s.writeError(w, http.StatusBadRequest, "MalformedXML", "invalid delete request body")
+		return
+	}
+	result := deleteObjectsResult{}
+	for _, item := range payload.Objects {
+		objectKey := strings.TrimSpace(item.Key)
+		if objectKey == "" {
+			result.Errors = append(result.Errors, deleteObjectError{Code: "InvalidRequest", Message: "object key is required"})
+			continue
+		}
+		requestedPath := "/" + bucket + "/" + strings.TrimPrefix(objectKey, "/")
+		if !s.pathAllowed(credential.RootPath, requestedPath) {
+			result.Errors = append(result.Errors, deleteObjectError{Key: objectKey, Code: "AccessDenied", Message: "credential is not bound to this path"})
+			continue
+		}
+		err := s.objects.DeleteForUser(req.Context(), owner, bucket, objectKey)
+		if err != nil && !os.IsNotExist(err) {
+			result.Errors = append(result.Errors, deleteObjectError{Key: objectKey, Code: "InternalError", Message: err.Error()})
+			continue
+		}
+		if !payload.Quiet {
+			result.Deleted = append(result.Deleted, deletedObject{Key: objectKey})
+		}
+	}
+	w.Header().Set("Content-Type", "application/xml")
+	w.WriteHeader(http.StatusOK)
+	_ = xml.NewEncoder(w).Encode(result)
+}
+
 func (s *Server) handleUploadPart(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential, owner *user.User, uploadID, rawPartNumber string) {
 	if s.multipart == nil || !hasS3Permission(credential.Permissions, "create") {
 		s.writeError(w, http.StatusForbidden, "AccessDenied", "create permission is required")
@@ -347,15 +416,16 @@ func (s *Server) pathAllowed(rootPath, requestedPath string) bool {
 }
 
 type listBucketResult struct {
-	XMLName               xml.Name     `xml:"ListBucketResult"`
-	Name                  string       `xml:"Name"`
-	Prefix                string       `xml:"Prefix,omitempty"`
-	KeyCount              int          `xml:"KeyCount,omitempty"`
-	MaxKeys               int          `xml:"MaxKeys,omitempty"`
-	IsTruncated           bool         `xml:"IsTruncated"`
-	NextMarker            string       `xml:"NextMarker,omitempty"`
-	NextContinuationToken string       `xml:"NextContinuationToken,omitempty"`
-	Contents              []listObject `xml:"Contents"`
+	XMLName               xml.Name       `xml:"ListBucketResult"`
+	Name                  string         `xml:"Name"`
+	Prefix                string         `xml:"Prefix,omitempty"`
+	KeyCount              int            `xml:"KeyCount,omitempty"`
+	MaxKeys               int            `xml:"MaxKeys,omitempty"`
+	IsTruncated           bool           `xml:"IsTruncated"`
+	NextMarker            string         `xml:"NextMarker,omitempty"`
+	NextContinuationToken string         `xml:"NextContinuationToken,omitempty"`
+	CommonPrefixes        []commonPrefix `xml:"CommonPrefixes,omitempty"`
+	Contents              []listObject   `xml:"Contents"`
 }
 
 type listObject struct {
@@ -363,6 +433,10 @@ type listObject struct {
 	LastModified string `xml:"LastModified"`
 	ETag         string `xml:"ETag"`
 	Size         int64  `xml:"Size"`
+}
+
+type commonPrefix struct {
+	Prefix string `xml:"Prefix"`
 }
 
 func (s *Server) handleList(w http.ResponseWriter, req *http.Request, credential *s3credential.Credential, userDirectory, bucket string) {
@@ -415,6 +489,9 @@ func (s *Server) handleList(w http.ResponseWriter, req *http.Request, credential
 	}
 	for _, item := range items {
 		response.Contents = append(response.Contents, listObject{Key: item.Key, LastModified: item.ModifiedAt.UTC().Format(time.RFC3339), ETag: fmt.Sprintf("%q", item.ETag), Size: item.Size})
+	}
+	for _, item := range result.Prefixes {
+		response.CommonPrefixes = append(response.CommonPrefixes, commonPrefix{Prefix: item})
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	_ = xml.NewEncoder(w).Encode(response)

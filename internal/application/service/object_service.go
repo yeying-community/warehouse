@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -214,59 +215,90 @@ func (s *ObjectService) List(ctx context.Context, userDirectory, bucket, prefix 
 	if err != nil {
 		return ObjectList{}, err
 	}
-	if prefix != "" {
-		base, err = objectpath.ResolvePath(s.webdavRoot, userDirectory, bucket, prefix)
-		if err != nil {
-			return ObjectList{}, err
-		}
-		if info, statErr := os.Stat(base); statErr == nil {
-			if !info.IsDir() {
-				item, err := s.statObject(bucket, prefix, base)
-				if err != nil {
-					return ObjectList{}, err
-				}
-				return ObjectList{Objects: []ObjectInfo{item}}, nil
-			}
-		} else if !os.IsNotExist(statErr) {
-			return ObjectList{}, statErr
-		} else {
-			base = filepath.Dir(base)
-		}
+	if _, statErr := os.Stat(base); os.IsNotExist(statErr) {
+		return ObjectList{}, nil
+	} else if statErr != nil {
+		return ObjectList{}, statErr
 	}
-
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ObjectList{}, nil
-		}
-		return ObjectList{}, err
-	}
+	prefix = normalizeObjectKeyPrefix(prefix)
 	result := ObjectList{Objects: make([]ObjectInfo, 0), Prefixes: make([]string, 0)}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") || strings.HasPrefix(entry.Name(), "._upload-") {
-			continue
+	prefixes := make(map[string]struct{})
+	err = filepath.WalkDir(base, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		key := entry.Name()
-		if prefix != "" {
-			key = strings.TrimSuffix(prefix, "/") + "/" + entry.Name()
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if delimiter == '/' && entry.IsDir() {
-			result.Prefixes = append(result.Prefixes, strings.TrimSuffix(key, "/")+"/")
-			continue
+		if current == base {
+			return nil
 		}
-		fullPath := filepath.Join(base, entry.Name())
-		if entry.IsDir() {
-			continue
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "._upload-") {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		item, err := s.statObject(bucket, key, fullPath)
+		relPath, err := filepath.Rel(base, current)
 		if err != nil {
-			return ObjectList{}, err
+			return err
+		}
+		key := filepath.ToSlash(relPath)
+		if entry.IsDir() {
+			if prefix == "" || strings.HasPrefix(prefix, key+"/") || strings.HasPrefix(key+"/", prefix) {
+				return nil
+			}
+			return filepath.SkipDir
+		}
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			return nil
+		}
+		if delimiter != 0 {
+			remainder := strings.TrimPrefix(key, prefix)
+			if index := strings.IndexRune(remainder, delimiter); index >= 0 {
+				commonPrefix := prefix + remainder[:index+1]
+				prefixes[commonPrefix] = struct{}{}
+				return nil
+			}
+		}
+		item, err := s.statObject(bucket, key, current)
+		if err != nil {
+			return err
 		}
 		result.Objects = append(result.Objects, item)
+		return nil
+	})
+	if err != nil {
+		return ObjectList{}, err
+	}
+	for commonPrefix := range prefixes {
+		result.Prefixes = append(result.Prefixes, commonPrefix)
 	}
 	sort.Slice(result.Objects, func(i, j int) bool { return result.Objects[i].Key < result.Objects[j].Key })
 	sort.Strings(result.Prefixes)
 	return result, nil
+}
+
+func normalizeObjectKeyPrefix(prefix string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return ""
+	}
+	prefix = strings.ReplaceAll(prefix, "\\", "/")
+	prefix = strings.TrimPrefix(prefix, "/")
+	if strings.HasSuffix(prefix, "/") {
+		clean := path.Clean("/" + prefix)
+		if clean == "/" {
+			return ""
+		}
+		return strings.TrimPrefix(clean, "/") + "/"
+	}
+	clean := path.Clean("/" + prefix)
+	if clean == "/" {
+		return ""
+	}
+	return strings.TrimPrefix(clean, "/")
 }
 
 func (s *ObjectService) EnsureBucket(ctx context.Context, userDirectory, bucket string) error {

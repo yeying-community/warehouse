@@ -63,3 +63,19 @@ func TestObjectServiceListReturnsPrefixes(t *testing.T) {
 		t.Fatalf("unexpected prefixes: %+v", listed.Prefixes)
 	}
 }
+
+func TestObjectServiceListDoesNotInventObjectsForMissingPrefix(t *testing.T) {
+	root := t.TempDir()
+	svc := NewObjectService(root)
+	ctx := context.Background()
+	if _, err := svc.Put(ctx, "alice", "personal", "other/file.txt", strings.NewReader("hello")); err != nil {
+		t.Fatalf("put object: %v", err)
+	}
+	listed, err := svc.List(ctx, "alice", "personal", "missing/", '/')
+	if err != nil {
+		t.Fatalf("list objects: %v", err)
+	}
+	if len(listed.Objects) != 0 || len(listed.Prefixes) != 0 {
+		t.Fatalf("unexpected list result for missing prefix: %+v", listed)
+	}
+}
