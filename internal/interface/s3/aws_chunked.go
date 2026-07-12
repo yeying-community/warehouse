@@ -62,3 +62,39 @@ func readAWSChunk(r *bufio.Reader) ([]byte, string, error) {
 	}
 	return bytes.Clone(payload), sig, nil
 }
+
+type awsChunkedReader struct {
+	r                          *bufio.Reader
+	key                        []byte
+	timestamp, scope, previous string
+	current                    []byte
+	done                       bool
+}
+
+func newAWSChunkedReader(body io.Reader, key []byte, timestamp, scope, previous string) io.Reader {
+	return &awsChunkedReader{r: bufio.NewReader(body), key: key, timestamp: timestamp, scope: scope, previous: previous}
+}
+
+func (r *awsChunkedReader) Read(p []byte) (int, error) {
+	for len(r.current) == 0 && !r.done {
+		payload, signature, err := readAWSChunk(r.r)
+		if err != nil {
+			return 0, err
+		}
+		if !verifyAWSChunkSignature(r.key, r.timestamp, r.scope, r.previous, signature, payload) {
+			return 0, fmt.Errorf("invalid aws chunk signature")
+		}
+		r.previous = signature
+		if len(payload) == 0 {
+			r.done = true
+			break
+		}
+		r.current = payload
+	}
+	if len(r.current) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.current)
+	r.current = r.current[n:]
+	return n, nil
+}
