@@ -22,6 +22,8 @@ export type UploadTask = {
   size: number
   status: UploadTaskStatus
   progress: number
+  uploadedBytes?: number
+  uploadSpeed?: number
   error?: string
   createdAt: number
   updatedAt: number

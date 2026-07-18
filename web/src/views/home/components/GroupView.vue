@@ -485,6 +485,17 @@ function canRespondMember(member: GroupMember) {
   flex: 1;
 }
 
+.group-management-page.embedded .group-management-title {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.group-management-page.embedded .group-management-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .card-title {
   font-size: 14px;
   font-weight: 600;
@@ -592,6 +603,7 @@ function canRespondMember(member: GroupMember) {
 }
 
 .group-list-row {
+  font: inherit;
   width: 100%;
   border: 1px solid #eef1f4;
   background: #f7f9fc;
