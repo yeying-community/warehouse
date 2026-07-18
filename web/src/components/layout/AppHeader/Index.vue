@@ -400,7 +400,7 @@ onBeforeUnmount(() => {
         v-if="isAuth"
         v-model:visible="uploadTasksVisible"
         placement="bottom-end"
-        width="760"
+        width="min(760px, calc(100vw - 24px))"
         trigger="click"
         popper-class="task-popover"
       >
@@ -677,6 +677,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   min-height: 320px;
+  max-width: 100%;
 }
 
 .task-panel-head {
@@ -686,6 +687,17 @@ onBeforeUnmount(() => {
   gap: 12px;
   padding-bottom: 10px;
   border-bottom: 1px solid #eef1f4;
+}
+
+@media (max-width: 640px) {
+  .task-panel-head {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .task-panel-summary {
+    justify-content: flex-start;
+  }
 }
 
 .task-panel-title {
@@ -698,16 +710,17 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
+  flex-wrap: wrap;
   min-width: 0;
   color: #606266;
   font-size: 12px;
-  white-space: nowrap;
-  overflow-x: auto;
 }
 
 .task-panel-list {
   height: min(52vh, 420px);
   min-height: 260px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .notification-head {

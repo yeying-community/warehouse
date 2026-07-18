@@ -27,6 +27,32 @@ function taskProgress(task: UploadTask): number {
   return Math.min(100, Math.max(0, Math.round(raw)))
 }
 
+function taskStatusLabel(status: UploadTaskStatus): string {
+  if (status === 'queued') return '等待中'
+  if (status === 'uploading') return '上传中'
+  if (status === 'success') return '已完成'
+  return '失败'
+}
+
+function taskSpeed(task: UploadTask): string {
+  if (task.status !== 'uploading' && task.status !== 'success') return '-'
+  const speed = Number(task.uploadSpeed || 0)
+  if (!Number.isFinite(speed) || speed <= 0) {
+    return task.status === 'uploading' ? '计算中' : '-'
+  }
+  return `${props.formatSize(speed)}/s`
+}
+
+function taskSpeedLabel(task: UploadTask): string {
+  return task.status === 'success' ? '平均速度' : '速度'
+}
+
+function taskUploaded(task: UploadTask): string {
+  const uploaded = Math.min(Number(task.uploadedBytes || 0), Number(task.size || 0))
+  if (!Number.isFinite(uploaded) || uploaded <= 0) return `0 / ${props.formatSize(task.size)}`
+  return `${props.formatSize(uploaded)} / ${props.formatSize(task.size)}`
+}
+
 function handleRetry(task: UploadTask) {
   props.retryTask(task)
 }
@@ -41,89 +67,27 @@ function handleOpenTaskLocation(task: UploadTask) {
 </script>
 
 <template>
-  <el-table
-    v-if="!isMobile"
-    :data="tasks"
-    empty-text="暂无任务"
-    height="100%"
-  >
-    <el-table-column label="文件" min-width="240">
-      <template #default="{ row }">
-        <div class="task-name">
-          <span class="task-title" :title="getTaskName(row)">{{ getTaskName(row) }}</span>
-          <span v-if="row.error" class="task-error">{{ row.error }}</span>
-        </div>
-      </template>
-    </el-table-column>
-    <el-table-column label="大小" width="120">
-      <template #default="{ row }">
-        <span class="size-cell">{{ formatSize(row.size) }}</span>
-      </template>
-    </el-table-column>
-    <el-table-column label="进度" min-width="210">
-      <template #default="{ row }">
-        <div class="task-progress">
-          <el-progress
-            :percentage="taskProgress(row)"
-            :status="progressStatus(row.status)"
-            :stroke-width="10"
-          />
-        </div>
-      </template>
-    </el-table-column>
-    <el-table-column label="更新时间" width="180">
-      <template #default="{ row }">
-        <span class="time-cell">{{ formatTime(row.updatedAt) }}</span>
-      </template>
-    </el-table-column>
-    <el-table-column label="操作" width="120" fixed="right" align="left" header-align="left">
-      <template #default="{ row }">
-        <div class="task-actions">
-          <el-tooltip
-            v-if="canOpenTaskLocation(row)"
-            content="打开所在目录"
-            placement="top"
-          >
-            <el-button
-              size="small"
-              circle
-              type="primary"
-              plain
-              :icon="FolderOpened"
-              @click="handleOpenTaskLocation(row)"
-            />
-          </el-tooltip>
-          <el-button
-            v-if="row.status === 'failed'"
-            size="small"
-            type="primary"
-            @click="handleRetry(row)"
-          >
-            重试
-          </el-button>
-        </div>
-      </template>
-    </el-table-column>
-  </el-table>
-
-  <div v-else class="card-list">
+  <div class="task-list" :class="{ 'is-mobile': isMobile }">
     <el-empty v-if="!tasks.length" description="暂无任务" />
-    <div v-for="row in tasks" :key="row.id" class="card-item">
-      <div class="card-header">
-        <div class="card-title" :title="getTaskName(row)">{{ getTaskName(row) }}</div>
+    <div v-for="row in tasks" :key="row.id" class="task-item">
+      <div class="task-main">
+        <div class="task-head">
+          <span class="task-title" :title="getTaskName(row)">{{ getTaskName(row) }}</span>
+          <span class="task-status" :class="`is-${row.status}`">{{ taskStatusLabel(row.status) }}</span>
+        </div>
+        <div class="task-meta">
+          <span>{{ taskUploaded(row) }}</span>
+          <span>{{ taskSpeedLabel(row) }} {{ taskSpeed(row) }}</span>
+          <span>{{ formatTime(row.updatedAt) }}</span>
+        </div>
+        <el-progress
+          :percentage="taskProgress(row)"
+          :status="progressStatus(row.status)"
+          :stroke-width="10"
+        />
+        <div v-if="row.error" class="task-error">{{ row.error }}</div>
       </div>
-      <div class="card-meta-compact">
-        <span class="card-meta-value">{{ formatTime(row.updatedAt) }}</span>
-        <span class="card-meta-sep">·</span>
-        <span class="card-meta-value">{{ formatSize(row.size) }}</span>
-      </div>
-      <el-progress
-        :percentage="taskProgress(row)"
-        :status="progressStatus(row.status)"
-        :stroke-width="10"
-      />
-      <div v-if="row.error" class="task-error">{{ row.error }}</div>
-      <div class="card-actions card-actions-inline">
+      <div class="task-actions">
         <el-tooltip
           v-if="canOpenTaskLocation(row)"
           content="打开所在目录"
@@ -150,21 +114,82 @@ function handleOpenTaskLocation(task: UploadTask) {
   </div>
 </template>
 
-<style scoped src="./homeShared.scss"></style>
 <style scoped>
-.task-name {
+.task-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
+  height: 100%;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.task-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #eef1f4;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.task-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
 .task-title {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   color: #1f2d3d;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task-status {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f4f6f8;
+  color: #606266;
+  font-size: 12px;
+}
+
+.task-status.is-uploading {
+  background: #ecf5ff;
+  color: #409eff;
+}
+
+.task-status.is-success {
+  background: #f0f9eb;
+  color: #67c23a;
+}
+
+.task-status.is-failed {
+  background: #fef0f0;
+  color: #f56c6c;
+}
+
+.task-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .task-error {
@@ -173,25 +198,19 @@ function handleOpenTaskLocation(task: UploadTask) {
   word-break: break-all;
 }
 
-.task-progress :deep(.el-progress) {
-  flex: 1;
-  min-width: 120px;
-}
-
-.task-progress {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.card-item .el-progress {
-  margin-top: 6px;
-}
-
 .task-actions {
   display: flex;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.task-list.is-mobile .task-item {
+  grid-template-columns: 1fr;
+}
+
+.task-list.is-mobile .task-actions {
+  justify-content: flex-start;
 }
 </style>

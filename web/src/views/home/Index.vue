@@ -2999,8 +2999,22 @@ function buildTargetPath(basePath: string, relativePath: string): string {
   return '/' + cleanBase + '/' + cleanRelative
 }
 
+function normalizeUploadTargetPath(path: string): string {
+  const normalized = '/' + normalizeRelativePath(path)
+  return normalized.length > 1 ? normalized.replace(/\/+$/, '') : '/'
+}
+
+function getSharedUploadPrecheckError(task: UploadTask): string {
+  if (!task.isShared || sharedCanUpdate.value) return ''
+  const targetPath = normalizeUploadTargetPath(task.sharePath || task.relativePath || task.name)
+  const existing = sharedEntries.value.find(item => normalizeUploadTargetPath(item.path) === targetPath)
+  if (!existing) return ''
+  return `同名文件已存在，当前共享没有修改权限，不能覆盖：${existing.name}`
+}
+
 function createUploadTask(item: UploadItem, options: { basePath: string; isShared: boolean; shareId?: string; encryptedRoot?: string | null; cipherSuite?: string }): UploadTask {
   const relativePath = normalizeRelativePath(item.relativePath || item.file.name) || item.file.name
+  const targetPath = buildTargetPath(options.basePath, relativePath)
   const now = Date.now()
   return {
     id: createUploadTaskId(),
@@ -3012,10 +3026,10 @@ function createUploadTask(item: UploadItem, options: { basePath: string; isShare
     createdAt: now,
     updatedAt: now,
     file: item.file,
-    targetPath: options.isShared ? undefined : buildTargetPath(options.basePath, relativePath),
+    targetPath: options.isShared ? undefined : targetPath,
     isShared: options.isShared,
     shareId: options.shareId,
-    sharePath: options.isShared ? relativePath : undefined,
+    sharePath: options.isShared ? normalizeRelativePath(targetPath) : undefined,
     encryptedRoot: options.encryptedRoot || undefined,
     cipherSuite: options.cipherSuite || undefined
   }
@@ -3054,18 +3068,25 @@ function uploadFileWithProgress(
   file: Blob,
   token: string,
   useMultipart: boolean,
-  onProgress: (progress: number) => void
+  onProgress: (progress: number, loaded: number, total: number, speed: number) => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
+    let lastLoaded = 0
+    let lastTime = performance.now()
     xhr.open('PUT', url, true)
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     }
     xhr.upload.onprogress = event => {
       if (!event.lengthComputable) return
+      const now = performance.now()
+      const elapsedSeconds = Math.max((now - lastTime) / 1000, 0.001)
+      const speed = Math.max(0, (event.loaded - lastLoaded) / elapsedSeconds)
+      lastLoaded = event.loaded
+      lastTime = now
       const percent = Math.min(99, Math.round((event.loaded / event.total) * 100))
-      onProgress(percent)
+      onProgress(percent, event.loaded, event.total, speed)
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -3100,9 +3121,14 @@ async function performUploadTask(task: UploadTask) {
     updateUploadTask(task, { status: 'failed', error: '上传目标无效' })
     return
   }
+  const precheckError = getSharedUploadPrecheckError(task)
+  if (precheckError) {
+    updateUploadTask(task, { status: 'failed', progress: 0, error: precheckError })
+    return
+  }
   const token = localStorage.getItem('authToken') || ''
   const useMultipart = false
-  updateUploadTask(task, { status: 'uploading', progress: 0, error: undefined })
+  updateUploadTask(task, { status: 'uploading', progress: 0, uploadedBytes: 0, uploadSpeed: 0, error: undefined })
   try {
     let uploadBody: Blob = task.file
     if (!task.isShared && task.encryptedRoot) {
@@ -3111,10 +3137,13 @@ async function performUploadTask(task: UploadTask) {
         await buildEncryptedDirectoryCryptoOptions(task.encryptedRoot, task.cipherSuite || getEncryptedDirectoryCipherSuite(task.encryptedRoot))
       )
     }
-    await uploadFileWithProgress(url, uploadBody, token, useMultipart, progress => {
-      updateUploadTask(task, { progress })
+    const uploadStartedAt = performance.now()
+    await uploadFileWithProgress(url, uploadBody, token, useMultipart, (progress, loaded, total, speed) => {
+      updateUploadTask(task, { progress, uploadedBytes: loaded, size: total || task.size, uploadSpeed: speed })
     })
-    updateUploadTask(task, { status: 'success', progress: 100 })
+    const elapsedSeconds = Math.max((performance.now() - uploadStartedAt) / 1000, 0.001)
+    const averageSpeed = uploadBody.size / elapsedSeconds
+    updateUploadTask(task, { status: 'success', progress: 100, uploadedBytes: uploadBody.size, uploadSpeed: averageSpeed })
   } catch (error: any) {
     updateUploadTask(task, { status: 'failed', error: errorMessageFromUnknown(error, '上传失败') })
   }
@@ -3195,6 +3224,7 @@ async function ensureSharedDirectories(path: string, ensured: Set<string>, share
 async function uploadSharedFilesWithDirectories(files: UploadItem[], extraDirectories?: Set<string>) {
   if (!sharedActive.value) return
   const shareId = sharedActive.value.id
+  const cleanSharedBase = sharedPath.value.replace(/^\/+/, '').replace(/\/$/, '')
   const ensuredDirs = new Set<string>()
 
   const directories = new Set<string>()
@@ -3211,13 +3241,14 @@ async function uploadSharedFilesWithDirectories(files: UploadItem[], extraDirect
     if (relativeDir) directories.add(relativeDir)
   }
 
-  const tasks = files.map(item => createUploadTask(item, { basePath: '', isShared: true, shareId }))
+  const tasks = files.map(item => createUploadTask(item, { basePath: cleanSharedBase, isShared: true, shareId }))
   addUploadTasks(tasks)
 
   const dirsToCreate = Array.from(directories).filter(Boolean).sort((a, b) => a.split('/').length - b.split('/').length)
   for (const dir of dirsToCreate) {
+    const targetDir = cleanSharedBase ? `${cleanSharedBase}/${dir}` : dir
     try {
-      await ensureSharedDirectories(dir, ensuredDirs, shareId)
+      await ensureSharedDirectories(targetDir, ensuredDirs, shareId)
     } catch (error) {
       console.error('创建目录失败:', dir, error)
     }
@@ -7387,6 +7418,14 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 600;
   color: #1f2d3d;
+}
+
+.card-subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
+  font-family: inherit;
 }
 
 .user-list {
