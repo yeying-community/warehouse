@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +36,29 @@ type bufferedResponse struct {
 	header http.Header
 	body   bytes.Buffer
 	status int
+}
+
+type shareTargetGroupResp struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type shareUserItemResp struct {
+	ID            string                 `json:"id"`
+	Name          string                 `json:"name"`
+	Path          string                 `json:"path"`
+	IsDir         bool                   `json:"isDir"`
+	Permissions   []string               `json:"permissions"`
+	TargetWallet  string                 `json:"targetWallet,omitempty"`
+	TargetType    string                 `json:"targetType,omitempty"`
+	TargetCount   int                    `json:"targetCount,omitempty"`
+	AudienceCount int                    `json:"audienceCount,omitempty"`
+	TargetGroups  []shareTargetGroupResp `json:"targetGroups,omitempty"`
+	AllUsers      bool                   `json:"allUsers,omitempty"`
+	OwnerWallet   string                 `json:"ownerWallet,omitempty"`
+	OwnerName     string                 `json:"ownerName,omitempty"`
+	ExpiresAt     string                 `json:"expiresAt,omitempty"`
+	CreatedAt     string                 `json:"createdAt"`
 }
 
 func newBufferedResponse() *bufferedResponse {
@@ -500,6 +524,9 @@ func (h *ShareUserHandler) HandleCreate(w http.ResponseWriter, r *http.Request) 
 	if item.ExpiresAt != nil {
 		resp["expiresAt"] = item.ExpiresAt.Format(timeLayout)
 	}
+	if item.AudienceType == "groups" {
+		resp["targetGroups"] = h.targetGroupsForShare(r.Context(), item.ID)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
@@ -535,50 +562,14 @@ func (h *ShareUserHandler) HandleListMine(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	type itemResp struct {
-		ID            string   `json:"id"`
-		Name          string   `json:"name"`
-		Path          string   `json:"path"`
-		IsDir         bool     `json:"isDir"`
-		Permissions   []string `json:"permissions"`
-		TargetWallet  string   `json:"targetWallet"`
-		TargetType    string   `json:"targetType,omitempty"`
-		TargetCount   int      `json:"targetCount,omitempty"`
-		AudienceCount int      `json:"audienceCount,omitempty"`
-		AllUsers      bool     `json:"allUsers,omitempty"`
-		OwnerWallet   string   `json:"ownerWallet,omitempty"`
-		OwnerName     string   `json:"ownerName,omitempty"`
-		ExpiresAt     string   `json:"expiresAt,omitempty"`
-		CreatedAt     string   `json:"createdAt"`
-	}
-
 	resp := struct {
-		Items []itemResp `json:"items"`
+		Items []shareUserItemResp `json:"items"`
 	}{
-		Items: make([]itemResp, 0, len(items)),
+		Items: make([]shareUserItemResp, 0, len(items)),
 	}
 
 	for _, item := range items {
-		perms := permissionsFromStored(item.Permissions)
-		row := itemResp{
-			ID:            item.ID,
-			Name:          item.Name,
-			Path:          item.Path,
-			IsDir:         item.IsDir,
-			Permissions:   permissionsToStrings(perms),
-			TargetWallet:  formatTargetWallet(item),
-			TargetType:    item.AudienceType,
-			TargetCount:   item.TargetCount,
-			AudienceCount: item.AudienceCount,
-			AllUsers:      item.AllUsers,
-			OwnerWallet:   u.WalletAddress,
-			OwnerName:     u.Username,
-			CreatedAt:     item.CreatedAt.Format(timeLayout),
-		}
-		if item.ExpiresAt != nil {
-			row.ExpiresAt = item.ExpiresAt.Format(timeLayout)
-		}
-		resp.Items = append(resp.Items, row)
+		resp.Items = append(resp.Items, h.buildShareUserItemResp(r.Context(), item, formatTargetWallet(item), u.WalletAddress, u.Username))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -615,52 +606,18 @@ func (h *ShareUserHandler) HandleListReceived(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	type itemResp struct {
-		ID            string   `json:"id"`
-		Name          string   `json:"name"`
-		Path          string   `json:"path"`
-		IsDir         bool     `json:"isDir"`
-		Permissions   []string `json:"permissions"`
-		TargetWallet  string   `json:"targetWallet,omitempty"`
-		TargetType    string   `json:"targetType,omitempty"`
-		TargetCount   int      `json:"targetCount,omitempty"`
-		AudienceCount int      `json:"audienceCount,omitempty"`
-		AllUsers      bool     `json:"allUsers,omitempty"`
-		OwnerWallet   string   `json:"ownerWallet,omitempty"`
-		OwnerName     string   `json:"ownerName,omitempty"`
-		ExpiresAt     string   `json:"expiresAt,omitempty"`
-		CreatedAt     string   `json:"createdAt"`
-	}
-
 	resp := struct {
-		Items []itemResp `json:"items"`
+		Items []shareUserItemResp `json:"items"`
 	}{
-		Items: make([]itemResp, 0, len(items)),
+		Items: make([]shareUserItemResp, 0, len(items)),
 	}
 
 	for _, item := range items {
-		perms := permissionsFromStored(item.Permissions)
-		row := itemResp{
-			ID:            item.ID,
-			Name:          item.Name,
-			Path:          item.Path,
-			IsDir:         item.IsDir,
-			Permissions:   permissionsToStrings(perms),
-			TargetWallet:  formatTargetWalletForViewer(item, u.WalletAddress),
-			TargetType:    item.AudienceType,
-			TargetCount:   item.TargetCount,
-			AudienceCount: item.AudienceCount,
-			AllUsers:      item.AllUsers,
-			OwnerName:     item.OwnerUsername,
-			CreatedAt:     item.CreatedAt.Format(timeLayout),
-		}
-		if item.ExpiresAt != nil {
-			row.ExpiresAt = item.ExpiresAt.Format(timeLayout)
-		}
+		ownerWallet := ""
 		if owner, err := h.userRepo.FindByID(r.Context(), item.OwnerUserID); err == nil {
-			row.OwnerWallet = owner.WalletAddress
+			ownerWallet = owner.WalletAddress
 		}
-		resp.Items = append(resp.Items, row)
+		resp.Items = append(resp.Items, h.buildShareUserItemResp(r.Context(), item, formatTargetWalletForViewer(item, u.WalletAddress), ownerWallet, item.OwnerUsername))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -751,10 +708,11 @@ func (h *ShareUserHandler) HandleListAudiences(w http.ResponseWriter, r *http.Re
 	}
 
 	type audienceResp struct {
-		Type         string `json:"type"`
-		TargetUserID string `json:"targetUserId,omitempty"`
-		TargetWallet string `json:"targetWallet,omitempty"`
-		SourceGroup  string `json:"sourceGroupId,omitempty"`
+		Type            string `json:"type"`
+		TargetUserID    string `json:"targetUserId,omitempty"`
+		TargetWallet    string `json:"targetWallet,omitempty"`
+		SourceGroupID   string `json:"sourceGroupId,omitempty"`
+		SourceGroupName string `json:"sourceGroupName,omitempty"`
 	}
 	resp := struct {
 		Items []audienceResp `json:"items"`
@@ -763,10 +721,11 @@ func (h *ShareUserHandler) HandleListAudiences(w http.ResponseWriter, r *http.Re
 	}
 	for _, aud := range audiences {
 		resp.Items = append(resp.Items, audienceResp{
-			Type:         aud.AudienceType,
-			TargetUserID: aud.TargetUserID,
-			TargetWallet: aud.TargetWallet,
-			SourceGroup:  aud.SourceGroupID,
+			Type:            aud.AudienceType,
+			TargetUserID:    aud.TargetUserID,
+			TargetWallet:    aud.TargetWallet,
+			SourceGroupID:   aud.SourceGroupID,
+			SourceGroupName: aud.SourceGroupName,
 		})
 	}
 
@@ -1383,15 +1342,77 @@ func buildShareEntryPath(prefix, name string, isDir bool) string {
 	return p
 }
 
+func (h *ShareUserHandler) buildShareUserItemResp(ctx context.Context, item *shareuser.ShareUserItem, targetWallet, ownerWallet, ownerName string) shareUserItemResp {
+	perms := permissionsFromStored(item.Permissions)
+	row := shareUserItemResp{
+		ID:            item.ID,
+		Name:          item.Name,
+		Path:          item.Path,
+		IsDir:         item.IsDir,
+		Permissions:   permissionsToStrings(perms),
+		TargetWallet:  targetWallet,
+		TargetType:    item.AudienceType,
+		TargetCount:   item.TargetCount,
+		AudienceCount: item.AudienceCount,
+		AllUsers:      item.AllUsers,
+		OwnerWallet:   ownerWallet,
+		OwnerName:     ownerName,
+		CreatedAt:     item.CreatedAt.Format(timeLayout),
+	}
+	if item.ExpiresAt != nil {
+		row.ExpiresAt = item.ExpiresAt.Format(timeLayout)
+	}
+	if item.AudienceType == "groups" {
+		row.TargetWallet = ""
+		row.TargetGroups = h.targetGroupsForShare(ctx, item.ID)
+	}
+	if item.AllUsers || item.AudienceType == shareuser.AudienceTypeAllUsers {
+		row.TargetWallet = ""
+	}
+	return row
+}
+
+func (h *ShareUserHandler) targetGroupsForShare(ctx context.Context, shareID string) []shareTargetGroupResp {
+	if h == nil || h.shareUserService == nil || h.shareUserService.Repository() == nil {
+		return nil
+	}
+	audiences, err := h.shareUserService.Repository().ListAudiencesByShareID(ctx, shareID)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("failed to load share target groups",
+				zap.String("share_id", shareID),
+				zap.Error(err))
+		}
+		return nil
+	}
+	seen := make(map[string]struct{})
+	groups := make([]shareTargetGroupResp, 0)
+	for _, aud := range audiences {
+		groupID := strings.TrimSpace(aud.SourceGroupID)
+		if groupID == "" {
+			continue
+		}
+		if _, ok := seen[groupID]; ok {
+			continue
+		}
+		seen[groupID] = struct{}{}
+		groups = append(groups, shareTargetGroupResp{
+			ID:   groupID,
+			Name: strings.TrimSpace(aud.SourceGroupName),
+		})
+	}
+	return groups
+}
+
 func formatTargetWallet(item *shareuser.ShareUserItem) string {
 	if item == nil {
 		return ""
 	}
 	if item.AllUsers || item.AudienceType == shareuser.AudienceTypeAllUsers {
-		return "@all_users"
+		return ""
 	}
 	if item.AudienceType == "groups" {
-		return fmt.Sprintf("@groups:%d", item.TargetCount)
+		return ""
 	}
 	if item.TargetCount > 1 || item.AudienceType == "addresses" {
 		return fmt.Sprintf("@addresses:%d", item.TargetCount)
@@ -1404,10 +1425,10 @@ func formatTargetWalletForViewer(item *shareuser.ShareUserItem, viewerWallet str
 		return ""
 	}
 	if item.AllUsers || item.AudienceType == shareuser.AudienceTypeAllUsers {
-		return "@all_users"
+		return ""
 	}
 	if item.AudienceType == "groups" {
-		return fmt.Sprintf("@groups:%d", item.TargetCount)
+		return ""
 	}
 	if item.TargetCount > 1 || item.AudienceType == "addresses" {
 		return fmt.Sprintf("@addresses:%d", item.TargetCount)

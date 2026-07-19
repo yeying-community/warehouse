@@ -13,10 +13,11 @@ import (
 )
 
 type UserShareAudience struct {
-	AudienceType  string
-	TargetUserID  string
-	TargetWallet  string
-	SourceGroupID string
+	AudienceType    string
+	TargetUserID    string
+	TargetWallet    string
+	SourceGroupID   string
+	SourceGroupName string
 }
 
 // UserShareRepository 定向分享仓储接口
@@ -119,19 +120,20 @@ func (r *PostgresUserShareRepository) GetByID(ctx context.Context, id string) (*
 			SELECT
 				share_id,
 				COUNT(*)::INT AS audience_count,
-				COUNT(*) FILTER (WHERE audience_type = 'user')::INT AS target_count,
+				COUNT(*) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL)::INT AS target_count,
+				COUNT(DISTINCT source_group_id) FILTER (WHERE source_group_id IS NOT NULL)::INT AS group_count,
 				BOOL_OR(audience_type = 'all_users') AS all_users,
-				BOOL_OR(source_group_id IS NOT NULL) AS has_group_source,
-				MIN(target_user_id) FILTER (WHERE audience_type = 'user') AS sample_target_user_id,
-				MIN(target_wallet_address) FILTER (WHERE audience_type = 'user') AS sample_target_wallet
+				BOOL_OR(audience_type = 'group' OR source_group_id IS NOT NULL) AS has_group_source,
+				MIN(target_user_id) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL) AS sample_target_user_id,
+				MIN(target_wallet_address) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL) AS sample_target_wallet
 			FROM internal_share_audiences
 			WHERE share_id = $1
 			GROUP BY share_id
 		)
 		SELECT
 			i.id, i.owner_user_id, i.owner_username, i.name, i.path, i.is_dir, i.permissions, i.expires_at, i.created_at,
-			COALESCE(s.audience_count, 0),
-			COALESCE(s.target_count, 0),
+			COALESCE(CASE WHEN COALESCE(s.has_group_source, FALSE) THEN s.group_count ELSE s.audience_count END, 0),
+			COALESCE(CASE WHEN COALESCE(s.has_group_source, FALSE) THEN s.group_count ELSE s.target_count END, 0),
 			COALESCE(s.all_users, FALSE),
 			COALESCE(s.has_group_source, FALSE),
 			COALESCE(s.sample_target_user_id, ''),
@@ -190,18 +192,19 @@ func (r *PostgresUserShareRepository) GetByOwnerID(ctx context.Context, ownerID 
 			SELECT
 				share_id,
 				COUNT(*)::INT AS audience_count,
-				COUNT(*) FILTER (WHERE audience_type = 'user')::INT AS target_count,
+				COUNT(*) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL)::INT AS target_count,
+				COUNT(DISTINCT source_group_id) FILTER (WHERE source_group_id IS NOT NULL)::INT AS group_count,
 				BOOL_OR(audience_type = 'all_users') AS all_users,
-				BOOL_OR(source_group_id IS NOT NULL) AS has_group_source,
-				MIN(target_user_id) FILTER (WHERE audience_type = 'user') AS sample_target_user_id,
-				MIN(target_wallet_address) FILTER (WHERE audience_type = 'user') AS sample_target_wallet
+				BOOL_OR(audience_type = 'group' OR source_group_id IS NOT NULL) AS has_group_source,
+				MIN(target_user_id) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL) AS sample_target_user_id,
+				MIN(target_wallet_address) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL) AS sample_target_wallet
 			FROM internal_share_audiences
 			GROUP BY share_id
 		)
 		SELECT
 			i.id, i.owner_user_id, i.owner_username, i.name, i.path, i.is_dir, i.permissions, i.expires_at, i.created_at,
-			COALESCE(s.audience_count, 0),
-			COALESCE(s.target_count, 0),
+			COALESCE(CASE WHEN COALESCE(s.has_group_source, FALSE) THEN s.group_count ELSE s.audience_count END, 0),
+			COALESCE(CASE WHEN COALESCE(s.has_group_source, FALSE) THEN s.group_count ELSE s.target_count END, 0),
 			COALESCE(s.all_users, FALSE),
 			COALESCE(s.has_group_source, FALSE),
 			COALESCE(s.sample_target_user_id, ''),
@@ -223,28 +226,42 @@ func (r *PostgresUserShareRepository) GetByOwnerID(ctx context.Context, ownerID 
 
 func (r *PostgresUserShareRepository) GetByTargetID(ctx context.Context, targetID string) ([]*shareuser.ShareUserItem, error) {
 	query := `
-		WITH accessible_shares AS (
-			SELECT DISTINCT share_id
-			FROM internal_share_audiences
-			WHERE (audience_type = 'user' AND target_user_id = $1)
-			   OR audience_type = 'all_users'
+		WITH target_user AS (
+			SELECT id, wallet_address
+			FROM users
+			WHERE id = $1
+		),
+		accessible_shares AS (
+			SELECT DISTINCT a.share_id
+			FROM internal_share_audiences a
+			CROSS JOIN target_user t
+			LEFT JOIN group_members gm
+				ON a.source_group_id IS NOT NULL
+				AND gm.group_id = a.source_group_id
+				AND gm.status = 'active'
+				AND TRIM(COALESCE(t.wallet_address, '')) <> ''
+				AND LOWER(gm.wallet_address) = LOWER(t.wallet_address)
+			WHERE (a.audience_type = 'user' AND a.source_group_id IS NULL AND a.target_user_id = t.id)
+			   OR a.audience_type = 'all_users'
+			   OR gm.id IS NOT NULL
 		),
 		audience_stats AS (
 			SELECT
 				share_id,
 				COUNT(*)::INT AS audience_count,
-				COUNT(*) FILTER (WHERE audience_type = 'user')::INT AS target_count,
+				COUNT(*) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL)::INT AS target_count,
+				COUNT(DISTINCT source_group_id) FILTER (WHERE source_group_id IS NOT NULL)::INT AS group_count,
 				BOOL_OR(audience_type = 'all_users') AS all_users,
-				BOOL_OR(source_group_id IS NOT NULL) AS has_group_source,
-				MIN(target_user_id) FILTER (WHERE audience_type = 'user') AS sample_target_user_id,
-				MIN(target_wallet_address) FILTER (WHERE audience_type = 'user') AS sample_target_wallet
+				BOOL_OR(audience_type = 'group' OR source_group_id IS NOT NULL) AS has_group_source,
+				MIN(target_user_id) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL) AS sample_target_user_id,
+				MIN(target_wallet_address) FILTER (WHERE audience_type = 'user' AND source_group_id IS NULL) AS sample_target_wallet
 			FROM internal_share_audiences
 			GROUP BY share_id
 		)
 		SELECT
 			i.id, i.owner_user_id, i.owner_username, i.name, i.path, i.is_dir, i.permissions, i.expires_at, i.created_at,
-			COALESCE(s.audience_count, 0),
-			COALESCE(s.target_count, 0),
+			COALESCE(CASE WHEN COALESCE(s.has_group_source, FALSE) THEN s.group_count ELSE s.audience_count END, 0),
+			COALESCE(CASE WHEN COALESCE(s.has_group_source, FALSE) THEN s.group_count ELSE s.target_count END, 0),
 			COALESCE(s.all_users, FALSE),
 			COALESCE(s.has_group_source, FALSE),
 			COALESCE(s.sample_target_user_id, ''),
@@ -313,10 +330,11 @@ func (r *PostgresUserShareRepository) DeleteByID(ctx context.Context, id string)
 
 func (r *PostgresUserShareRepository) ListAudiencesByShareID(ctx context.Context, shareID string) ([]UserShareAudience, error) {
 	query := `
-		SELECT audience_type, target_user_id, target_wallet_address, source_group_id
-		FROM internal_share_audiences
-		WHERE share_id = $1
-		ORDER BY created_at ASC, id ASC
+		SELECT a.audience_type, a.target_user_id, a.target_wallet_address, a.source_group_id, COALESCE(g.name, '')
+		FROM internal_share_audiences a
+		LEFT JOIN address_groups g ON g.id = a.source_group_id
+		WHERE a.share_id = $1
+		ORDER BY a.created_at ASC, a.id ASC
 	`
 
 	rows, err := r.db.QueryContext(ctx, query, shareID)
@@ -331,7 +349,8 @@ func (r *PostgresUserShareRepository) ListAudiencesByShareID(ctx context.Context
 		var targetUserID sql.NullString
 		var targetWallet sql.NullString
 		var sourceGroupID sql.NullString
-		if err := rows.Scan(&audienceType, &targetUserID, &targetWallet, &sourceGroupID); err != nil {
+		var sourceGroupName string
+		if err := rows.Scan(&audienceType, &targetUserID, &targetWallet, &sourceGroupID, &sourceGroupName); err != nil {
 			return nil, fmt.Errorf("failed to scan share audience: %w", err)
 		}
 		aud := UserShareAudience{
@@ -346,6 +365,7 @@ func (r *PostgresUserShareRepository) ListAudiencesByShareID(ctx context.Context
 		if sourceGroupID.Valid {
 			aud.SourceGroupID = sourceGroupID.String
 		}
+		aud.SourceGroupName = strings.TrimSpace(sourceGroupName)
 		items = append(items, aud)
 	}
 	if err := rows.Err(); err != nil {
@@ -422,6 +442,12 @@ func normalizeAudiences(input []UserShareAudience) []UserShareAudience {
 			aud.TargetUserID = ""
 			aud.TargetWallet = ""
 			aud.SourceGroupID = ""
+		case shareuser.AudienceTypeGroup:
+			if aud.SourceGroupID == "" {
+				continue
+			}
+			aud.TargetUserID = ""
+			aud.TargetWallet = ""
 		case shareuser.AudienceTypeUser:
 			if aud.TargetUserID == "" {
 				continue

@@ -266,12 +266,36 @@ function formatTargetScope(item: DirectShareItem | null): string {
   if (!item) return '-'
   if (item.allUsers || item.targetType === 'all_users') return '所有用户'
   if (item.targetType === 'groups') {
-    const count = item.targetCount || item.audienceCount || 0
-    return count > 0 ? `分组（${count} 人）` : '分组'
+    const count = item.targetGroups?.length || item.targetCount || item.audienceCount || 0
+    return count > 0 ? `动态分组（${count} 个）` : '动态分组'
   }
   const count = item.targetCount || item.audienceCount || 0
   if (count > 1) return `地址共享（${count} 个）`
   return '地址共享'
+}
+
+function formatTargetGroups(item: DirectShareItem | null): string {
+  const groups = item?.targetGroups || []
+  if (!groups.length) return '-'
+  return groups.map(group => group.name || group.id).filter(Boolean).join('、') || '-'
+}
+
+function formatTargetAudienceLabel(item: DirectShareItem | null): string {
+  if (!item) return '目标地址'
+  if (item.allUsers || item.targetType === 'all_users') return '目标对象'
+  if (item.targetType === 'groups') return '目标分组'
+  return '目标地址'
+}
+
+function formatTargetAudience(item: DirectShareItem | null): string {
+  if (!item) return '-'
+  if (item.allUsers || item.targetType === 'all_users') return '所有用户'
+  if (item.targetType === 'groups') return formatTargetGroups(item)
+  return item.targetWallet || '-'
+}
+
+function isTargetAudienceMono(item: DirectShareItem | null): boolean {
+  return !!item && item.targetType !== 'groups' && item.targetType !== 'all_users' && !item.allUsers
 }
 
 onMounted(() => {
@@ -470,8 +494,8 @@ onBeforeUnmount(() => {
           <span class="detail-value mono">{{ detailDirectShare.ownerWallet || '-' }}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">目标地址</span>
-          <span class="detail-value mono">{{ detailDirectShare.targetWallet || '-' }}</span>
+          <span class="detail-label">{{ formatTargetAudienceLabel(detailDirectShare) }}</span>
+          <span class="detail-value" :class="{ mono: isTargetAudienceMono(detailDirectShare) }">{{ formatTargetAudience(detailDirectShare) }}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label">目标范围</span>
@@ -548,8 +572,8 @@ onBeforeUnmount(() => {
           <span class="detail-value mono">{{ detailReceivedShare.ownerWallet || '-' }}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">目标地址</span>
-          <span class="detail-value mono">{{ detailReceivedShare.targetWallet || '-' }}</span>
+          <span class="detail-label">{{ formatTargetAudienceLabel(detailReceivedShare) }}</span>
+          <span class="detail-value" :class="{ mono: isTargetAudienceMono(detailReceivedShare) }">{{ formatTargetAudience(detailReceivedShare) }}</span>
         </div>
         <div class="detail-row">
           <span class="detail-label">目标范围</span>
