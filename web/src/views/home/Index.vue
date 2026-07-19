@@ -788,6 +788,7 @@ const filteredDirectShareList = computed(() => {
     if (item.name.toLowerCase().includes(token)) return true
     if (item.path?.toLowerCase().includes(token)) return true
     if (item.targetWallet?.toLowerCase().includes(token)) return true
+    if (item.targetGroups?.some(group => group.name.toLowerCase().includes(token) || group.id.toLowerCase().includes(token))) return true
     if (item.ownerName?.toLowerCase().includes(token)) return true
     if (item.ownerWallet?.toLowerCase().includes(token)) return true
     const relationLabel = isDirectShareOwner(item) ? '我分享的' : '分享我的'
@@ -800,6 +801,7 @@ const filteredSharedWithMeList = computed(() => {
   return sharedWithMeList.value.filter(item => {
     if (item.name.toLowerCase().includes(token)) return true
     if (item.ownerName?.toLowerCase().includes(token)) return true
+    if (item.targetGroups?.some(group => group.name.toLowerCase().includes(token) || group.id.toLowerCase().includes(token))) return true
     return item.ownerWallet?.toLowerCase().includes(token) || false
   })
 })

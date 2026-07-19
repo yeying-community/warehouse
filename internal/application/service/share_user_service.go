@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -60,13 +61,13 @@ func NewShareUserService(
 	}
 }
 
-// CreateByGroups 按共享分组创建共享（受众会在创建时展开为用户快照）
+// CreateByGroups 按共享分组创建共享（访问时按当前 active 分组成员动态授权）
 func (s *ShareUserService) CreateByGroups(ctx context.Context, owner *user.User, groupIDs []string, rawPath string, permissions string, expiry ShareExpiryInput) (*shareuser.ShareUserItem, error) {
-	targetUsers, err := s.resolveTargetUsersByGroups(ctx, owner, groupIDs)
+	targetGroups, notificationTargets, err := s.resolveTargetGroups(ctx, owner, groupIDs)
 	if err != nil {
 		return nil, err
 	}
-	return s.createWithAudiences(ctx, owner, rawPath, permissions, expiry, targetUsers, false, "groups")
+	return s.createWithAudiences(ctx, owner, rawPath, permissions, expiry, targetGroups, notificationTargets, false, "groups")
 }
 
 // CreateByWallets 按地址列表创建共享
@@ -75,12 +76,12 @@ func (s *ShareUserService) CreateByWallets(ctx context.Context, owner *user.User
 	if err != nil {
 		return nil, err
 	}
-	return s.createWithAudiences(ctx, owner, rawPath, permissions, expiry, targetUsers, false, "addresses")
+	return s.createWithAudiences(ctx, owner, rawPath, permissions, expiry, targetUsers, targetUsers, false, "addresses")
 }
 
 // CreateForAllUsers 创建全员共享
 func (s *ShareUserService) CreateForAllUsers(ctx context.Context, owner *user.User, rawPath string, permissions string, expiry ShareExpiryInput) (*shareuser.ShareUserItem, error) {
-	return s.createWithAudiences(ctx, owner, rawPath, permissions, expiry, nil, true, shareuser.AudienceTypeAllUsers)
+	return s.createWithAudiences(ctx, owner, rawPath, permissions, expiry, nil, nil, true, shareuser.AudienceTypeAllUsers)
 }
 
 func (s *ShareUserService) createWithAudiences(
@@ -89,7 +90,8 @@ func (s *ShareUserService) createWithAudiences(
 	rawPath string,
 	permissions string,
 	expiry ShareExpiryInput,
-	targetUsers []repository.UserShareAudience,
+	targetAudiences []repository.UserShareAudience,
+	notificationTargets []repository.UserShareAudience,
 	allUsers bool,
 	targetType string,
 ) (*shareuser.ShareUserItem, error) {
@@ -124,13 +126,13 @@ func (s *ShareUserService) createWithAudiences(
 		expiresAt,
 	)
 
-	audiences := make([]repository.UserShareAudience, 0, len(targetUsers)+1)
+	audiences := make([]repository.UserShareAudience, 0, len(targetAudiences)+1)
 	if allUsers {
 		audiences = append(audiences, repository.UserShareAudience{
 			AudienceType: shareuser.AudienceTypeAllUsers,
 		})
 	}
-	audiences = append(audiences, targetUsers...)
+	audiences = append(audiences, targetAudiences...)
 	if len(audiences) == 0 {
 		return nil, fmt.Errorf("at least one target audience is required")
 	}
@@ -139,7 +141,7 @@ func (s *ShareUserService) createWithAudiences(
 		return nil, err
 	}
 	item.AudienceCount = len(audiences)
-	item.TargetCount = len(targetUsers)
+	item.TargetCount = len(targetAudiences)
 	item.AllUsers = allUsers
 	switch strings.TrimSpace(strings.ToLower(targetType)) {
 	case "groups":
@@ -155,13 +157,13 @@ func (s *ShareUserService) createWithAudiences(
 			item.AudienceType = "addresses"
 		}
 	}
-	if len(targetUsers) > 0 {
-		item.TargetUserID = targetUsers[0].TargetUserID
-		item.TargetWalletAddress = targetUsers[0].TargetWallet
+	if len(targetAudiences) > 0 && strings.TrimSpace(targetAudiences[0].TargetUserID) != "" {
+		item.TargetUserID = targetAudiences[0].TargetUserID
+		item.TargetWalletAddress = targetAudiences[0].TargetWallet
 	}
 
 	if s.notification != nil {
-		s.notification.NotifyShareCreated(ctx, owner, item.ID, item.Name, item.Path, targetUsers, allUsers)
+		s.notification.NotifyShareCreated(ctx, owner, item.ID, item.Name, item.Path, notificationTargets, allUsers)
 	}
 
 	s.logger.Info("share user created",
@@ -211,35 +213,39 @@ func (s *ShareUserService) resolveTargetUsers(ctx context.Context, wallets []str
 	return result, nil
 }
 
-func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner *user.User, groupIDs []string) ([]repository.UserShareAudience, error) {
+func (s *ShareUserService) resolveTargetGroups(ctx context.Context, owner *user.User, groupIDs []string) ([]repository.UserShareAudience, []repository.UserShareAudience, error) {
 	if s.groupService == nil {
-		return nil, fmt.Errorf("group management service is not available")
+		return nil, nil, fmt.Errorf("group management service is not available")
 	}
 	if len(groupIDs) == 0 {
-		return nil, fmt.Errorf("no target groups provided")
+		return nil, nil, fmt.Errorf("no target groups provided")
 	}
 	members, err := s.groupService.ListMembers(ctx, owner)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	selectedOrder := make([]string, 0, len(groupIDs))
 	selected := make(map[string]struct{}, len(groupIDs))
 	for _, raw := range groupIDs {
 		groupID := strings.TrimSpace(raw)
 		if groupID == "" {
 			continue
 		}
+		if _, ok := selected[groupID]; ok {
+			continue
+		}
 		selected[groupID] = struct{}{}
+		selectedOrder = append(selectedOrder, groupID)
 	}
 	if len(selected) == 0 {
-		return nil, fmt.Errorf("no target groups provided")
+		return nil, nil, fmt.Errorf("no target groups provided")
 	}
 
 	wallets := make([]string, 0)
 	groupByWallet := make(map[string]string)
+	visibleGroups := make(map[string]struct{}, len(selected))
+	activeGroups := make(map[string]struct{}, len(selected))
 	for _, member := range members {
-		if group.NormalizeMemberStatus(member.Status) != group.MemberStatusActive {
-			continue
-		}
 		groupID := strings.TrimSpace(member.GroupID)
 		if groupID == "" {
 			continue
@@ -247,24 +253,76 @@ func (s *ShareUserService) resolveTargetUsersByGroups(ctx context.Context, owner
 		if _, ok := selected[groupID]; !ok {
 			continue
 		}
+		visibleGroups[groupID] = struct{}{}
+		if group.NormalizeMemberStatus(member.Status) != group.MemberStatusActive {
+			continue
+		}
+		activeGroups[groupID] = struct{}{}
 		wallets = append(wallets, member.WalletAddress)
 		walletKey := strings.ToLower(strings.TrimSpace(member.WalletAddress))
 		if walletKey != "" {
 			groupByWallet[walletKey] = groupID
 		}
 	}
-	if len(wallets) == 0 {
-		return nil, fmt.Errorf("no members found in target groups")
+
+	groupAudiences := make([]repository.UserShareAudience, 0, len(selectedOrder))
+	for _, groupID := range selectedOrder {
+		if _, ok := visibleGroups[groupID]; !ok {
+			return nil, nil, fmt.Errorf("target group %s is not visible", groupID)
+		}
+		if _, ok := activeGroups[groupID]; !ok {
+			return nil, nil, fmt.Errorf("no active members found in target group %s", groupID)
+		}
+		groupAudiences = append(groupAudiences, repository.UserShareAudience{
+			AudienceType:  shareuser.AudienceTypeGroup,
+			SourceGroupID: groupID,
+		})
 	}
-	targetUsers, err := s.resolveTargetUsers(ctx, wallets)
-	if err != nil {
-		return nil, err
+	if len(groupAudiences) == 0 {
+		return nil, nil, fmt.Errorf("no target groups provided")
 	}
-	for i := range targetUsers {
-		walletKey := strings.ToLower(strings.TrimSpace(targetUsers[i].TargetWallet))
-		targetUsers[i].SourceGroupID = groupByWallet[walletKey]
+
+	return groupAudiences, s.resolveExistingTargetUsers(ctx, wallets, groupByWallet), nil
+}
+
+func (s *ShareUserService) resolveExistingTargetUsers(ctx context.Context, wallets []string, groupByWallet map[string]string) []repository.UserShareAudience {
+	if s.userRepo == nil {
+		return nil
 	}
-	return targetUsers, nil
+	seenWallet := make(map[string]struct{})
+	seenUserID := make(map[string]struct{})
+	result := make([]repository.UserShareAudience, 0, len(wallets))
+	for _, wallet := range wallets {
+		wallet = strings.ToLower(strings.TrimSpace(wallet))
+		if wallet == "" {
+			continue
+		}
+		if _, ok := seenWallet[wallet]; ok {
+			continue
+		}
+		seenWallet[wallet] = struct{}{}
+
+		target, err := s.userRepo.FindByWalletAddress(ctx, wallet)
+		if err != nil {
+			if !errors.Is(err, user.ErrUserNotFound) && s.logger != nil {
+				s.logger.Warn("failed to resolve group share notification target",
+					zap.String("wallet", wallet),
+					zap.Error(err))
+			}
+			continue
+		}
+		if _, ok := seenUserID[target.ID]; ok {
+			continue
+		}
+		seenUserID[target.ID] = struct{}{}
+		result = append(result, repository.UserShareAudience{
+			AudienceType:  shareuser.AudienceTypeUser,
+			TargetUserID:  target.ID,
+			TargetWallet:  target.WalletAddress,
+			SourceGroupID: groupByWallet[wallet],
+		})
+	}
+	return result
 }
 
 func (s *ShareUserService) webdavPrefix() string {
@@ -404,19 +462,9 @@ func (s *ShareUserService) ResolveForTarget(ctx context.Context, target *user.Us
 		if err != nil {
 			return nil, nil, err
 		}
-		allowed := false
-		for _, aud := range audiences {
-			switch strings.TrimSpace(strings.ToLower(aud.AudienceType)) {
-			case shareuser.AudienceTypeAllUsers:
-				allowed = true
-			case shareuser.AudienceTypeUser:
-				if strings.TrimSpace(aud.TargetUserID) == target.ID {
-					allowed = true
-				}
-			}
-			if allowed {
-				break
-			}
+		allowed, err := s.targetHasAudienceAccess(ctx, target, audiences)
+		if err != nil {
+			return nil, nil, err
 		}
 		if !allowed {
 			return nil, nil, fmt.Errorf("permission denied: not your share")
@@ -436,6 +484,58 @@ func (s *ShareUserService) ResolveForTarget(ctx context.Context, target *user.Us
 		return nil, nil, fmt.Errorf("failed to get owner: %w", err)
 	}
 	return item, owner, nil
+}
+
+func (s *ShareUserService) targetHasAudienceAccess(ctx context.Context, target *user.User, audiences []repository.UserShareAudience) (bool, error) {
+	if target == nil {
+		return false, nil
+	}
+	groupIDs := make(map[string]struct{})
+	for _, aud := range audiences {
+		sourceGroupID := strings.TrimSpace(aud.SourceGroupID)
+		if sourceGroupID != "" {
+			groupIDs[sourceGroupID] = struct{}{}
+		}
+		switch strings.TrimSpace(strings.ToLower(aud.AudienceType)) {
+		case shareuser.AudienceTypeAllUsers:
+			return true, nil
+		case shareuser.AudienceTypeUser:
+			if sourceGroupID == "" && strings.TrimSpace(aud.TargetUserID) == target.ID {
+				return true, nil
+			}
+		}
+	}
+	if len(groupIDs) == 0 {
+		return false, nil
+	}
+	return s.targetHasActiveGroupMembership(ctx, target, groupIDs)
+}
+
+func (s *ShareUserService) targetHasActiveGroupMembership(ctx context.Context, target *user.User, groupIDs map[string]struct{}) (bool, error) {
+	if s.groupService == nil || target == nil {
+		return false, nil
+	}
+	targetWallet := strings.ToLower(strings.TrimSpace(target.WalletAddress))
+	if targetWallet == "" {
+		return false, nil
+	}
+	members, err := s.groupService.ListMembers(ctx, target)
+	if err != nil {
+		return false, err
+	}
+	for _, member := range members {
+		groupID := strings.TrimSpace(member.GroupID)
+		if _, ok := groupIDs[groupID]; !ok {
+			continue
+		}
+		if group.NormalizeMemberStatus(member.Status) != group.MemberStatusActive {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(member.WalletAddress), targetWallet) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ResolveSharePath 解析分享路径并确保在分享范围内
