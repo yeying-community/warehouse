@@ -309,6 +309,11 @@ export interface ShareItem {
 
 export type ShareMode = 'download' | 'preview'
 
+export interface ShareTargetGroup {
+  id: string
+  name: string
+}
+
 // 定向分享项目类型
 export interface DirectShareItem {
   id: string
@@ -320,6 +325,7 @@ export interface DirectShareItem {
   targetType?: 'addresses' | 'groups' | 'all_users'
   targetCount?: number
   audienceCount?: number
+  targetGroups?: ShareTargetGroup[]
   allUsers?: boolean
   ownerWallet?: string
   ownerName?: string
@@ -479,6 +485,7 @@ export const directShareApi = {
         targetUserId?: string
         targetWallet?: string
         sourceGroupId?: string
+        sourceGroupName?: string
       }>
     }>(`/api/v1/public/share/user/audiences?${query.toString()}`)
   }

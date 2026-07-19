@@ -400,12 +400,18 @@ func (p *PostgresDB) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_internal_share_audiences_all_users
 			ON internal_share_audiences(audience_type)
 			WHERE audience_type = 'all_users'`,
+		`CREATE INDEX IF NOT EXISTS idx_internal_share_audiences_group
+			ON internal_share_audiences(source_group_id)
+			WHERE source_group_id IS NOT NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_share_audiences_share_user
 			ON internal_share_audiences(share_id, audience_type, target_user_id)
 			WHERE audience_type = 'user' AND target_user_id IS NOT NULL`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_share_audiences_share_all_users
 			ON internal_share_audiences(share_id, audience_type)
 			WHERE audience_type = 'all_users'`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_internal_share_audiences_share_group
+			ON internal_share_audiences(share_id, audience_type, source_group_id)
+			WHERE audience_type = 'group' AND source_group_id IS NOT NULL`,
 
 		// 兼容历史库：旧版 group_members 表缺少审批状态列，必须先补列再执行数据迁移
 		`ALTER TABLE group_members ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'`,

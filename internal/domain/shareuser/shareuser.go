@@ -16,6 +16,7 @@ var (
 const (
 	AudienceTypeUser     = "user"
 	AudienceTypeAllUsers = "all_users"
+	AudienceTypeGroup    = "group"
 )
 
 // ShareUserItem 定向分享实体
