@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${ROOT_DIR}/.env"
 BINARY="${ROOT_DIR}/bin/warehouse"
 CONFIG="${ROOT_DIR}/config.yaml"
 PID_DIR="${ROOT_DIR}/run"
@@ -11,13 +10,6 @@ LOG_DIR="${ROOT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/warehouse.log"
 
 ACTION="${1:-start}"
-
-if [[ -f "${ENV_FILE}" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "${ENV_FILE}"
-  set +a
-fi
 
 if [[ ! -f "${CONFIG}" ]]; then
   CONFIG="${ROOT_DIR}/config.yaml.template"
