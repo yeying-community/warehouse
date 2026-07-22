@@ -34,6 +34,7 @@ import ShareTableView from './components/ShareTableView.vue'
 import SharedWithMeTableView from './components/SharedWithMeTableView.vue'
 import RecycleTableView from './components/RecycleTableView.vue'
 import type { CipherSuiteOption, DropEntry, FileItem, UploadItem, UploadTask } from './types'
+import userGuideMarkdown from '../../../../docs/用户使用指南.md?raw'
 
 const FilePreviewDialog = defineAsyncComponent(() => import('./components/FilePreviewDialog.vue'))
 const DAV_PREFIX = normalizeDavPrefix((import.meta as any)?.env?.VITE_WEBDAV_PREFIX || '/dav')
@@ -95,6 +96,7 @@ const shareTab = ref<'link' | 'direct'>('link')
 const directShareList = ref<DirectShareItem[]>([])
 const directShareLoading = ref(false)
 const showSharedWithMe = ref(false)
+const showHelp = ref(false)
 const sharedWithMeList = ref<DirectShareItem[]>([])
 const sharedWithMeLoading = ref(false)
 const sharedActive = ref<DirectShareItem | null>(null)
@@ -115,6 +117,7 @@ const adminUsersEditValue = ref('')
 const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showGroupView = ref(false)
 const managementSection = ref<ManagementSection>('account')
+const credentialTab = ref<CredentialTab>('webdav')
 const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
@@ -158,6 +161,8 @@ const s3CredentialDialogVisible = ref(false)
 const s3Credentials = ref<S3CredentialItem[]>([])
 const s3CredentialCreateResult = ref<CreateS3CredentialResult | null>(null)
 const s3CredentialName = ref('')
+const s3CredentialBucket = ref<'personal' | 'apps'>('personal')
+const s3CredentialDirectory = ref('')
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const groupStore = useGroupStore()
 const { groupLoading, managedGroups, activeGroupMembers } = storeToRefs(groupStore)
@@ -258,8 +263,9 @@ const FILE_PATH_STORAGE_KEY = 'warehouse:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'warehouse:sharedActiveId'
 const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
-type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group'
+type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group' | 'help'
 type ManagementSection = 'account' | 'keys' | 'adminUsers' | 'group'
+type CredentialTab = 'webdav' | 's3'
 type AssetSpace = AssetSpaceInfo
 type ShareExpiryForm = {
   expiresValue: string
@@ -320,7 +326,7 @@ const assetSpaceLoading = ref(false)
 const sidePanelCollapsed = ref(false)
 
 // 是否显示回收站列表
-const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value)
+const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value && !showHelp.value)
 const canUpload = computed(() => {
   if (!isFileView.value && !showSharedWithMe.value) return false
   if (showSharedWithMe.value) return isSharedBrowse.value && sharedCanCreate.value
@@ -341,8 +347,9 @@ const userProfile = computed(() => {
   const hasPassword = Boolean(userInfo.value?.has_password)
   return { username, walletAddress, walletName, permissions, createdAt, hasPassword }
 })
-const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value)
-const showListHeader = computed(() => !showQuotaManage.value && !showGroupView.value)
+const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value && !showHelp.value)
+const showListHeader = computed(() => !showQuotaManage.value && !showGroupView.value && !showHelp.value)
+const helpGuideHtml = computed(() => renderMarkdown(userGuideMarkdown))
 type MobileAction = { command: string; label: string; disabled?: boolean }
 type MobileActionGroup = { title: string; items: MobileAction[] }
 
@@ -516,6 +523,7 @@ const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
+  if (showHelp.value) return '使用指南'
   if (showQuotaManage.value) return managementSectionLabel.value
   if (showGroupView.value) return '分组管理'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
@@ -1571,14 +1579,42 @@ async function fetchS3Credentials(withLoading = false) {
 
 function openS3CredentialDialog() {
   s3CredentialName.value = ''
+  s3CredentialBucket.value = 'personal'
+  s3CredentialDirectory.value = ''
   s3CredentialCreateResult.value = null
   s3CredentialDialogVisible.value = true
+}
+
+function normalizeS3CredentialDirectory(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+}
+
+function hasInvalidS3CredentialDirectory(value: string): boolean {
+  return value.split('/').some(segment => segment === '.' || segment === '..')
+}
+
+function buildS3CredentialRootPath(): string | null {
+  const directory = normalizeS3CredentialDirectory(s3CredentialDirectory.value)
+  if (hasInvalidS3CredentialDirectory(directory)) {
+    showError('bucket 下目录不能包含 . 或 ..')
+    return null
+  }
+  return directory ? `/${s3CredentialBucket.value}/${directory}` : `/${s3CredentialBucket.value}`
 }
 
 async function submitS3Credential() {
   const name = s3CredentialName.value.trim()
   if (!name) {
     showError('请输入 S3 凭证名称')
+    return
+  }
+  const rootPath = buildS3CredentialRootPath()
+  if (!rootPath) {
     return
   }
   if (s3Credentials.value.some(item => item.name === name)) {
@@ -1589,7 +1625,7 @@ async function submitS3Credential() {
   try {
     s3CredentialCreateResult.value = await s3CredentialApi.create({
       name,
-      rootPath: '/personal',
+      rootPath,
       permissions: ['read', 'create', 'update', 'delete']
     })
     await fetchS3Credentials()
@@ -1611,6 +1647,18 @@ async function revokeS3Credential(item: S3CredentialItem) {
     showSuccess('S3 凭证已撤销')
   } catch (error: any) {
     showError(error?.message || '撤销 S3 凭证失败')
+  }
+}
+
+async function deleteS3Credential(item: S3CredentialItem) {
+  if (item.status !== 'revoked') return
+  if (!(await confirmAction(`确定删除已撤销的 S3 凭证 ${item.name} 吗？`, '删除 S3 凭证'))) return
+  try {
+    await s3CredentialApi.remove(item.id)
+    await fetchS3Credentials()
+    showSuccess('S3 凭证已删除')
+  } catch (error: any) {
+    showError(error?.message || '删除 S3 凭证失败')
   }
 }
 
@@ -2116,6 +2164,19 @@ async function revokeAccessKey(item: WebDAVAccessKeyItem) {
   }
 }
 
+async function deleteAccessKey(item: WebDAVAccessKeyItem) {
+  if (item.status !== 'revoked') return
+  if (!(await confirmAction(`确定删除已撤销的密钥 ${item.name} 吗？`, '删除密钥'))) return
+  try {
+    await webdavAccessKeyApi.remove(item.id)
+    await fetchAccessKeys()
+    showSuccess('密钥已删除')
+  } catch (error: any) {
+    console.error('删除访问密钥失败:', error)
+    showError(error?.message || '删除访问密钥失败')
+  }
+}
+
 async function copyAccessKeyValue(value: string, label: string) {
   await copyText(value, `${label}已复制`)
 }
@@ -2521,6 +2582,8 @@ async function refreshCurrentView() {
       }
     } else if (showGroupView.value) {
       await groupStore.fetchGroups()
+    } else if (showHelp.value) {
+      return
     } else {
       await fetchFiles(currentPath.value)
     }
@@ -3304,7 +3367,7 @@ async function retryUploadTask(task: UploadTask) {
     }
     return
   }
-  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value) {
+  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value && !showHelp.value) {
     fetchFiles(currentPath.value)
   }
 }
@@ -3950,6 +4013,7 @@ function enterRecycle() {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('recycle')
@@ -3964,6 +4028,7 @@ function enterFiles(path: string = currentPath.value) {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('files')
@@ -4129,6 +4194,7 @@ function enterShare(type: 'link' | 'direct' = shareTab.value) {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   shareTab.value = type
@@ -4154,6 +4220,7 @@ function enterSharedRoot(item: DirectShareItem) {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = item
   sharedPath.value = '/'
   sharedEntries.value = []
@@ -4169,6 +4236,7 @@ function backToSharedList() {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   shareTab.value = 'direct'
   sharedActive.value = null
   sharedPath.value = '/'
@@ -4185,6 +4253,7 @@ function enterSharedWithMeList() {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('sharedWithMe')
@@ -4331,6 +4400,7 @@ function enterGroupView() {
   showRecycle.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('group')
@@ -4347,6 +4417,7 @@ function enterQuotaManage(section: ManagementSection = 'account') {
   showRecycle.value = false
   showSharedWithMe.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('quotaManage')
@@ -4356,6 +4427,19 @@ function enterQuotaManage(section: ManagementSection = 'account') {
     return
   }
   fetchUserCenter()
+}
+
+function enterHelpGuide() {
+  detailDrawerVisible.value = false
+  showHelp.value = true
+  showQuotaManage.value = false
+  showGroupView.value = false
+  showShare.value = false
+  showRecycle.value = false
+  showSharedWithMe.value = false
+  sharedActive.value = null
+  sharedPath.value = '/'
+  persistView('help')
 }
 
 function openUploadTaskLocation(task: UploadTask) {
@@ -4617,6 +4701,150 @@ function formatSharePermission(permission: string): string {
   return permission
 }
 
+function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+const HELP_DOC_BASE_URL = 'https://github.com/yeying-community/warehouse/blob/main/docs/'
+
+function resolveHelpDocumentHref(href: string): string {
+  const value = href.trim()
+  if (/^https?:\/\//i.test(value)) return value
+  if (value.startsWith('./') || value.startsWith('../')) {
+    try {
+      return new URL(value, HELP_DOC_BASE_URL).toString()
+    } catch {
+      return ''
+    }
+  }
+  return ''
+}
+
+function renderInlineMarkdown(value: string): string {
+  const escaped = escapeHtml(value)
+  return escaped
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, href: string) => {
+      const target = resolveHelpDocumentHref(href)
+      if (!target) return `<span>${label}</span>`
+      return `<a href="${escapeHtml(target)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+    })
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+}
+
+function renderMarkdown(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const html: string[] = []
+  let inCode = false
+  let codeLang = ''
+  let codeLines: string[] = []
+  let inList = false
+  let inOrderedList = false
+  let inTable = false
+
+  const closeList = () => {
+    if (!inList) return
+    html.push('</ul>')
+    inList = false
+  }
+  const closeOrderedList = () => {
+    if (!inOrderedList) return
+    html.push('</ol>')
+    inOrderedList = false
+  }
+  const closeTable = () => {
+    if (!inTable) return
+    html.push('</tbody></table>')
+    inTable = false
+  }
+  const closeCode = () => {
+    if (!inCode) return
+    html.push(`<pre><code${codeLang ? ` class="language-${escapeHtml(codeLang)}"` : ''}>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
+    inCode = false
+    codeLang = ''
+    codeLines = []
+  }
+  const closeBlocks = () => {
+    closeList()
+    closeOrderedList()
+    closeTable()
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/, '')
+    if (line.startsWith('```')) {
+      if (inCode) {
+        closeCode()
+      } else {
+        closeBlocks()
+        inCode = true
+        codeLang = line.slice(3).trim()
+        codeLines = []
+      }
+      continue
+    }
+    if (inCode) {
+      codeLines.push(rawLine)
+      continue
+    }
+    if (!line.trim()) {
+      closeBlocks()
+      continue
+    }
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/)
+    if (headingMatch) {
+      closeBlocks()
+      const level = headingMatch[1].length
+      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`)
+      continue
+    }
+    if (/^\|.+\|$/.test(line)) {
+      const cells = line.slice(1, -1).split('|').map(item => item.trim())
+      const isSeparator = cells.every(cell => /^:?-{3,}:?$/.test(cell))
+      if (isSeparator) continue
+      closeList()
+      if (!inTable) {
+        html.push('<table><tbody>')
+        inTable = true
+      }
+      html.push(`<tr>${cells.map(cell => `<td>${renderInlineMarkdown(cell)}</td>`).join('')}</tr>`)
+      continue
+    }
+    const listMatch = line.match(/^[-*]\s+(.+)$/)
+    if (listMatch) {
+      closeOrderedList()
+      closeTable()
+      if (!inList) {
+        html.push('<ul>')
+        inList = true
+      }
+      html.push(`<li>${renderInlineMarkdown(listMatch[1])}</li>`)
+      continue
+    }
+    const orderedListMatch = line.match(/^\d+\.\s+(.+)$/)
+    if (orderedListMatch) {
+      closeList()
+      closeTable()
+      if (!inOrderedList) {
+        html.push('<ol>')
+        inOrderedList = true
+      }
+      html.push(`<li>${renderInlineMarkdown(orderedListMatch[1])}</li>`)
+      continue
+    }
+    closeBlocks()
+    html.push(`<p>${renderInlineMarkdown(line)}</p>`)
+  }
+  closeCode()
+  closeBlocks()
+  return html.join('\n')
+}
+
 function handleMobileAction(command: string) {
   switch (command) {
     case 'createFolder':
@@ -4749,6 +4977,10 @@ async function restoreView() {
     enterGroupView()
     return
   }
+  if (storedView === 'help') {
+    enterHelpGuide()
+    return
+  }
   const storedPath = localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'
   enterFiles(resolveInitialFilePath(storedPath))
 }
@@ -4863,6 +5095,10 @@ function handleExternalNavigate(event: Event) {
     enterGroupView()
     return
   }
+  if (view === 'help') {
+    enterHelpGuide()
+    return
+  }
 }
 
 function handleAuthChanged(): void {
@@ -4879,6 +5115,7 @@ function handleAuthChanged(): void {
     showSharedWithMe.value = false
     showQuotaManage.value = false
     showGroupView.value = false
+    showHelp.value = false
     detailDrawerVisible.value = false
     walletLoginSubmitting.value = false
   }
@@ -5209,6 +5446,23 @@ onBeforeUnmount(() => {
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
                   <span v-show="!sidePanelCollapsed">分组管理</span>
+                </button>
+              </el-tooltip>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">帮助</div>
+            <div class="nav-list">
+              <el-tooltip content="使用指南" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showHelp }"
+                  @click="enterHelpGuide"
+                >
+                  <el-icon class="nav-icon"><Notebook /></el-icon>
+                  <span v-show="!sidePanelCollapsed">使用指南</span>
                 </button>
               </el-tooltip>
             </div>
@@ -5824,105 +6078,125 @@ onBeforeUnmount(() => {
                   </el-table-column>
                 </el-table>
               </div>
-              <div v-if="managementSection === 'keys'" class="user-card user-card-full" v-loading="accessKeyLoading">
-                <div class="card-head">
-                  <div class="card-title">密钥管理</div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="fetchAccessKeys(true)">刷新</el-button>
-                    <el-button size="small" type="primary" @click="openAccessKeyDialogFromUserCenter">新建密钥</el-button>
-                  </div>
-                </div>
-                <div class="key-summary">
-                  <span>总数：{{ accessKeys.length }}</span>
-                  <span>生效中：{{ accessKeys.filter(item => item.status === 'active').length }}</span>
-                </div>
-                <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无密钥" />
-                <div v-else class="key-list">
-                  <div v-for="item in accessKeys" :key="item.id" class="key-item">
-                    <div class="key-main">
-                      <div class="key-title-row">
-                        <span class="key-title">{{ item.name }}</span>
-                        <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">
-                          {{ item.status === 'active' ? '生效中' : '已撤销' }}
-                        </el-tag>
-                      </div>
-                      <div class="key-meta-row mono">ID: {{ item.keyId }}</div>
-                      <div class="key-meta-row">
-                        已绑定目录：{{ (item.bindingPaths || []).length }}
-                      </div>
-                      <div v-if="(item.bindingPaths || []).length" class="key-meta-row">
-                        <el-tag
-                          v-for="path in (item.bindingPaths || []).slice(0, 4)"
-                          :key="`${item.id}-${path}`"
-                          size="small"
-                          type="info"
-                        >
-                          {{ path }}
-                        </el-tag>
-                        <span v-if="(item.bindingPaths || []).length > 4" class="key-more-text">
-                          +{{ (item.bindingPaths || []).length - 4 }}
-                        </span>
-                      </div>
-                      <div class="key-meta-row">
-                        权限：
-                        <el-tag
-                          v-for="permission in item.permissions"
-                          :key="`${item.id}-${permission}`"
-                          size="small"
-                          type="info"
-                        >
-                          {{ formatSharePermission(permission) }}
-                        </el-tag>
-                      </div>
-                      <div class="key-meta-row">
-                        最近使用：{{ item.lastUsedAt ? formatTime(item.lastUsedAt) : '-' }}
-                      </div>
-                    </div>
-                    <div class="key-actions">
-                      <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(item.keyId, 'Key ID')">复制 ID</el-button>
-                      <el-button
-                        size="small"
-                        text
-                        type="danger"
-                        :disabled="item.status !== 'active'"
-                        @click="revokeAccessKey(item)"
-                      >
-                        撤销
-                      </el-button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div v-if="managementSection === 'keys'" class="user-card user-card-full s3-credential-card" v-loading="s3CredentialLoading">
+              <div v-if="managementSection === 'keys'" class="user-card user-card-full">
                 <div class="card-head">
                   <div>
-                    <div class="card-title">S3 凭证</div>
-                    <div class="card-subtitle">用于 mc、rclone、AWS CLI 等 S3 客户端</div>
-                  </div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="fetchS3Credentials(true)">刷新</el-button>
-                    <el-button size="small" type="primary" @click="openS3CredentialDialog">新建 S3 凭证</el-button>
+                    <div class="card-title">密钥管理</div>
+                    <div class="card-subtitle">按协议分别管理 WebDAV 密钥和 S3 凭证</div>
                   </div>
                 </div>
-                <el-empty v-if="!s3Credentials.length && !s3CredentialLoading" description="暂无 S3 凭证" />
-                <el-table v-else :data="s3Credentials" size="small">
-                  <el-table-column prop="name" label="名称" min-width="160" />
-                  <el-table-column prop="accessKeyId" label="Access Key ID" min-width="230">
-                    <template #default="{ row }"><span class="mono">{{ row.accessKeyId }}</span></template>
-                  </el-table-column>
-                  <el-table-column prop="rootPath" label="目录范围" min-width="140" />
-                  <el-table-column prop="permissions" label="权限" min-width="220" />
-                  <el-table-column label="状态" width="100">
-                    <template #default="{ row }">
-                      <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag>
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="100">
-                    <template #default="{ row }">
-                      <el-button text type="danger" size="small" :disabled="row.status !== 'active'" @click="revokeS3Credential(row)">撤销</el-button>
-                    </template>
-                  </el-table-column>
-                </el-table>
+                <el-tabs v-model="credentialTab" class="credential-tabs">
+                  <el-tab-pane label="WebDAV 凭证" name="webdav">
+                    <div class="credential-tab-head">
+                      <div class="key-summary">
+                        <span>总数：{{ accessKeys.length }}</span>
+                        <span>生效中：{{ accessKeys.filter(item => item.status === 'active').length }}</span>
+                      </div>
+                      <div class="user-actions">
+                        <el-button size="small" @click="fetchAccessKeys(true)">刷新</el-button>
+                        <el-button size="small" type="primary" @click="openAccessKeyDialogFromUserCenter">新建</el-button>
+                      </div>
+                    </div>
+                    <div class="credential-tab-body" v-loading="accessKeyLoading">
+                      <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无 WebDAV 密钥" />
+                      <div v-else class="key-list">
+                        <div v-for="item in accessKeys" :key="item.id" class="key-item">
+                          <div class="key-main">
+                            <div class="key-title-row">
+                              <span class="key-title">{{ item.name }}</span>
+                              <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">
+                                {{ item.status === 'active' ? '生效中' : '已撤销' }}
+                              </el-tag>
+                            </div>
+                            <div class="key-meta-row mono">ID: {{ item.keyId }}</div>
+                            <div class="key-meta-row">
+                              已绑定目录：{{ (item.bindingPaths || []).length }}
+                            </div>
+                            <div v-if="(item.bindingPaths || []).length" class="key-meta-row">
+                              <el-tag
+                                v-for="path in (item.bindingPaths || []).slice(0, 4)"
+                                :key="`${item.id}-${path}`"
+                                size="small"
+                                type="info"
+                              >
+                                {{ path }}
+                              </el-tag>
+                              <span v-if="(item.bindingPaths || []).length > 4" class="key-more-text">
+                                +{{ (item.bindingPaths || []).length - 4 }}
+                              </span>
+                            </div>
+                            <div class="key-meta-row">
+                              权限：
+                              <el-tag
+                                v-for="permission in item.permissions"
+                                :key="`${item.id}-${permission}`"
+                                size="small"
+                                type="info"
+                              >
+                                {{ formatSharePermission(permission) }}
+                              </el-tag>
+                            </div>
+                            <div class="key-meta-row">
+                              最近使用：{{ item.lastUsedAt ? formatTime(item.lastUsedAt) : '-' }}
+                            </div>
+                          </div>
+                          <div class="key-actions">
+                            <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(item.keyId, 'Key ID')">复制 ID</el-button>
+                            <el-button
+                              v-if="item.status === 'active'"
+                              size="small"
+                              text
+                              type="danger"
+                              @click="revokeAccessKey(item)"
+                            >
+                              撤销
+                            </el-button>
+                            <el-button
+                              v-else
+                              size="small"
+                              text
+                              type="danger"
+                              @click="deleteAccessKey(item)"
+                            >
+                              删除
+                            </el-button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </el-tab-pane>
+                  <el-tab-pane label="S3 凭证" name="s3">
+                    <div class="credential-tab-head">
+                      <div class="card-subtitle">用于 mc、rclone、AWS CLI 等 S3 客户端</div>
+                      <div class="user-actions">
+                        <el-button size="small" @click="fetchS3Credentials(true)">刷新</el-button>
+                        <el-button size="small" type="primary" @click="openS3CredentialDialog">新建</el-button>
+                      </div>
+                    </div>
+                    <div class="credential-tab-body" v-loading="s3CredentialLoading">
+                      <el-empty v-if="!s3Credentials.length && !s3CredentialLoading" description="暂无 S3 凭证" />
+                      <el-table v-else :data="s3Credentials" size="small">
+                        <el-table-column prop="name" label="名称" min-width="160" />
+                        <el-table-column prop="accessKeyId" label="Access Key ID" min-width="230">
+                          <template #default="{ row }"><span class="mono">{{ row.accessKeyId }}</span></template>
+                        </el-table-column>
+                        <el-table-column prop="rootPath" label="目录范围" min-width="140" />
+                        <el-table-column prop="permissions" label="权限" min-width="220" />
+                        <el-table-column label="状态" width="100">
+                          <template #default="{ row }">
+                            <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag>
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="操作" width="120">
+                          <template #default="{ row }">
+                            <el-button v-if="row.status === 'active'" text type="danger" size="small" @click="revokeS3Credential(row)">撤销</el-button>
+                            <el-button v-else text type="danger" size="small" @click="deleteS3Credential(row)">删除</el-button>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                    </div>
+                  </el-tab-pane>
+                </el-tabs>
               </div>
               <div v-if="managementSection === 'group'" class="user-card user-card-full" v-loading="groupLoading && !manualRefresh">
                 <GroupView embedded @refresh="refreshCurrentView" />
@@ -5931,6 +6205,11 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="showGroupView" class="content-body content-scroll" v-loading="groupLoading && !manualRefresh">
             <GroupView @refresh="refreshCurrentView" />
+          </div>
+          <div v-else-if="showHelp" class="content-body content-scroll">
+            <div class="help-guide">
+              <article class="help-guide-content" v-html="helpGuideHtml"></article>
+            </div>
           </div>
           <div v-else class="content-body table-wrapper">
             <div v-if="shareViewSummary" class="view-summary-bar">
@@ -6291,9 +6570,26 @@ onBeforeUnmount(() => {
           <el-form-item label="凭证名称">
             <el-input v-model="s3CredentialName" placeholder="例如：本地 mc" :disabled="!!s3CredentialCreateResult" />
           </el-form-item>
+          <el-form-item label="逻辑 bucket">
+            <el-select v-model="s3CredentialBucket" class="s3-credential-bucket-select" :disabled="!!s3CredentialCreateResult">
+              <el-option label="personal（个人存储）" value="personal" />
+              <el-option label="apps（应用存储）" value="apps" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="bucket 下目录">
+            <el-input v-model="s3CredentialDirectory" placeholder="留空表示整个 bucket；例如：backup/资料" :disabled="!!s3CredentialCreateResult">
+              <template #prepend>/{{ s3CredentialBucket }}/</template>
+            </el-input>
+            <div class="access-key-permission-help">S3 客户端的 bucket 填上面选择的值，目录限制会作为 key 前缀生效。</div>
+          </el-form-item>
         </el-form>
         <div v-if="s3CredentialCreateResult" class="access-key-created">
           <div class="access-key-created-title">创建成功，请立即保存以下凭据（Secret 仅显示一次）</div>
+          <div class="access-key-created-row">
+            <span class="access-key-created-label">目录范围</span>
+            <span class="access-key-created-value mono">{{ s3CredentialCreateResult.rootPath }}</span>
+            <span></span>
+          </div>
           <div class="access-key-created-row">
             <span class="access-key-created-label">Access Key ID</span>
             <span class="access-key-created-value mono">{{ s3CredentialCreateResult.accessKeyId }}</span>
@@ -7234,6 +7530,112 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
+.help-guide {
+  min-height: 100%;
+  padding: 24px clamp(16px, 4vw, 40px) 36px;
+  background: #ffffff;
+}
+
+.help-guide-content {
+  max-width: 980px;
+  margin: 0 auto;
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.72;
+}
+
+.help-guide-content :deep(h1),
+.help-guide-content :deep(h2),
+.help-guide-content :deep(h3),
+.help-guide-content :deep(h4) {
+  color: #111827;
+  line-height: 1.35;
+  margin: 24px 0 12px;
+}
+
+.help-guide-content :deep(h1) {
+  font-size: 28px;
+  margin-top: 0;
+}
+
+.help-guide-content :deep(h2) {
+  padding-top: 10px;
+  border-top: 1px solid #eef1f4;
+  font-size: 22px;
+}
+
+.help-guide-content :deep(h3) {
+  font-size: 17px;
+}
+
+.help-guide-content :deep(p),
+.help-guide-content :deep(ul),
+.help-guide-content :deep(ol),
+.help-guide-content :deep(table),
+.help-guide-content :deep(pre) {
+  margin: 0 0 14px;
+}
+
+.help-guide-content :deep(ul),
+.help-guide-content :deep(ol) {
+  padding-left: 22px;
+}
+
+.help-guide-content :deep(li) {
+  margin: 4px 0;
+}
+
+.help-guide-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.help-guide-content :deep(td) {
+  padding: 9px 10px;
+  border: 1px solid #e5e7eb;
+  vertical-align: top;
+}
+
+.help-guide-content :deep(tr:first-child td) {
+  background: #f7f9fc;
+  color: #374151;
+  font-weight: 600;
+}
+
+.help-guide-content :deep(pre) {
+  overflow-x: auto;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.help-guide-content :deep(code) {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #eef2f7;
+  color: #334155;
+  font-size: 0.92em;
+}
+
+.help-guide-content :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.help-guide-content :deep(a) {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.help-guide-content :deep(a:hover) {
+  text-decoration: underline;
+}
+
 .table-wrapper {
   display: flex;
   flex-direction: column;
@@ -7506,8 +7908,28 @@ onBeforeUnmount(() => {
   color: #909399;
 }
 
+.credential-tabs {
+  margin-top: 8px;
+}
+
+.credential-tab-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.credential-tab-body {
+  min-height: 120px;
+}
+
 .admin-quota-filter {
   width: 140px;
+}
+
+.s3-credential-bucket-select {
+  width: 100%;
 }
 
 .admin-quota-table {
@@ -7995,6 +8417,22 @@ onBeforeUnmount(() => {
   .access-key-expiry :deep(.el-select) {
     width: 110px;
     flex-basis: 110px;
+  }
+
+  .help-guide {
+    padding: 18px 12px 28px;
+  }
+
+  .help-guide-content {
+    font-size: 13px;
+  }
+
+  .help-guide-content :deep(h1) {
+    font-size: 22px;
+  }
+
+  .help-guide-content :deep(h2) {
+    font-size: 18px;
   }
 
   .mobile-bottom-nav {

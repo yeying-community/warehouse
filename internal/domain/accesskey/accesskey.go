@@ -19,6 +19,7 @@ var (
 	ErrInvalidOwner     = errors.New("invalid access key owner")
 	ErrInvalidPerms     = errors.New("invalid access key permissions")
 	ErrAlreadyRevoked   = errors.New("access key already revoked")
+	ErrDeleteActive     = errors.New("active access key must be revoked before deletion")
 	ErrAccessKeyExpired = errors.New("access key expired")
 )
 

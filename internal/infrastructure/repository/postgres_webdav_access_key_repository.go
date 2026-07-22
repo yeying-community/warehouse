@@ -18,6 +18,7 @@ type WebDAVAccessKeyRepository interface {
 	ListBindingPathsByAccessKeyID(ctx context.Context, accessKeyID string) ([]string, error)
 	BindPath(ctx context.Context, ownerUserID, accessKeyID, rootPath string) error
 	RevokeByID(ctx context.Context, ownerUserID, id string) error
+	DeleteRevokedByID(ctx context.Context, ownerUserID, id string) error
 	TouchByID(ctx context.Context, id string, usedAt time.Time) error
 }
 
@@ -121,6 +122,24 @@ func (r *PostgresWebDAVAccessKeyRepository) RevokeByID(ctx context.Context, owne
 	affected, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("failed to check revoked rows: %w", err)
+	}
+	if affected == 0 {
+		return accesskey.ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresWebDAVAccessKeyRepository) DeleteRevokedByID(ctx context.Context, ownerUserID, id string) error {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM webdav_access_keys
+		WHERE owner_user_id = $1 AND id = $2 AND status = $3
+	`, ownerUserID, id, accesskey.StatusRevoked)
+	if err != nil {
+		return fmt.Errorf("failed to delete revoked webdav access key: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check deleted access key rows: %w", err)
 	}
 	if affected == 0 {
 		return accesskey.ErrNotFound
