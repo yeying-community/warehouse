@@ -51,7 +51,7 @@ func (r *fakeReplicationOutboxRepository) MarkFailed(context.Context, int64, str
 	return nil
 }
 
-func (r *fakeReplicationOutboxRepository) GetStatusSummary(context.Context, string, string) (*replication.OutboxStatus, error) {
+func (r *fakeReplicationOutboxRepository) GetStatusSummary(context.Context, string, string, *int64) (*replication.OutboxStatus, error) {
 	return nil, nil
 }
 

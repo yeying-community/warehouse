@@ -102,7 +102,7 @@ func (r *fakeWorkerOutboxRepository) MarkFailed(_ context.Context, id int64, las
 	return nil
 }
 
-func (r *fakeWorkerOutboxRepository) GetStatusSummary(context.Context, string, string) (*replication.OutboxStatus, error) {
+func (r *fakeWorkerOutboxRepository) GetStatusSummary(context.Context, string, string, *int64) (*replication.OutboxStatus, error) {
 	return nil, nil
 }
 

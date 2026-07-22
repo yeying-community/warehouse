@@ -21,7 +21,7 @@ import (
 )
 
 type replicationOutboxStatusReader interface {
-	GetStatusSummary(rctx context.Context, sourceNodeID, targetNodeID string) (*replication.OutboxStatus, error)
+	GetStatusSummary(rctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.OutboxStatus, error)
 }
 
 type replicationOffsetStore interface {
@@ -185,7 +185,7 @@ func (h *InternalReplicationHandler) HandleStatus(w http.ResponseWriter, r *http
 
 	sourceNodeID, targetNodeID := h.replicationPair(resolvedPeer)
 	if h.outbox != nil && sourceNodeID != "" && targetNodeID != "" {
-		summary, err := h.outbox.GetStatusSummary(r.Context(), sourceNodeID, targetNodeID)
+		summary, err := h.outbox.GetStatusSummary(r.Context(), sourceNodeID, targetNodeID, response.Replication.ResolvedGeneration)
 		if err != nil {
 			h.logger.Error("failed to load replication outbox status",
 				zap.String("source_node_id", sourceNodeID),
@@ -470,7 +470,7 @@ func (h *InternalReplicationHandler) startReconcile(ctx context.Context, targetN
 
 	watermarkOutboxID := int64(0)
 	if h.outbox != nil {
-		summary, err := h.outbox.GetStatusSummary(ctx, h.config.Node.ID, targetNodeID)
+		summary, err := h.outbox.GetStatusSummary(ctx, h.config.Node.ID, targetNodeID, nil)
 		if err != nil {
 			return nil, fmt.Errorf("load outbox status: %w", err)
 		}

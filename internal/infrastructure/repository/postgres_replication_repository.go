@@ -19,7 +19,7 @@ type ReplicationOutboxRepository interface {
 	ListPending(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64, limit int) ([]*replication.OutboxEvent, error)
 	MarkDispatched(ctx context.Context, id int64, dispatchedAt time.Time) error
 	MarkFailed(ctx context.Context, id int64, lastError string, nextRetryAt time.Time) error
-	GetStatusSummary(ctx context.Context, sourceNodeID, targetNodeID string) (*replication.OutboxStatus, error)
+	GetStatusSummary(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.OutboxStatus, error)
 }
 
 // ReplicationOffsetRepository stores apply progress for a source->target pair.
@@ -255,33 +255,47 @@ func (r *PostgresReplicationOutboxRepository) MarkFailed(ctx context.Context, id
 }
 
 // GetStatusSummary returns queue depth and lag hints for one source->target pair.
-func (r *PostgresReplicationOutboxRepository) GetStatusSummary(ctx context.Context, sourceNodeID, targetNodeID string) (*replication.OutboxStatus, error) {
+func (r *PostgresReplicationOutboxRepository) GetStatusSummary(ctx context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.OutboxStatus, error) {
+	args := []any{sourceNodeID, targetNodeID}
 	query := `
 		WITH pair_events AS (
 			SELECT id, status, attempt_count, next_retry_at, last_error, created_at
 			FROM replication_outbox
 			WHERE source_node_id = $1
 			  AND target_node_id = $2
-		),
+	`
+	if assignmentGeneration != nil && *assignmentGeneration > 0 {
+		args = append(args, *assignmentGeneration)
+		query += fmt.Sprintf("		  AND assignment_generation = $%d\n", len(args))
+	}
+	failedStatusArg := len(args) + 1
+	pendingStatusArg := len(args) + 2
+	dispatchedStatusArg := len(args) + 3
+	args = append(args,
+		replication.StatusFailed,
+		replication.StatusPending,
+		replication.StatusDispatched,
+	)
+	query += fmt.Sprintf(`),
 		last_failed AS (
 			SELECT id, attempt_count, next_retry_at, last_error
 			FROM pair_events
-			WHERE status = $3
+			WHERE status = $%d
 			ORDER BY id DESC
 			LIMIT 1
 		)
 		SELECT
-			COUNT(*) FILTER (WHERE status IN ($4, $3)) AS pending_events,
-			COUNT(*) FILTER (WHERE status = $3) AS failed_events,
+			COUNT(*) FILTER (WHERE status IN ($%d, $%d)) AS pending_events,
+			COUNT(*) FILTER (WHERE status = $%d) AS failed_events,
 			MAX(id) AS last_outbox_id,
-			MAX(id) FILTER (WHERE status = $5) AS last_dispatched_outbox_id,
-			MIN(created_at) FILTER (WHERE status IN ($4, $3)) AS oldest_pending_created_at,
+			MAX(id) FILTER (WHERE status = $%d) AS last_dispatched_outbox_id,
+			MIN(created_at) FILTER (WHERE status IN ($%d, $%d)) AS oldest_pending_created_at,
 			(SELECT id FROM last_failed),
 			(SELECT attempt_count FROM last_failed),
 			(SELECT next_retry_at FROM last_failed),
 			(SELECT last_error FROM last_failed)
 		FROM pair_events
-	`
+	`, failedStatusArg, pendingStatusArg, failedStatusArg, failedStatusArg, dispatchedStatusArg, pendingStatusArg, failedStatusArg)
 
 	status := &replication.OutboxStatus{}
 	var lastOutboxID sql.NullInt64
@@ -291,13 +305,7 @@ func (r *PostgresReplicationOutboxRepository) GetStatusSummary(ctx context.Conte
 	var lastFailureAttempt sql.NullInt64
 	var nextRetryAt sql.NullTime
 	var lastError sql.NullString
-	err := r.db.QueryRowContext(ctx, query,
-		sourceNodeID,
-		targetNodeID,
-		replication.StatusFailed,
-		replication.StatusPending,
-		replication.StatusDispatched,
-	).Scan(
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
 		&status.PendingEvents,
 		&status.FailedEvents,
 		&lastOutboxID,
