@@ -181,6 +181,43 @@ func (h *WebDAVAccessKeyHandler) HandleRevoke(w http.ResponseWriter, r *http.Req
 	_, _ = w.Write([]byte(`{"message":"revoked successfully"}`))
 }
 
+func (h *WebDAVAccessKeyHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	u, ok := middleware.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.ID) == "" {
+		http.Error(w, "id is required", http.StatusBadRequest)
+		return
+	}
+	if err := h.service.DeleteRevoked(r.Context(), u, req.ID); err != nil {
+		switch {
+		case errors.Is(err, accesskey.ErrNotFound):
+			http.Error(w, "access key not found", http.StatusNotFound)
+		case errors.Is(err, accesskey.ErrDeleteActive):
+			http.Error(w, "access key must be revoked before deletion", http.StatusBadRequest)
+		default:
+			h.logger.Error("failed to delete webdav access key", zap.Error(err))
+			http.Error(w, "Failed to delete access key", http.StatusInternalServerError)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"message":"deleted successfully"}`))
+}
+
 func (h *WebDAVAccessKeyHandler) HandleBind(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

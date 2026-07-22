@@ -10,6 +10,7 @@ var (
 	ErrNotFound          = errors.New("s3 credential not found")
 	ErrInvalidCredential = errors.New("invalid s3 credential")
 	ErrRevoked           = errors.New("s3 credential revoked")
+	ErrDeleteActive      = errors.New("active s3 credential must be revoked before deletion")
 	ErrExpired           = errors.New("s3 credential expired")
 )
 

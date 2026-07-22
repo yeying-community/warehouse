@@ -1120,7 +1120,34 @@ Body 示例（folder/rename/item）：
 }
 ```
 
-### 15.5 使用方式（WebDAV Basic）
+### 15.5 删除已撤销密钥
+
+- 路由：`POST /api/v1/public/webdav/access-keys/delete`
+- 认证：用户登录态
+
+请求体：
+
+```json
+{
+  "id": "3f5e3a7f-6fd4-4a7a-b748-9e3b12345678"
+}
+```
+
+成功响应：
+
+```json
+{
+  "message": "deleted successfully"
+}
+```
+
+说明：
+
+- 只能删除已撤销密钥。
+- 生效中的密钥必须先撤销，再删除。
+- 删除会清理密钥记录及其目录绑定。
+
+### 15.6 使用方式（WebDAV Basic）
 
 绑定至少一个目录后，使用 `keyId/keySecret` 作为 Basic 用户名密码：
 
@@ -1135,7 +1162,7 @@ curl -u "ak_41dd9a3b7f5b1c2d:sk_5a79c9e8d0f1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d
 
 如果尝试用访问密钥调用非 WebDAV API（例如 `/api/v1/public/share/list`），会返回 `403 Forbidden`。
 
-### 15.6 `davfs2` 挂载注意事项
+### 15.7 `davfs2` 挂载注意事项
 
 如果使用 `scripts/mount_davfs.sh` / `davfs2` 挂载目录后，再通过 `cp`、文件管理器拖拽等方式写入：
 
@@ -1150,10 +1177,114 @@ curl -u "ak_41dd9a3b7f5b1c2d:sk_5a79c9e8d0f1b2c3d4e5f60718293a4b5c6d7e8f9a0b1c2d
 - 挂载目录只读使用（`read`）
 - 新增文件通过直传命令完成（`read + create`）
 
-### 15.7 运维安全建议
+### 15.8 运维安全建议
 
 - 每个自动化任务使用独立密钥，不复用主账号密码。
 - `bindingPaths` 尽量收窄到具体目录，不给全盘权限。
 - 权限按最小化原则配置（优先 `read`，仅必要时开 `create/update/delete`）。
 - 定期轮换：新建新密钥并替换后，立刻撤销旧密钥。
 - 结合 `lastUsedAt` 做异常访问审计。
+
+## 16. S3 凭证 API（简明）
+
+S3 凭证用于 AWS Signature V4 认证，不能用于 WebDAV Basic。S3 客户端使用方式请看：[用户使用指南.md](./用户使用指南.md)。
+
+### 16.1 创建 S3 凭证
+
+- 路由：`POST /api/v1/public/s3/credentials/create`
+- 认证：用户登录态
+
+请求体：
+
+```json
+{
+  "name": "backup-s3-key",
+  "rootPath": "/personal/backup",
+  "permissions": ["read", "create", "update", "delete"]
+}
+```
+
+字段说明：
+
+- `name`：凭证名称，同一用户范围内必须唯一。
+- `rootPath`：授权范围，必须位于 `/personal` 或 `/apps` 下；为空时默认 `/personal`。
+- `permissions`：支持 `read/create/update/delete`。
+
+响应示例：
+
+```json
+{
+  "id": "6b6d7412-7c2d-4cbb-9d0e-123456789abc",
+  "name": "backup-s3-key",
+  "accessKeyId": "AKxxxxxxxxxxxxxxxx",
+  "secret": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "rootPath": "/personal/backup",
+  "permissions": "read,create,update,delete",
+  "status": "active",
+  "createdAt": "2026-07-22 10:30:00",
+  "warning": "The secret is shown once and cannot be recovered."
+}
+```
+
+说明：`secret` 只在创建时返回一次，请立即安全保存。
+
+### 16.2 列表 S3 凭证
+
+- 路由：`GET /api/v1/public/s3/credentials/list`
+- 认证：用户登录态
+
+响应示例：
+
+```json
+{
+  "items": [
+    {
+      "id": "6b6d7412-7c2d-4cbb-9d0e-123456789abc",
+      "name": "backup-s3-key",
+      "accessKeyId": "AKxxxxxxxxxxxxxxxx",
+      "rootPath": "/personal/backup",
+      "permissions": "read,create,update,delete",
+      "status": "active",
+      "createdAt": "2026-07-22 10:30:00"
+    }
+  ]
+}
+```
+
+### 16.3 撤销 S3 凭证
+
+- 路由：`POST /api/v1/public/s3/credentials/revoke`
+- 认证：用户登录态
+
+请求体：
+
+```json
+{
+  "id": "6b6d7412-7c2d-4cbb-9d0e-123456789abc"
+}
+```
+
+成功响应：HTTP `200 OK`。
+
+### 16.4 删除已撤销 S3 凭证
+
+- 路由：`POST /api/v1/public/s3/credentials/delete`
+- 认证：用户登录态
+
+请求体：
+
+```json
+{
+  "id": "6b6d7412-7c2d-4cbb-9d0e-123456789abc"
+}
+```
+
+成功响应：
+
+```json
+{
+  "message": "deleted successfully"
+}
+```
+
+说明：只能删除已撤销凭证，生效中的 S3 凭证必须先撤销，再删除。

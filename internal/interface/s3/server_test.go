@@ -3,6 +3,7 @@ package s3
 import (
 	"encoding/xml"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -10,6 +11,28 @@ import (
 	"github.com/yeying-community/warehouse/internal/domain/s3credential"
 	"github.com/yeying-community/warehouse/internal/domain/user"
 )
+
+func TestVisibleS3BucketsFollowsCredentialRootPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		rootPath string
+		want     []string
+	}{
+		{name: "root", rootPath: "/", want: []string{"personal", "apps"}},
+		{name: "personal bucket", rootPath: "/personal", want: []string{"personal"}},
+		{name: "personal prefix", rootPath: "/personal/docs", want: []string{"personal"}},
+		{name: "apps bucket", rootPath: "/apps", want: []string{"apps"}},
+		{name: "apps prefix", rootPath: "/apps/demo", want: []string{"apps"}},
+		{name: "invalid", rootPath: "/other", want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := visibleS3Buckets(tt.rootPath); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("visibleS3Buckets(%q) = %#v, want %#v", tt.rootPath, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestHandleDeleteObjectsDeletesRequestedKeys(t *testing.T) {
 	root := t.TempDir()

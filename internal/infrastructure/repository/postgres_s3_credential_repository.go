@@ -17,6 +17,7 @@ type S3CredentialRepository interface {
 	ListByOwner(ctx context.Context, ownerUserID string) ([]*s3credential.Credential, error)
 	FindByAccessKeyID(ctx context.Context, accessKeyID string) (*s3credential.Credential, error)
 	RevokeByID(ctx context.Context, ownerUserID, id string) error
+	DeleteRevokedByID(ctx context.Context, ownerUserID, id string) error
 	TouchByID(ctx context.Context, id string, usedAt time.Time) error
 }
 
@@ -114,6 +115,36 @@ func (r *PostgresS3CredentialRepository) RevokeByID(ctx context.Context, ownerUs
 		return s3credential.ErrNotFound
 	}
 	return nil
+}
+
+func (r *PostgresS3CredentialRepository) DeleteRevokedByID(ctx context.Context, ownerUserID, id string) error {
+	result, err := r.db.ExecContext(ctx, `
+		DELETE FROM s3_credentials
+		WHERE owner_user_id = $1 AND id = $2 AND status = $3
+	`, ownerUserID, id, s3credential.StatusRevoked)
+	if err != nil {
+		return fmt.Errorf("delete revoked s3 credential: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check deleted s3 credential rows: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	var status string
+	err = r.db.QueryRowContext(ctx, `
+		SELECT status FROM s3_credentials
+		WHERE owner_user_id = $1 AND id = $2
+	`, ownerUserID, id).Scan(&status)
+	if err == sql.ErrNoRows {
+		return s3credential.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check s3 credential status before delete: %w", err)
+	}
+	return s3credential.ErrDeleteActive
 }
 
 func (r *PostgresS3CredentialRepository) TouchByID(ctx context.Context, id string, usedAt time.Time) error {

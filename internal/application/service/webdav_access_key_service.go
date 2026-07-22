@@ -82,6 +82,17 @@ func (s *WebDAVAccessKeyService) Revoke(ctx context.Context, owner *user.User, i
 	return s.repo.RevokeByID(ctx, owner.ID, id)
 }
 
+func (s *WebDAVAccessKeyService) DeleteRevoked(ctx context.Context, owner *user.User, id string) error {
+	item, err := s.repo.GetByID(ctx, owner.ID, id)
+	if err != nil {
+		return err
+	}
+	if item.Status != accesskey.StatusRevoked {
+		return accesskey.ErrDeleteActive
+	}
+	return s.repo.DeleteRevokedByID(ctx, owner.ID, id)
+}
+
 func (s *WebDAVAccessKeyService) BindPath(ctx context.Context, owner *user.User, id, rootPath string) error {
 	item, err := s.repo.GetByID(ctx, owner.ID, id)
 	if err != nil {
