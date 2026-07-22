@@ -2,11 +2,152 @@ package webdavfs
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	xwebdav "golang.org/x/net/webdav"
 )
+
+func TestVirtualFileIsVisibleReadableAndReadOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "personal"), 0o755); err != nil {
+		t.Fatalf("mkdir personal: %v", err)
+	}
+
+	fsys := NewUnicodeFileSystemWithVirtualFiles(root, []VirtualFile{{
+		Path:    "/personal/Warehouse 用户使用指南.md",
+		Content: []byte("guide content"),
+		ModTime: time.Unix(10, 0).UTC(),
+	}})
+
+	info, err := fsys.Stat(ctx, "/personal/Warehouse 用户使用指南.md")
+	if err != nil {
+		t.Fatalf("stat virtual file: %v", err)
+	}
+	if info.Name() != "Warehouse 用户使用指南.md" || info.Size() != int64(len("guide content")) {
+		t.Fatalf("unexpected virtual file info: name=%q size=%d", info.Name(), info.Size())
+	}
+
+	dir, err := fsys.OpenFile(ctx, "/personal", os.O_RDONLY, 0)
+	if err != nil {
+		t.Fatalf("open personal dir: %v", err)
+	}
+	entries, err := dir.Readdir(0)
+	if err != nil {
+		t.Fatalf("readdir personal dir: %v", err)
+	}
+	if !hasFileInfo(entries, "Warehouse 用户使用指南.md") {
+		t.Fatalf("expected virtual guide in directory listing, got %#v", entries)
+	}
+
+	file, err := fsys.OpenFile(ctx, "/personal/Warehouse 用户使用指南.md", os.O_RDONLY, 0)
+	if err != nil {
+		t.Fatalf("open virtual file: %v", err)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatalf("read virtual file: %v", err)
+	}
+	if string(content) != "guide content" {
+		t.Fatalf("unexpected virtual content: %q", string(content))
+	}
+	if _, err := file.Write([]byte("x")); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected write to virtual file denied, got %v", err)
+	}
+
+	if _, err := fsys.OpenFile(ctx, "/personal/Warehouse 用户使用指南.md", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("expected open for write denied, got %v", err)
+	}
+}
+
+func TestVirtualFileAppearsInPropfind(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "personal"), 0o755); err != nil {
+		t.Fatalf("mkdir personal: %v", err)
+	}
+
+	handler := &xwebdav.Handler{
+		Prefix: "/dav",
+		FileSystem: NewUnicodeFileSystemWithVirtualFiles(root, []VirtualFile{{
+			Path:    "/personal/Warehouse 用户使用指南.md",
+			Content: []byte("guide content"),
+		}}),
+		LockSystem: xwebdav.NewMemLS(),
+	}
+	body := strings.NewReader(`<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>`)
+	req := httptest.NewRequest("PROPFIND", "/dav/personal/", body)
+	req.Header.Set("Depth", "1")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != xwebdav.StatusMulti {
+		t.Fatalf("expected 207 Multi-Status, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Warehouse 用户使用指南.md") {
+		t.Fatalf("expected guide name in PROPFIND response, got %s", rec.Body.String())
+	}
+}
+
+func TestVirtualFileDoesNotMaskRealFile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	target := filepath.Join(root, "personal", "Warehouse 用户使用指南.md")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir personal: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("real content"), 0o644); err != nil {
+		t.Fatalf("write real guide: %v", err)
+	}
+
+	fsys := NewUnicodeFileSystemWithVirtualFiles(root, []VirtualFile{{
+		Path:    "/personal/Warehouse 用户使用指南.md",
+		Content: []byte("virtual content"),
+	}})
+
+	file, err := fsys.OpenFile(ctx, "/personal/Warehouse 用户使用指南.md", os.O_RDONLY, 0)
+	if err != nil {
+		t.Fatalf("open real file: %v", err)
+	}
+	content, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatalf("read real file: %v", err)
+	}
+	if string(content) != "real content" {
+		t.Fatalf("expected real file content, got %q", string(content))
+	}
+
+	dir, err := fsys.OpenFile(ctx, "/personal", os.O_RDONLY, 0)
+	if err != nil {
+		t.Fatalf("open personal dir: %v", err)
+	}
+	entries, err := dir.Readdir(0)
+	if err != nil {
+		t.Fatalf("readdir personal dir: %v", err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if entry.Name() == "Warehouse 用户使用指南.md" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one guide entry, got %d", count)
+	}
+}
 
 func TestOpenFileAtomicWriteKeepsOldContentUntilClose(t *testing.T) {
 	t.Parallel()
@@ -50,6 +191,15 @@ func TestOpenFileAtomicWriteKeepsOldContentUntilClose(t *testing.T) {
 	if string(afterClose) != "new-data" {
 		t.Fatalf("expected new content after close, got %q", string(afterClose))
 	}
+}
+
+func hasFileInfo(entries []os.FileInfo, name string) bool {
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestOpenFileAtomicWriteHidesNewFileUntilClose(t *testing.T) {

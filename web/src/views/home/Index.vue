@@ -34,6 +34,7 @@ import ShareTableView from './components/ShareTableView.vue'
 import SharedWithMeTableView from './components/SharedWithMeTableView.vue'
 import RecycleTableView from './components/RecycleTableView.vue'
 import type { CipherSuiteOption, DropEntry, FileItem, UploadItem, UploadTask } from './types'
+import userGuideMarkdown from '../../../../docs/用户使用指南.md?raw'
 
 const FilePreviewDialog = defineAsyncComponent(() => import('./components/FilePreviewDialog.vue'))
 const DAV_PREFIX = normalizeDavPrefix((import.meta as any)?.env?.VITE_WEBDAV_PREFIX || '/dav')
@@ -95,6 +96,7 @@ const shareTab = ref<'link' | 'direct'>('link')
 const directShareList = ref<DirectShareItem[]>([])
 const directShareLoading = ref(false)
 const showSharedWithMe = ref(false)
+const showHelp = ref(false)
 const sharedWithMeList = ref<DirectShareItem[]>([])
 const sharedWithMeLoading = ref(false)
 const sharedActive = ref<DirectShareItem | null>(null)
@@ -261,7 +263,7 @@ const FILE_PATH_STORAGE_KEY = 'warehouse:lastFilePath'
 const SHARED_ACTIVE_STORAGE_KEY = 'warehouse:sharedActiveId'
 const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
-type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group'
+type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group' | 'help'
 type ManagementSection = 'account' | 'keys' | 'adminUsers' | 'group'
 type CredentialTab = 'webdav' | 's3'
 type AssetSpace = AssetSpaceInfo
@@ -324,7 +326,7 @@ const assetSpaceLoading = ref(false)
 const sidePanelCollapsed = ref(false)
 
 // 是否显示回收站列表
-const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value)
+const isFileView = computed(() => !showRecycle.value && !showShare.value && !showQuotaManage.value && !showSharedWithMe.value && !showGroupView.value && !showHelp.value)
 const canUpload = computed(() => {
   if (!isFileView.value && !showSharedWithMe.value) return false
   if (showSharedWithMe.value) return isSharedBrowse.value && sharedCanCreate.value
@@ -345,8 +347,9 @@ const userProfile = computed(() => {
   const hasPassword = Boolean(userInfo.value?.has_password)
   return { username, walletAddress, walletName, permissions, createdAt, hasPassword }
 })
-const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value)
-const showListHeader = computed(() => !showQuotaManage.value && !showGroupView.value)
+const showSearch = computed(() => !showQuotaManage.value && !showGroupView.value && !showHelp.value)
+const showListHeader = computed(() => !showQuotaManage.value && !showGroupView.value && !showHelp.value)
+const helpGuideHtml = computed(() => renderMarkdown(userGuideMarkdown))
 type MobileAction = { command: string; label: string; disabled?: boolean }
 type MobileActionGroup = { title: string; items: MobileAction[] }
 
@@ -520,6 +523,7 @@ const mobileLocationLabel = computed(() => {
   if (showRecycle.value) return '回收站'
   if (showShare.value) return '分享'
   if (showSharedWithMe.value) return sharedActive.value ? '共享内容' : '收到的分享'
+  if (showHelp.value) return '使用指南'
   if (showQuotaManage.value) return managementSectionLabel.value
   if (showGroupView.value) return '分组管理'
   const normalizedPath = normalizeDirectoryPath(currentPath.value)
@@ -2578,6 +2582,8 @@ async function refreshCurrentView() {
       }
     } else if (showGroupView.value) {
       await groupStore.fetchGroups()
+    } else if (showHelp.value) {
+      return
     } else {
       await fetchFiles(currentPath.value)
     }
@@ -3361,7 +3367,7 @@ async function retryUploadTask(task: UploadTask) {
     }
     return
   }
-  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value) {
+  if (!showRecycle.value && !showShare.value && !showSharedWithMe.value && !showQuotaManage.value && !showGroupView.value && !showHelp.value) {
     fetchFiles(currentPath.value)
   }
 }
@@ -4007,6 +4013,7 @@ function enterRecycle() {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('recycle')
@@ -4021,6 +4028,7 @@ function enterFiles(path: string = currentPath.value) {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('files')
@@ -4186,6 +4194,7 @@ function enterShare(type: 'link' | 'direct' = shareTab.value) {
   showSharedWithMe.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   shareTab.value = type
@@ -4211,6 +4220,7 @@ function enterSharedRoot(item: DirectShareItem) {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = item
   sharedPath.value = '/'
   sharedEntries.value = []
@@ -4226,6 +4236,7 @@ function backToSharedList() {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   shareTab.value = 'direct'
   sharedActive.value = null
   sharedPath.value = '/'
@@ -4242,6 +4253,7 @@ function enterSharedWithMeList() {
   showRecycle.value = false
   showQuotaManage.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('sharedWithMe')
@@ -4388,6 +4400,7 @@ function enterGroupView() {
   showRecycle.value = false
   showSharedWithMe.value = false
   showQuotaManage.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('group')
@@ -4404,6 +4417,7 @@ function enterQuotaManage(section: ManagementSection = 'account') {
   showRecycle.value = false
   showSharedWithMe.value = false
   showGroupView.value = false
+  showHelp.value = false
   sharedActive.value = null
   sharedPath.value = '/'
   persistView('quotaManage')
@@ -4413,6 +4427,19 @@ function enterQuotaManage(section: ManagementSection = 'account') {
     return
   }
   fetchUserCenter()
+}
+
+function enterHelpGuide() {
+  detailDrawerVisible.value = false
+  showHelp.value = true
+  showQuotaManage.value = false
+  showGroupView.value = false
+  showShare.value = false
+  showRecycle.value = false
+  showSharedWithMe.value = false
+  sharedActive.value = null
+  sharedPath.value = '/'
+  persistView('help')
 }
 
 function openUploadTaskLocation(task: UploadTask) {
@@ -4674,6 +4701,150 @@ function formatSharePermission(permission: string): string {
   return permission
 }
 
+function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+const HELP_DOC_BASE_URL = 'https://github.com/yeying-community/warehouse/blob/main/docs/'
+
+function resolveHelpDocumentHref(href: string): string {
+  const value = href.trim()
+  if (/^https?:\/\//i.test(value)) return value
+  if (value.startsWith('./') || value.startsWith('../')) {
+    try {
+      return new URL(value, HELP_DOC_BASE_URL).toString()
+    } catch {
+      return ''
+    }
+  }
+  return ''
+}
+
+function renderInlineMarkdown(value: string): string {
+  const escaped = escapeHtml(value)
+  return escaped
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label: string, href: string) => {
+      const target = resolveHelpDocumentHref(href)
+      if (!target) return `<span>${label}</span>`
+      return `<a href="${escapeHtml(target)}" target="_blank" rel="noopener noreferrer">${label}</a>`
+    })
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+}
+
+function renderMarkdown(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n')
+  const html: string[] = []
+  let inCode = false
+  let codeLang = ''
+  let codeLines: string[] = []
+  let inList = false
+  let inOrderedList = false
+  let inTable = false
+
+  const closeList = () => {
+    if (!inList) return
+    html.push('</ul>')
+    inList = false
+  }
+  const closeOrderedList = () => {
+    if (!inOrderedList) return
+    html.push('</ol>')
+    inOrderedList = false
+  }
+  const closeTable = () => {
+    if (!inTable) return
+    html.push('</tbody></table>')
+    inTable = false
+  }
+  const closeCode = () => {
+    if (!inCode) return
+    html.push(`<pre><code${codeLang ? ` class="language-${escapeHtml(codeLang)}"` : ''}>${escapeHtml(codeLines.join('\n'))}</code></pre>`)
+    inCode = false
+    codeLang = ''
+    codeLines = []
+  }
+  const closeBlocks = () => {
+    closeList()
+    closeOrderedList()
+    closeTable()
+  }
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+$/, '')
+    if (line.startsWith('```')) {
+      if (inCode) {
+        closeCode()
+      } else {
+        closeBlocks()
+        inCode = true
+        codeLang = line.slice(3).trim()
+        codeLines = []
+      }
+      continue
+    }
+    if (inCode) {
+      codeLines.push(rawLine)
+      continue
+    }
+    if (!line.trim()) {
+      closeBlocks()
+      continue
+    }
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/)
+    if (headingMatch) {
+      closeBlocks()
+      const level = headingMatch[1].length
+      html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`)
+      continue
+    }
+    if (/^\|.+\|$/.test(line)) {
+      const cells = line.slice(1, -1).split('|').map(item => item.trim())
+      const isSeparator = cells.every(cell => /^:?-{3,}:?$/.test(cell))
+      if (isSeparator) continue
+      closeList()
+      if (!inTable) {
+        html.push('<table><tbody>')
+        inTable = true
+      }
+      html.push(`<tr>${cells.map(cell => `<td>${renderInlineMarkdown(cell)}</td>`).join('')}</tr>`)
+      continue
+    }
+    const listMatch = line.match(/^[-*]\s+(.+)$/)
+    if (listMatch) {
+      closeOrderedList()
+      closeTable()
+      if (!inList) {
+        html.push('<ul>')
+        inList = true
+      }
+      html.push(`<li>${renderInlineMarkdown(listMatch[1])}</li>`)
+      continue
+    }
+    const orderedListMatch = line.match(/^\d+\.\s+(.+)$/)
+    if (orderedListMatch) {
+      closeList()
+      closeTable()
+      if (!inOrderedList) {
+        html.push('<ol>')
+        inOrderedList = true
+      }
+      html.push(`<li>${renderInlineMarkdown(orderedListMatch[1])}</li>`)
+      continue
+    }
+    closeBlocks()
+    html.push(`<p>${renderInlineMarkdown(line)}</p>`)
+  }
+  closeCode()
+  closeBlocks()
+  return html.join('\n')
+}
+
 function handleMobileAction(command: string) {
   switch (command) {
     case 'createFolder':
@@ -4806,6 +4977,10 @@ async function restoreView() {
     enterGroupView()
     return
   }
+  if (storedView === 'help') {
+    enterHelpGuide()
+    return
+  }
   const storedPath = localStorage.getItem(FILE_PATH_STORAGE_KEY) || '/'
   enterFiles(resolveInitialFilePath(storedPath))
 }
@@ -4920,6 +5095,10 @@ function handleExternalNavigate(event: Event) {
     enterGroupView()
     return
   }
+  if (view === 'help') {
+    enterHelpGuide()
+    return
+  }
 }
 
 function handleAuthChanged(): void {
@@ -4936,6 +5115,7 @@ function handleAuthChanged(): void {
     showSharedWithMe.value = false
     showQuotaManage.value = false
     showGroupView.value = false
+    showHelp.value = false
     detailDrawerVisible.value = false
     walletLoginSubmitting.value = false
   }
@@ -5266,6 +5446,23 @@ onBeforeUnmount(() => {
                 >
                   <el-icon class="nav-icon"><Notebook /></el-icon>
                   <span v-show="!sidePanelCollapsed">分组管理</span>
+                </button>
+              </el-tooltip>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <div class="nav-group-title" v-show="!sidePanelCollapsed">帮助</div>
+            <div class="nav-list">
+              <el-tooltip content="使用指南" placement="right" :disabled="!sidePanelCollapsed">
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: showHelp }"
+                  @click="enterHelpGuide"
+                >
+                  <el-icon class="nav-icon"><Notebook /></el-icon>
+                  <span v-show="!sidePanelCollapsed">使用指南</span>
                 </button>
               </el-tooltip>
             </div>
@@ -6008,6 +6205,11 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="showGroupView" class="content-body content-scroll" v-loading="groupLoading && !manualRefresh">
             <GroupView @refresh="refreshCurrentView" />
+          </div>
+          <div v-else-if="showHelp" class="content-body content-scroll">
+            <div class="help-guide">
+              <article class="help-guide-content" v-html="helpGuideHtml"></article>
+            </div>
           </div>
           <div v-else class="content-body table-wrapper">
             <div v-if="shareViewSummary" class="view-summary-bar">
@@ -7328,6 +7530,112 @@ onBeforeUnmount(() => {
   overflow: auto;
 }
 
+.help-guide {
+  min-height: 100%;
+  padding: 24px clamp(16px, 4vw, 40px) 36px;
+  background: #ffffff;
+}
+
+.help-guide-content {
+  max-width: 980px;
+  margin: 0 auto;
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.72;
+}
+
+.help-guide-content :deep(h1),
+.help-guide-content :deep(h2),
+.help-guide-content :deep(h3),
+.help-guide-content :deep(h4) {
+  color: #111827;
+  line-height: 1.35;
+  margin: 24px 0 12px;
+}
+
+.help-guide-content :deep(h1) {
+  font-size: 28px;
+  margin-top: 0;
+}
+
+.help-guide-content :deep(h2) {
+  padding-top: 10px;
+  border-top: 1px solid #eef1f4;
+  font-size: 22px;
+}
+
+.help-guide-content :deep(h3) {
+  font-size: 17px;
+}
+
+.help-guide-content :deep(p),
+.help-guide-content :deep(ul),
+.help-guide-content :deep(ol),
+.help-guide-content :deep(table),
+.help-guide-content :deep(pre) {
+  margin: 0 0 14px;
+}
+
+.help-guide-content :deep(ul),
+.help-guide-content :deep(ol) {
+  padding-left: 22px;
+}
+
+.help-guide-content :deep(li) {
+  margin: 4px 0;
+}
+
+.help-guide-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.help-guide-content :deep(td) {
+  padding: 9px 10px;
+  border: 1px solid #e5e7eb;
+  vertical-align: top;
+}
+
+.help-guide-content :deep(tr:first-child td) {
+  background: #f7f9fc;
+  color: #374151;
+  font-weight: 600;
+}
+
+.help-guide-content :deep(pre) {
+  overflow-x: auto;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.help-guide-content :deep(code) {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #eef2f7;
+  color: #334155;
+  font-size: 0.92em;
+}
+
+.help-guide-content :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.help-guide-content :deep(a) {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.help-guide-content :deep(a:hover) {
+  text-decoration: underline;
+}
+
 .table-wrapper {
   display: flex;
   flex-direction: column;
@@ -8109,6 +8417,22 @@ onBeforeUnmount(() => {
   .access-key-expiry :deep(.el-select) {
     width: 110px;
     flex-basis: 110px;
+  }
+
+  .help-guide {
+    padding: 18px 12px 28px;
+  }
+
+  .help-guide-content {
+    font-size: 13px;
+  }
+
+  .help-guide-content :deep(h1) {
+    font-size: 22px;
+  }
+
+  .help-guide-content :deep(h2) {
+    font-size: 18px;
   }
 
   .mobile-bottom-nav {
