@@ -170,11 +170,13 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/public/webdav/access-keys/create", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleCreate)))
 		mux.Handle("/api/v1/public/webdav/access-keys/bind", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleBind)))
 		mux.Handle("/api/v1/public/webdav/access-keys/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleRevoke)))
+		mux.Handle("/api/v1/public/webdav/access-keys/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.webdavAccessKeyHandler.HandleDelete)))
 	}
 	if r.s3CredentialHandler != nil {
 		mux.Handle("/api/v1/public/s3/credentials/list", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleList)))
 		mux.Handle("/api/v1/public/s3/credentials/create", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleCreate)))
 		mux.Handle("/api/v1/public/s3/credentials/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleRevoke)))
+		mux.Handle("/api/v1/public/s3/credentials/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleDelete)))
 	}
 
 	// 分享路由

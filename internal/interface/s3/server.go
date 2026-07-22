@@ -54,7 +54,7 @@ func (s *Server) Start() error {
 			return
 		}
 		if req.URL.Path == "/" || req.URL.Path == "" {
-			s.handleListBuckets(w, req.Context(), credential)
+			s.handleListBuckets(w, credential)
 			return
 		}
 		s.handleObject(w, req, credential)
@@ -91,11 +91,32 @@ type bucketInfo struct {
 	CreationDate string `xml:"CreationDate"`
 }
 
-func (s *Server) handleListBuckets(w http.ResponseWriter, _ context.Context, _ *s3credential.Credential) {
+func (s *Server) handleListBuckets(w http.ResponseWriter, credential *s3credential.Credential) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	response := listAllMyBucketsResult{Buckets: []bucketInfo{{Name: "personal", CreationDate: now}, {Name: "apps", CreationDate: now}}}
+	response := listAllMyBucketsResult{Buckets: make([]bucketInfo, 0, 2)}
+	rootPath := "/"
+	if credential != nil {
+		rootPath = credential.RootPath
+	}
+	for _, name := range visibleS3Buckets(rootPath) {
+		response.Buckets = append(response.Buckets, bucketInfo{Name: name, CreationDate: now})
+	}
 	w.Header().Set("Content-Type", "application/xml")
 	_ = xml.NewEncoder(w).Encode(response)
+}
+
+func visibleS3Buckets(rootPath string) []string {
+	rootPath = path.Clean("/" + strings.TrimSpace(strings.ReplaceAll(rootPath, "\\", "/")))
+	switch {
+	case rootPath == "/":
+		return []string{"personal", "apps"}
+	case rootPath == "/personal" || strings.HasPrefix(rootPath, "/personal/"):
+		return []string{"personal"}
+	case rootPath == "/apps" || strings.HasPrefix(rootPath, "/apps/"):
+		return []string{"apps"}
+	default:
+		return nil
+	}
 }
 
 func (s *Server) authenticate(req *http.Request) (*s3credential.Credential, error) {

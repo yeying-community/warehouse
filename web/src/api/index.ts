@@ -509,6 +509,12 @@ export const webdavAccessKeyApi = {
       body: { id }
     })
   },
+  remove(id: string) {
+    return request<{ message: string }>('/api/v1/public/webdav/access-keys/delete', {
+      method: 'POST',
+      body: { id }
+    })
+  },
   bind(id: string, path: string) {
     return request<{ message: string }>('/api/v1/public/webdav/access-keys/bind', {
       method: 'POST',
@@ -529,6 +535,12 @@ export const s3CredentialApi = {
   },
   revoke(id: string) {
     return request<{ message?: string }>('/api/v1/public/s3/credentials/revoke', {
+      method: 'POST',
+      body: { id }
+    })
+  },
+  remove(id: string) {
+    return request<{ message?: string }>('/api/v1/public/s3/credentials/delete', {
       method: 'POST',
       body: { id }
     })

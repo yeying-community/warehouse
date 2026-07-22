@@ -115,6 +115,7 @@ const adminUsersEditValue = ref('')
 const adminUsersEditUnit = ref<'B' | 'KB' | 'MB' | 'GB' | 'TB'>('GB')
 const showGroupView = ref(false)
 const managementSection = ref<ManagementSection>('account')
+const credentialTab = ref<CredentialTab>('webdav')
 const manualRefresh = ref(false)
 const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
@@ -158,6 +159,8 @@ const s3CredentialDialogVisible = ref(false)
 const s3Credentials = ref<S3CredentialItem[]>([])
 const s3CredentialCreateResult = ref<CreateS3CredentialResult | null>(null)
 const s3CredentialName = ref('')
+const s3CredentialBucket = ref<'personal' | 'apps'>('personal')
+const s3CredentialDirectory = ref('')
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const groupStore = useGroupStore()
 const { groupLoading, managedGroups, activeGroupMembers } = storeToRefs(groupStore)
@@ -260,6 +263,7 @@ const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
 type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group'
 type ManagementSection = 'account' | 'keys' | 'adminUsers' | 'group'
+type CredentialTab = 'webdav' | 's3'
 type AssetSpace = AssetSpaceInfo
 type ShareExpiryForm = {
   expiresValue: string
@@ -1571,14 +1575,42 @@ async function fetchS3Credentials(withLoading = false) {
 
 function openS3CredentialDialog() {
   s3CredentialName.value = ''
+  s3CredentialBucket.value = 'personal'
+  s3CredentialDirectory.value = ''
   s3CredentialCreateResult.value = null
   s3CredentialDialogVisible.value = true
+}
+
+function normalizeS3CredentialDirectory(value: string): string {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+}
+
+function hasInvalidS3CredentialDirectory(value: string): boolean {
+  return value.split('/').some(segment => segment === '.' || segment === '..')
+}
+
+function buildS3CredentialRootPath(): string | null {
+  const directory = normalizeS3CredentialDirectory(s3CredentialDirectory.value)
+  if (hasInvalidS3CredentialDirectory(directory)) {
+    showError('bucket 下目录不能包含 . 或 ..')
+    return null
+  }
+  return directory ? `/${s3CredentialBucket.value}/${directory}` : `/${s3CredentialBucket.value}`
 }
 
 async function submitS3Credential() {
   const name = s3CredentialName.value.trim()
   if (!name) {
     showError('请输入 S3 凭证名称')
+    return
+  }
+  const rootPath = buildS3CredentialRootPath()
+  if (!rootPath) {
     return
   }
   if (s3Credentials.value.some(item => item.name === name)) {
@@ -1589,7 +1621,7 @@ async function submitS3Credential() {
   try {
     s3CredentialCreateResult.value = await s3CredentialApi.create({
       name,
-      rootPath: '/personal',
+      rootPath,
       permissions: ['read', 'create', 'update', 'delete']
     })
     await fetchS3Credentials()
@@ -1611,6 +1643,18 @@ async function revokeS3Credential(item: S3CredentialItem) {
     showSuccess('S3 凭证已撤销')
   } catch (error: any) {
     showError(error?.message || '撤销 S3 凭证失败')
+  }
+}
+
+async function deleteS3Credential(item: S3CredentialItem) {
+  if (item.status !== 'revoked') return
+  if (!(await confirmAction(`确定删除已撤销的 S3 凭证 ${item.name} 吗？`, '删除 S3 凭证'))) return
+  try {
+    await s3CredentialApi.remove(item.id)
+    await fetchS3Credentials()
+    showSuccess('S3 凭证已删除')
+  } catch (error: any) {
+    showError(error?.message || '删除 S3 凭证失败')
   }
 }
 
@@ -2113,6 +2157,19 @@ async function revokeAccessKey(item: WebDAVAccessKeyItem) {
   } catch (error: any) {
     console.error('撤销访问密钥失败:', error)
     showError(error?.message || '撤销访问密钥失败')
+  }
+}
+
+async function deleteAccessKey(item: WebDAVAccessKeyItem) {
+  if (item.status !== 'revoked') return
+  if (!(await confirmAction(`确定删除已撤销的密钥 ${item.name} 吗？`, '删除密钥'))) return
+  try {
+    await webdavAccessKeyApi.remove(item.id)
+    await fetchAccessKeys()
+    showSuccess('密钥已删除')
+  } catch (error: any) {
+    console.error('删除访问密钥失败:', error)
+    showError(error?.message || '删除访问密钥失败')
   }
 }
 
@@ -5824,105 +5881,125 @@ onBeforeUnmount(() => {
                   </el-table-column>
                 </el-table>
               </div>
-              <div v-if="managementSection === 'keys'" class="user-card user-card-full" v-loading="accessKeyLoading">
-                <div class="card-head">
-                  <div class="card-title">密钥管理</div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="fetchAccessKeys(true)">刷新</el-button>
-                    <el-button size="small" type="primary" @click="openAccessKeyDialogFromUserCenter">新建密钥</el-button>
-                  </div>
-                </div>
-                <div class="key-summary">
-                  <span>总数：{{ accessKeys.length }}</span>
-                  <span>生效中：{{ accessKeys.filter(item => item.status === 'active').length }}</span>
-                </div>
-                <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无密钥" />
-                <div v-else class="key-list">
-                  <div v-for="item in accessKeys" :key="item.id" class="key-item">
-                    <div class="key-main">
-                      <div class="key-title-row">
-                        <span class="key-title">{{ item.name }}</span>
-                        <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">
-                          {{ item.status === 'active' ? '生效中' : '已撤销' }}
-                        </el-tag>
-                      </div>
-                      <div class="key-meta-row mono">ID: {{ item.keyId }}</div>
-                      <div class="key-meta-row">
-                        已绑定目录：{{ (item.bindingPaths || []).length }}
-                      </div>
-                      <div v-if="(item.bindingPaths || []).length" class="key-meta-row">
-                        <el-tag
-                          v-for="path in (item.bindingPaths || []).slice(0, 4)"
-                          :key="`${item.id}-${path}`"
-                          size="small"
-                          type="info"
-                        >
-                          {{ path }}
-                        </el-tag>
-                        <span v-if="(item.bindingPaths || []).length > 4" class="key-more-text">
-                          +{{ (item.bindingPaths || []).length - 4 }}
-                        </span>
-                      </div>
-                      <div class="key-meta-row">
-                        权限：
-                        <el-tag
-                          v-for="permission in item.permissions"
-                          :key="`${item.id}-${permission}`"
-                          size="small"
-                          type="info"
-                        >
-                          {{ formatSharePermission(permission) }}
-                        </el-tag>
-                      </div>
-                      <div class="key-meta-row">
-                        最近使用：{{ item.lastUsedAt ? formatTime(item.lastUsedAt) : '-' }}
-                      </div>
-                    </div>
-                    <div class="key-actions">
-                      <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(item.keyId, 'Key ID')">复制 ID</el-button>
-                      <el-button
-                        size="small"
-                        text
-                        type="danger"
-                        :disabled="item.status !== 'active'"
-                        @click="revokeAccessKey(item)"
-                      >
-                        撤销
-                      </el-button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div v-if="managementSection === 'keys'" class="user-card user-card-full s3-credential-card" v-loading="s3CredentialLoading">
+              <div v-if="managementSection === 'keys'" class="user-card user-card-full">
                 <div class="card-head">
                   <div>
-                    <div class="card-title">S3 凭证</div>
-                    <div class="card-subtitle">用于 mc、rclone、AWS CLI 等 S3 客户端</div>
-                  </div>
-                  <div class="user-actions">
-                    <el-button size="small" @click="fetchS3Credentials(true)">刷新</el-button>
-                    <el-button size="small" type="primary" @click="openS3CredentialDialog">新建 S3 凭证</el-button>
+                    <div class="card-title">密钥管理</div>
+                    <div class="card-subtitle">按协议分别管理 WebDAV 密钥和 S3 凭证</div>
                   </div>
                 </div>
-                <el-empty v-if="!s3Credentials.length && !s3CredentialLoading" description="暂无 S3 凭证" />
-                <el-table v-else :data="s3Credentials" size="small">
-                  <el-table-column prop="name" label="名称" min-width="160" />
-                  <el-table-column prop="accessKeyId" label="Access Key ID" min-width="230">
-                    <template #default="{ row }"><span class="mono">{{ row.accessKeyId }}</span></template>
-                  </el-table-column>
-                  <el-table-column prop="rootPath" label="目录范围" min-width="140" />
-                  <el-table-column prop="permissions" label="权限" min-width="220" />
-                  <el-table-column label="状态" width="100">
-                    <template #default="{ row }">
-                      <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag>
-                    </template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="100">
-                    <template #default="{ row }">
-                      <el-button text type="danger" size="small" :disabled="row.status !== 'active'" @click="revokeS3Credential(row)">撤销</el-button>
-                    </template>
-                  </el-table-column>
-                </el-table>
+                <el-tabs v-model="credentialTab" class="credential-tabs">
+                  <el-tab-pane label="WebDAV 凭证" name="webdav">
+                    <div class="credential-tab-head">
+                      <div class="key-summary">
+                        <span>总数：{{ accessKeys.length }}</span>
+                        <span>生效中：{{ accessKeys.filter(item => item.status === 'active').length }}</span>
+                      </div>
+                      <div class="user-actions">
+                        <el-button size="small" @click="fetchAccessKeys(true)">刷新</el-button>
+                        <el-button size="small" type="primary" @click="openAccessKeyDialogFromUserCenter">新建</el-button>
+                      </div>
+                    </div>
+                    <div class="credential-tab-body" v-loading="accessKeyLoading">
+                      <el-empty v-if="!accessKeys.length && !accessKeyLoading" description="暂无 WebDAV 密钥" />
+                      <div v-else class="key-list">
+                        <div v-for="item in accessKeys" :key="item.id" class="key-item">
+                          <div class="key-main">
+                            <div class="key-title-row">
+                              <span class="key-title">{{ item.name }}</span>
+                              <el-tag size="small" :type="item.status === 'active' ? 'success' : 'info'">
+                                {{ item.status === 'active' ? '生效中' : '已撤销' }}
+                              </el-tag>
+                            </div>
+                            <div class="key-meta-row mono">ID: {{ item.keyId }}</div>
+                            <div class="key-meta-row">
+                              已绑定目录：{{ (item.bindingPaths || []).length }}
+                            </div>
+                            <div v-if="(item.bindingPaths || []).length" class="key-meta-row">
+                              <el-tag
+                                v-for="path in (item.bindingPaths || []).slice(0, 4)"
+                                :key="`${item.id}-${path}`"
+                                size="small"
+                                type="info"
+                              >
+                                {{ path }}
+                              </el-tag>
+                              <span v-if="(item.bindingPaths || []).length > 4" class="key-more-text">
+                                +{{ (item.bindingPaths || []).length - 4 }}
+                              </span>
+                            </div>
+                            <div class="key-meta-row">
+                              权限：
+                              <el-tag
+                                v-for="permission in item.permissions"
+                                :key="`${item.id}-${permission}`"
+                                size="small"
+                                type="info"
+                              >
+                                {{ formatSharePermission(permission) }}
+                              </el-tag>
+                            </div>
+                            <div class="key-meta-row">
+                              最近使用：{{ item.lastUsedAt ? formatTime(item.lastUsedAt) : '-' }}
+                            </div>
+                          </div>
+                          <div class="key-actions">
+                            <el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(item.keyId, 'Key ID')">复制 ID</el-button>
+                            <el-button
+                              v-if="item.status === 'active'"
+                              size="small"
+                              text
+                              type="danger"
+                              @click="revokeAccessKey(item)"
+                            >
+                              撤销
+                            </el-button>
+                            <el-button
+                              v-else
+                              size="small"
+                              text
+                              type="danger"
+                              @click="deleteAccessKey(item)"
+                            >
+                              删除
+                            </el-button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </el-tab-pane>
+                  <el-tab-pane label="S3 凭证" name="s3">
+                    <div class="credential-tab-head">
+                      <div class="card-subtitle">用于 mc、rclone、AWS CLI 等 S3 客户端</div>
+                      <div class="user-actions">
+                        <el-button size="small" @click="fetchS3Credentials(true)">刷新</el-button>
+                        <el-button size="small" type="primary" @click="openS3CredentialDialog">新建</el-button>
+                      </div>
+                    </div>
+                    <div class="credential-tab-body" v-loading="s3CredentialLoading">
+                      <el-empty v-if="!s3Credentials.length && !s3CredentialLoading" description="暂无 S3 凭证" />
+                      <el-table v-else :data="s3Credentials" size="small">
+                        <el-table-column prop="name" label="名称" min-width="160" />
+                        <el-table-column prop="accessKeyId" label="Access Key ID" min-width="230">
+                          <template #default="{ row }"><span class="mono">{{ row.accessKeyId }}</span></template>
+                        </el-table-column>
+                        <el-table-column prop="rootPath" label="目录范围" min-width="140" />
+                        <el-table-column prop="permissions" label="权限" min-width="220" />
+                        <el-table-column label="状态" width="100">
+                          <template #default="{ row }">
+                            <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag>
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="操作" width="120">
+                          <template #default="{ row }">
+                            <el-button v-if="row.status === 'active'" text type="danger" size="small" @click="revokeS3Credential(row)">撤销</el-button>
+                            <el-button v-else text type="danger" size="small" @click="deleteS3Credential(row)">删除</el-button>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                    </div>
+                  </el-tab-pane>
+                </el-tabs>
               </div>
               <div v-if="managementSection === 'group'" class="user-card user-card-full" v-loading="groupLoading && !manualRefresh">
                 <GroupView embedded @refresh="refreshCurrentView" />
@@ -6291,9 +6368,26 @@ onBeforeUnmount(() => {
           <el-form-item label="凭证名称">
             <el-input v-model="s3CredentialName" placeholder="例如：本地 mc" :disabled="!!s3CredentialCreateResult" />
           </el-form-item>
+          <el-form-item label="逻辑 bucket">
+            <el-select v-model="s3CredentialBucket" class="s3-credential-bucket-select" :disabled="!!s3CredentialCreateResult">
+              <el-option label="personal（个人存储）" value="personal" />
+              <el-option label="apps（应用存储）" value="apps" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="bucket 下目录">
+            <el-input v-model="s3CredentialDirectory" placeholder="留空表示整个 bucket；例如：backup/资料" :disabled="!!s3CredentialCreateResult">
+              <template #prepend>/{{ s3CredentialBucket }}/</template>
+            </el-input>
+            <div class="access-key-permission-help">S3 客户端的 bucket 填上面选择的值，目录限制会作为 key 前缀生效。</div>
+          </el-form-item>
         </el-form>
         <div v-if="s3CredentialCreateResult" class="access-key-created">
           <div class="access-key-created-title">创建成功，请立即保存以下凭据（Secret 仅显示一次）</div>
+          <div class="access-key-created-row">
+            <span class="access-key-created-label">目录范围</span>
+            <span class="access-key-created-value mono">{{ s3CredentialCreateResult.rootPath }}</span>
+            <span></span>
+          </div>
           <div class="access-key-created-row">
             <span class="access-key-created-label">Access Key ID</span>
             <span class="access-key-created-value mono">{{ s3CredentialCreateResult.accessKeyId }}</span>
@@ -7506,8 +7600,28 @@ onBeforeUnmount(() => {
   color: #909399;
 }
 
+.credential-tabs {
+  margin-top: 8px;
+}
+
+.credential-tab-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.credential-tab-body {
+  min-height: 120px;
+}
+
 .admin-quota-filter {
   width: 140px;
+}
+
+.s3-credential-bucket-select {
+  width: 100%;
 }
 
 .admin-quota-table {
