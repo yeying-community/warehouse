@@ -832,6 +832,34 @@ const canPreviewNextImage = computed(
   () => previewImageIndex.value >= 0 && previewImageIndex.value < previewImageItems.value.length - 1
 )
 const API_BASE = import.meta.env.VITE_API_BASE || ''
+const RESUMABLE_UPLOAD_THRESHOLD = 64 * 1024 * 1024
+const RESUMABLE_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+type UploadSessionPart = {
+  partNumber: number
+  size: number
+  etag: string
+  updatedAt: string
+}
+type UploadSessionResponse = {
+  id: string
+  scope: string
+  path: string
+  shareId?: string
+  size: number
+  chunkSize: number
+  fileName: string
+  contentType?: string
+  lastModified?: number
+  status: string
+  createdAt: string
+  updatedAt: string
+  expiresAt: string
+  parts: UploadSessionPart[]
+}
+type UploadSessionPartResponse = {
+  session: UploadSessionResponse
+  part: UploadSessionPart
+}
 const TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'markdown', 'json', 'jsonl', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
   'log', 'csv', 'tsv', 'xml', 'html', 'htm', 'css', 'scss', 'less',
@@ -929,6 +957,12 @@ function ensureDavPrefixedPath(path: string): string {
 
 function buildDavPath(path: string): string {
   return ensureDavPrefixedPath(path)
+}
+
+function buildApiPath(path: string): string {
+  const rawBase = String(API_BASE || '').trim().replace(/\/+$/, '')
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return `${rawBase}${normalized}`
 }
 
 function buildShareDavRoot(shareID: string): string {
@@ -3096,7 +3130,9 @@ function createUploadTask(item: UploadItem, options: { basePath: string; isShare
     shareId: options.shareId,
     sharePath: options.isShared ? normalizeRelativePath(targetPath) : undefined,
     encryptedRoot: options.encryptedRoot || undefined,
-    cipherSuite: options.cipherSuite || undefined
+    cipherSuite: options.cipherSuite || undefined,
+    originalSize: item.file.size,
+    originalLastModified: item.file.lastModified
   }
 }
 
@@ -3176,6 +3212,181 @@ function uploadFileWithProgress(
   })
 }
 
+async function uploadSessionRequest<T>(path: string, options: { method?: string; body?: Record<string, unknown> } = {}): Promise<T> {
+  const token = localStorage.getItem('authToken') || ''
+  const response = await fetch(buildApiPath(path), {
+    method: options.method || 'GET',
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined
+  })
+  if (!response.ok) {
+    const raw = (await response.text()).trim()
+    throw new Error(normalizeUserFacingErrorMessage(raw, `上传会话失败: ${response.status}`))
+  }
+  const text = await response.text()
+  return text.trim() ? JSON.parse(text) as T : undefined as T
+}
+
+function createUploadSession(task: UploadTask, file: Blob): Promise<UploadSessionResponse> {
+  const path = task.isShared
+    ? normalizeRelativePath(task.sharePath || task.relativePath || task.name)
+    : (task.targetPath || buildTargetPath('', task.relativePath || task.name))
+  return uploadSessionRequest<UploadSessionResponse>('/api/v1/public/uploads/sessions', {
+    method: 'POST',
+    body: {
+      path,
+      shareId: task.isShared ? task.shareId : undefined,
+      size: file.size,
+      chunkSize: RESUMABLE_UPLOAD_CHUNK_SIZE,
+      fileName: task.name,
+      contentType: file.type || task.file?.type || 'application/octet-stream',
+      lastModified: task.file?.lastModified || task.originalLastModified || 0
+    }
+  })
+}
+
+function getUploadSession(sessionId: string): Promise<UploadSessionResponse> {
+  return uploadSessionRequest<UploadSessionResponse>(`/api/v1/public/uploads/sessions/${encodeURIComponent(sessionId)}`)
+}
+
+function completeUploadSession(sessionId: string): Promise<UploadSessionResponse> {
+  return uploadSessionRequest<UploadSessionResponse>(`/api/v1/public/uploads/sessions/${encodeURIComponent(sessionId)}/complete`, {
+    method: 'POST'
+  })
+}
+
+function expectedChunkSize(totalSize: number, chunkSize: number, partNumber: number): number {
+  const start = (partNumber - 1) * chunkSize
+  return Math.max(0, Math.min(chunkSize, totalSize - start))
+}
+
+function validUploadedPartMap(session: UploadSessionResponse, totalSize: number, chunkSize: number): Map<number, UploadSessionPart> {
+  const result = new Map<number, UploadSessionPart>()
+  const partCount = Math.ceil(totalSize / chunkSize)
+  for (const part of session.parts || []) {
+    const partNumber = Number(part.partNumber)
+    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > partCount) continue
+    if (Number(part.size) !== expectedChunkSize(totalSize, chunkSize, partNumber)) continue
+    result.set(partNumber, part)
+  }
+  return result
+}
+
+function uploadedBytesFromParts(parts: Map<number, UploadSessionPart>): number {
+  let total = 0
+  for (const part of parts.values()) {
+    total += Number(part.size || 0)
+  }
+  return total
+}
+
+function uploadSessionPartWithProgress(
+  sessionId: string,
+  partNumber: number,
+  file: Blob,
+  token: string,
+  onProgress: (loaded: number, speed: number) => void
+): Promise<UploadSessionPartResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    let lastLoaded = 0
+    let lastTime = performance.now()
+    xhr.open('PUT', buildApiPath(`/api/v1/public/uploads/sessions/${encodeURIComponent(sessionId)}/parts/${partNumber}`), true)
+    xhr.setRequestHeader('Accept', 'application/json')
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
+    xhr.upload.onprogress = event => {
+      const loaded = event.lengthComputable ? event.loaded : Math.min(file.size, lastLoaded)
+      const now = performance.now()
+      const elapsedSeconds = Math.max((now - lastTime) / 1000, 0.001)
+      const speed = Math.max(0, (loaded - lastLoaded) / elapsedSeconds)
+      lastLoaded = loaded
+      lastTime = now
+      onProgress(loaded, speed)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText || '{}') as UploadSessionPartResponse)
+        } catch {
+          reject(new Error('上传分片响应无效'))
+        }
+      } else {
+        const rawMessage = xhr.responseText?.trim() || `上传分片失败: ${xhr.status}`
+        reject(new Error(normalizeUserFacingErrorMessage(rawMessage, `上传分片失败: ${xhr.status}`)))
+      }
+    }
+    xhr.onerror = () => reject(new Error(normalizeUserFacingErrorMessage('上传分片失败', '上传分片失败')))
+    xhr.send(file)
+  })
+}
+
+function shouldUseResumableUpload(task: UploadTask, file: Blob): boolean {
+  return !task.encryptedRoot && file.size >= RESUMABLE_UPLOAD_THRESHOLD
+}
+
+async function uploadFileResumable(
+  task: UploadTask,
+  file: Blob,
+  token: string,
+  onProgress: (progress: number, loaded: number, total: number, speed: number) => void
+): Promise<{ transmittedBytes: number }> {
+  let session: UploadSessionResponse | null = null
+  if (task.uploadSessionId) {
+    try {
+      session = await getUploadSession(task.uploadSessionId)
+    } catch {
+      updateUploadTask(task, { uploadSessionId: undefined, uploadSessionExpiresAt: undefined })
+    }
+  }
+  if (!session) {
+    session = await createUploadSession(task, file)
+  }
+  const chunkSize = Number(session.chunkSize || RESUMABLE_UPLOAD_CHUNK_SIZE)
+  updateUploadTask(task, {
+    uploadSessionId: session.id,
+    uploadChunkSize: chunkSize,
+    uploadSessionExpiresAt: session.expiresAt,
+    resumable: true,
+    size: file.size,
+    originalSize: task.file?.size || task.originalSize,
+    originalLastModified: task.file?.lastModified || task.originalLastModified
+  })
+  await uploadTaskStore.flushPersistedTasks()
+
+  const validParts = validUploadedPartMap(session, file.size, chunkSize)
+  let uploadedBytes = uploadedBytesFromParts(validParts)
+  let transmittedBytes = 0
+  onProgress(Math.min(99, Math.round((uploadedBytes / file.size) * 100)), uploadedBytes, file.size, 0)
+
+  const partCount = Math.ceil(file.size / chunkSize)
+  for (let partNumber = 1; partNumber <= partCount; partNumber++) {
+    if (validParts.has(partNumber)) continue
+    const start = (partNumber - 1) * chunkSize
+    const end = Math.min(file.size, start + chunkSize)
+    const chunk = file.slice(start, end, file.type || 'application/octet-stream')
+    const baseLoaded = uploadedBytes
+    const result = await uploadSessionPartWithProgress(session.id, partNumber, chunk, token, (partLoaded, speed) => {
+      const loaded = Math.min(file.size, baseLoaded + partLoaded)
+      const progress = Math.min(99, Math.round((loaded / file.size) * 100))
+      onProgress(progress, loaded, file.size, speed)
+    })
+    validParts.set(partNumber, result.part)
+    uploadedBytes += Number(result.part.size || chunk.size)
+    transmittedBytes += chunk.size
+    onProgress(Math.min(99, Math.round((uploadedBytes / file.size) * 100)), uploadedBytes, file.size, 0)
+  }
+
+  await completeUploadSession(session.id)
+  return { transmittedBytes }
+}
+
 async function performUploadTask(task: UploadTask) {
   if (!task.file) {
     updateUploadTask(task, { status: 'failed', error: '文件已失效' })
@@ -3203,12 +3414,20 @@ async function performUploadTask(task: UploadTask) {
       )
     }
     const uploadStartedAt = performance.now()
-    await uploadFileWithProgress(url, uploadBody, token, useMultipart, (progress, loaded, total, speed) => {
-      updateUploadTask(task, { progress, uploadedBytes: loaded, size: total || task.size, uploadSpeed: speed })
-    })
+    let averageBytes = uploadBody.size
+    if (shouldUseResumableUpload(task, uploadBody)) {
+      const result = await uploadFileResumable(task, uploadBody, token, (progress, loaded, total, speed) => {
+        updateUploadTask(task, { progress, uploadedBytes: loaded, size: total || task.size, uploadSpeed: speed })
+      })
+      averageBytes = result.transmittedBytes > 0 ? result.transmittedBytes : uploadBody.size
+    } else {
+      await uploadFileWithProgress(url, uploadBody, token, useMultipart, (progress, loaded, total, speed) => {
+        updateUploadTask(task, { progress, uploadedBytes: loaded, size: total || task.size, uploadSpeed: speed })
+      })
+    }
     const elapsedSeconds = Math.max((performance.now() - uploadStartedAt) / 1000, 0.001)
-    const averageSpeed = uploadBody.size / elapsedSeconds
-    updateUploadTask(task, { status: 'success', progress: 100, uploadedBytes: uploadBody.size, uploadSpeed: averageSpeed })
+    const averageSpeed = averageBytes / elapsedSeconds
+    updateUploadTask(task, { status: 'success', progress: 100, uploadedBytes: uploadBody.size, uploadSpeed: averageSpeed, uploadSessionId: undefined, uploadSessionExpiresAt: undefined })
   } catch (error: any) {
     updateUploadTask(task, { status: 'failed', error: errorMessageFromUnknown(error, '上传失败') })
   }
@@ -3329,12 +3548,55 @@ async function uploadSharedFilesWithDirectories(files: UploadItem[], extraDirect
   }
 }
 
+
+function chooseFileForUploadTask(): Promise<File | null> {
+  return new Promise(resolve => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.style.display = 'none'
+    input.onchange = () => {
+      const file = input.files?.[0] || null
+      input.remove()
+      resolve(file)
+    }
+    input.oncancel = () => {
+      input.remove()
+      resolve(null)
+    }
+    document.body.appendChild(input)
+    input.click()
+  })
+}
+
+async function ensureRetryTaskFile(task: UploadTask): Promise<boolean> {
+  if (task.file) return true
+  if (!task.uploadSessionId) {
+    showError('文件已失效，无法重试')
+    return false
+  }
+  const file = await chooseFileForUploadTask()
+  if (!file) return false
+  const expectedSize = Number(task.originalSize || task.size || 0)
+  if (file.name !== task.name || (expectedSize > 0 && file.size !== expectedSize)) {
+    showError('请选择同一个文件继续上传')
+    return false
+  }
+  if (task.originalLastModified && file.lastModified !== task.originalLastModified) {
+    showError('文件修改时间不一致，请选择原始文件继续上传')
+    return false
+  }
+  updateUploadTask(task, {
+    file,
+    error: undefined,
+    originalSize: file.size,
+    originalLastModified: file.lastModified
+  })
+  return true
+}
+
 async function retryUploadTask(task: UploadTask) {
   if (task.status === 'uploading') return
-  if (!task.file) {
-    showError('文件已失效，无法重试')
-    return
-  }
+  if (!await ensureRetryTaskFile(task)) return
   try {
     if (task.isShared) {
       if (!task.shareId) {

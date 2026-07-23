@@ -68,6 +68,7 @@ type Container struct {
 	GroupService           *service.GroupService
 	WebDAVAccessKeyService *service.WebDAVAccessKeyService
 	NotificationService    *service.NotificationService
+	UploadSessionService   *service.UploadSessionService
 
 	// Authenticators
 	Authenticators       []auth.Authenticator
@@ -96,6 +97,7 @@ type Container struct {
 	GroupHandler               *handler.GroupHandler
 	NotificationHandler        *handler.NotificationHandler
 	S3CredentialHandler        *handler.S3CredentialHandler
+	UploadSessionHandler       *handler.UploadSessionHandler
 
 	// HTTP
 	Router   *http.Router
@@ -369,6 +371,15 @@ func (c *Container) initServices() error {
 		c.Config,
 		c.Logger,
 	)
+	c.UploadSessionService = service.NewUploadSessionService(
+		c.Config,
+		permissionChecker,
+		c.QuotaService,
+		c.UserRepository,
+		c.ShareUserService,
+		c.MutationRecorder,
+		c.Logger,
+	)
 
 	c.Logger.Info("services initialized", zap.Bool("quota_enabled", true))
 
@@ -539,6 +550,7 @@ func (c *Container) initHandlers() error {
 	if c.S3CredentialRepo != nil {
 		c.S3CredentialHandler = handler.NewS3CredentialHandler(c.S3CredentialRepo, c.Logger)
 	}
+	c.UploadSessionHandler = handler.NewUploadSessionHandler(c.UploadSessionService, c.Logger)
 
 	c.Logger.Info("handlers initialized")
 
@@ -567,6 +579,7 @@ func (c *Container) initHTTP() error {
 		c.GroupHandler,
 		c.NotificationHandler,
 		c.S3CredentialHandler,
+		c.UploadSessionHandler,
 		c.Logger,
 	)
 

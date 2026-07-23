@@ -31,6 +31,7 @@ type Router struct {
 	groupHandler               *handler.GroupHandler
 	notificationHandler        *handler.NotificationHandler
 	s3CredentialHandler        *handler.S3CredentialHandler
+	uploadSessionHandler       *handler.UploadSessionHandler
 	logger                     *zap.Logger
 }
 
@@ -54,6 +55,7 @@ func NewRouter(
 	groupHandler *handler.GroupHandler,
 	notificationHandler *handler.NotificationHandler,
 	s3CredentialHandler *handler.S3CredentialHandler,
+	uploadSessionHandler *handler.UploadSessionHandler,
 	logger *zap.Logger,
 ) *Router {
 	return &Router{
@@ -75,6 +77,7 @@ func NewRouter(
 		groupHandler:               groupHandler,
 		notificationHandler:        notificationHandler,
 		s3CredentialHandler:        s3CredentialHandler,
+		uploadSessionHandler:       uploadSessionHandler,
 		logger:                     logger,
 	}
 }
@@ -177,6 +180,10 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/public/s3/credentials/create", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleCreate)))
 		mux.Handle("/api/v1/public/s3/credentials/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleRevoke)))
 		mux.Handle("/api/v1/public/s3/credentials/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleDelete)))
+	}
+	if r.uploadSessionHandler != nil {
+		mux.Handle("/api/v1/public/uploads/sessions", r.createAuthenticatedHandler(http.HandlerFunc(r.uploadSessionHandler.HandleCreate)))
+		mux.Handle("/api/v1/public/uploads/sessions/", r.createAuthenticatedHandler(http.HandlerFunc(r.uploadSessionHandler.HandleItem)))
 	}
 
 	// 分享路由

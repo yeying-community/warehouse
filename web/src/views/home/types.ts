@@ -35,6 +35,12 @@ export type UploadTask = {
   encryptedRoot?: string
   cipherSuite?: string
   passwordSource?: 'manual' | 'wallet' | 'wallet+password'
+  uploadSessionId?: string
+  uploadChunkSize?: number
+  uploadSessionExpiresAt?: string
+  resumable?: boolean
+  originalSize?: number
+  originalLastModified?: number
 }
 
 export type CipherSuiteOption = {
