@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/domain/auth"
@@ -120,6 +121,8 @@ func (h *ShareUserHandler) HandleDAV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.clearShareDAVDeadlines(w)
+
 	shareID, relPath, davPrefix, err := h.parseDAVSharePath(r.URL.Path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -166,6 +169,16 @@ func (h *ShareUserHandler) HandleDAV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.serveShareDAV(w, r, davPrefix, baseFull)
+}
+
+func (h *ShareUserHandler) clearShareDAVDeadlines(w http.ResponseWriter) {
+	controller := http.NewResponseController(w)
+	if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		h.logger.Debug("failed to clear share dav read deadline", zap.Error(err))
+	}
+	if err := controller.SetWriteDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		h.logger.Debug("failed to clear share dav write deadline", zap.Error(err))
+	}
 }
 
 type shareDAVContext struct {
