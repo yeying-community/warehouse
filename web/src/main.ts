@@ -9,8 +9,10 @@ import 'element-plus/es/components/loading/style/css'
 import './assets/css/index.scss'
 import { createRouter, createWebHistory } from 'vue-router'
 import { initializeAuthSession } from './plugins/auth'
+import { useUploadTaskStore } from './stores/uploadTaskStore'
 
 const app = createApp(App)
+const pinia = createPinia()
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -19,10 +21,11 @@ const router = createRouter({
 
 app.config.globalProperties.$t = function(key: string) { return key }
 
-app.use(createPinia())
+app.use(pinia)
 app.use(ElLoading)
 app.use(router)
 
-void initializeAuthSession().finally(() => {
+void initializeAuthSession().finally(async () => {
+  await useUploadTaskStore(pinia).restorePersistedTasks()
   app.mount('#app')
 })

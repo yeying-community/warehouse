@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/yeying-community/warehouse/internal/application/service"
 	"github.com/yeying-community/warehouse/internal/infrastructure/config"
@@ -41,6 +43,22 @@ func TestEnsureSameDAVShareDestinationRejectsCrossShareMove(t *testing.T) {
 	}
 }
 
+func TestClearShareDAVDeadlines(t *testing.T) {
+	t.Parallel()
+
+	handler := newShareDAVTestHandler()
+	rec := &deadlineResponseWriter{header: make(http.Header)}
+
+	handler.clearShareDAVDeadlines(rec)
+
+	if !rec.readDeadlineSet || !rec.readDeadline.IsZero() {
+		t.Fatalf("expected cleared read deadline, got set=%v deadline=%v", rec.readDeadlineSet, rec.readDeadline)
+	}
+	if !rec.writeDeadlineSet || !rec.writeDeadline.IsZero() {
+		t.Fatalf("expected cleared write deadline, got set=%v deadline=%v", rec.writeDeadlineSet, rec.writeDeadline)
+	}
+}
+
 func newShareDAVTestHandler() *ShareUserHandler {
 	cfg := config.DefaultConfig()
 	cfg.WebDAV.Prefix = "/dav"
@@ -50,4 +68,35 @@ func newShareDAVTestHandler() *ShareUserHandler {
 		nil,
 		zap.NewNop(),
 	)
+}
+
+type deadlineResponseWriter struct {
+	header           http.Header
+	readDeadline     time.Time
+	writeDeadline    time.Time
+	readDeadlineSet  bool
+	writeDeadlineSet bool
+}
+
+func (w *deadlineResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *deadlineResponseWriter) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (w *deadlineResponseWriter) WriteHeader(statusCode int) {
+}
+
+func (w *deadlineResponseWriter) SetReadDeadline(deadline time.Time) error {
+	w.readDeadline = deadline
+	w.readDeadlineSet = true
+	return nil
+}
+
+func (w *deadlineResponseWriter) SetWriteDeadline(deadline time.Time) error {
+	w.writeDeadline = deadline
+	w.writeDeadlineSet = true
+	return nil
 }
