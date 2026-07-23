@@ -57,6 +57,10 @@ function handleRetry(task: UploadTask) {
   props.retryTask(task)
 }
 
+function canRetryTask(task: UploadTask): boolean {
+  return task.status === 'failed' && Boolean(task.file)
+}
+
 function canOpenTaskLocation(task: UploadTask): boolean {
   return task.status === 'success' && !task.isShared && Boolean(task.targetPath)
 }
@@ -103,7 +107,7 @@ function handleOpenTaskLocation(task: UploadTask) {
           />
         </el-tooltip>
         <el-button
-          v-if="row.status === 'failed'"
+          v-if="canRetryTask(row)"
           size="small"
           circle
           :icon="RefreshRight"

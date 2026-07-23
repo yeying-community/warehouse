@@ -54,6 +54,13 @@ watch(uploadTaskAddSignal, (value, oldValue) => {
   })
 })
 
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!uploadTaskStore.hasActiveTasks) return
+  void uploadTaskStore.flushPersistedTasks()
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 onMounted(() => {
   isAuth.value = isLoggedIn()
   account.value = getCurrentAccount()
@@ -71,6 +78,7 @@ onMounted(() => {
     }, 30000)
   }
   window.addEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
+  window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
 onMounted(() => {
@@ -364,6 +372,7 @@ onBeforeUnmount(() => {
   }
   stopNotificationStreams()
   window.removeEventListener(AUTH_CHANGED_EVENT, handleAuthChanged as EventListener)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   stopWalletProviderWatch?.()
   stopAccountWatch?.()
 })
