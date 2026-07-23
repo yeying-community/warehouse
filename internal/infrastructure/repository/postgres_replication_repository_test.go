@@ -324,7 +324,7 @@ func TestPostgresReplicationOutboxRepositoryGetStatusSummary(t *testing.T) {
 			"network timeout",
 		))
 
-	summary, err := repo.GetStatusSummary(context.Background(), "node-a", "node-b")
+	summary, err := repo.GetStatusSummary(context.Background(), "node-a", "node-b", nil)
 	if err != nil {
 		t.Fatalf("GetStatusSummary: %v", err)
 	}
@@ -351,6 +351,86 @@ func TestPostgresReplicationOutboxRepositoryGetStatusSummary(t *testing.T) {
 	}
 	if summary.LastError == nil || *summary.LastError != "network timeout" {
 		t.Fatalf("unexpected last error: %#v", summary.LastError)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet expectations: %v", err)
+	}
+}
+
+func TestPostgresReplicationOutboxRepositoryGetStatusSummaryFiltersAssignmentGeneration(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer db.Close()
+
+	repo := NewPostgresReplicationOutboxRepository(db)
+	generation := int64(60)
+	lastOutboxID := int64(220908)
+	lastDispatchedID := int64(220908)
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		WITH pair_events AS (
+			SELECT id, status, attempt_count, next_retry_at, last_error, created_at
+			FROM replication_outbox
+			WHERE source_node_id = $1
+			  AND target_node_id = $2
+			  AND assignment_generation = $3
+		),
+		last_failed AS (
+			SELECT id, attempt_count, next_retry_at, last_error
+			FROM pair_events
+			WHERE status = $4
+			ORDER BY id DESC
+			LIMIT 1
+		)
+		SELECT
+			COUNT(*) FILTER (WHERE status IN ($5, $4)) AS pending_events,
+			COUNT(*) FILTER (WHERE status = $4) AS failed_events,
+			MAX(id) AS last_outbox_id,
+			MAX(id) FILTER (WHERE status = $6) AS last_dispatched_outbox_id,
+			MIN(created_at) FILTER (WHERE status IN ($5, $4)) AS oldest_pending_created_at,
+			(SELECT id FROM last_failed),
+			(SELECT attempt_count FROM last_failed),
+			(SELECT next_retry_at FROM last_failed),
+			(SELECT last_error FROM last_failed)
+		FROM pair_events
+	`)).
+		WithArgs("node-a", "node-b", generation, replication.StatusFailed, replication.StatusPending, replication.StatusDispatched).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"pending_events",
+			"failed_events",
+			"last_outbox_id",
+			"last_dispatched_outbox_id",
+			"oldest_pending_created_at",
+			"last_failed_outbox_id",
+			"last_failure_attempt",
+			"next_retry_at",
+			"last_error",
+		}).AddRow(
+			int64(0),
+			int64(0),
+			lastOutboxID,
+			lastDispatchedID,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		))
+
+	summary, err := repo.GetStatusSummary(context.Background(), "node-a", "node-b", &generation)
+	if err != nil {
+		t.Fatalf("GetStatusSummary: %v", err)
+	}
+	if summary.PendingEvents != 0 || summary.FailedEvents != 0 {
+		t.Fatalf("unexpected status counts: %#v", summary)
+	}
+	if summary.LastOutboxID == nil || *summary.LastOutboxID != lastOutboxID {
+		t.Fatalf("unexpected last outbox id: %#v", summary.LastOutboxID)
+	}
+	if summary.LastDispatchedOutboxID == nil || *summary.LastDispatchedOutboxID != lastDispatchedID {
+		t.Fatalf("unexpected last dispatched id: %#v", summary.LastDispatchedOutboxID)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unmet expectations: %v", err)

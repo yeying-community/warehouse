@@ -77,6 +77,7 @@ func (h *InternalReplicationHandler) HandleBootstrapMark(w http.ResponseWriter, 
 		return
 	}
 
+	assignmentGeneration := effectiveAssignmentGeneration(requestGeneration, assignment)
 	baselineOutboxID, usedCurrentOutboxID, err := h.resolveBootstrapOutboxID(r.Context(), sourceNodeID, targetNodeID, req.OutboxID)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, err.Error())
@@ -104,7 +105,7 @@ func (h *InternalReplicationHandler) HandleBootstrapMark(w http.ResponseWriter, 
 	if err := h.offsets.Upsert(r.Context(), &replication.Offset{
 		SourceNodeID:         sourceNodeID,
 		TargetNodeID:         targetNodeID,
-		AssignmentGeneration: effectiveAssignmentGeneration(requestGeneration, assignment),
+		AssignmentGeneration: assignmentGeneration,
 		LastAppliedOutboxID:  baselineOutboxID,
 		LastAppliedAt:        now,
 		UpdatedAt:            now,
@@ -140,7 +141,7 @@ func (h *InternalReplicationHandler) resolveBootstrapOutboxID(ctx context.Contex
 		return 0, false, errors.New("outbox repository is not configured")
 	}
 
-	summary, err := h.outbox.GetStatusSummary(ctx, sourceNodeID, targetNodeID)
+	summary, err := h.outbox.GetStatusSummary(ctx, sourceNodeID, targetNodeID, nil)
 	if err != nil {
 		return 0, false, err
 	}

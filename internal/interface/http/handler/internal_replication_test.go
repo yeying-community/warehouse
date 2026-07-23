@@ -28,14 +28,20 @@ type fakeHandlerPeerResolver struct {
 }
 
 type fakeReplicationOutboxReader struct {
-	expectedSource string
-	expectedTarget string
-	summary        *replication.OutboxStatus
+	expectedSource     string
+	expectedTarget     string
+	expectedGeneration *int64
+	summary            *replication.OutboxStatus
 }
 
-func (r fakeReplicationOutboxReader) GetStatusSummary(_ context.Context, sourceNodeID, targetNodeID string) (*replication.OutboxStatus, error) {
+func (r fakeReplicationOutboxReader) GetStatusSummary(_ context.Context, sourceNodeID, targetNodeID string, assignmentGeneration *int64) (*replication.OutboxStatus, error) {
 	if sourceNodeID != r.expectedSource || targetNodeID != r.expectedTarget {
 		return nil, fmt.Errorf("unexpected pair %s -> %s", sourceNodeID, targetNodeID)
+	}
+	if r.expectedGeneration != nil {
+		if assignmentGeneration == nil || *assignmentGeneration != *r.expectedGeneration {
+			return nil, fmt.Errorf("unexpected generation %#v", assignmentGeneration)
+		}
 	}
 	return r.summary, nil
 }
@@ -271,12 +277,14 @@ func TestInternalReplicationHandleStatusActive(t *testing.T) {
 	oldestPending := time.Now().Add(-2 * time.Minute)
 	nextRetryAt := time.Now().Add(30 * time.Second)
 	lastError := "peer returned 500"
+	generation := int64(60)
 	handler := NewInternalReplicationHandler(
 		cfg,
 		zap.NewNop(),
 		fakeReplicationOutboxReader{
-			expectedSource: "node-a",
-			expectedTarget: "node-b",
+			expectedSource:     "node-a",
+			expectedTarget:     "node-b",
+			expectedGeneration: &generation,
 			summary: &replication.OutboxStatus{
 				PendingEvents:          3,
 				FailedEvents:           1,
@@ -302,11 +310,12 @@ func TestInternalReplicationHandleStatusActive(t *testing.T) {
 		nil,
 		fakeHandlerPeerResolver{
 			target: &service.ResolvedReplicationPeer{
-				NodeID:          "node-b",
-				BaseURL:         "https://standby.internal",
-				Source:          "assignment+registry",
-				Healthy:         true,
-				LastHeartbeatAt: timePointer(time.Now()),
+				NodeID:               "node-b",
+				BaseURL:              "https://standby.internal",
+				Source:               "assignment+registry",
+				AssignmentGeneration: &generation,
+				Healthy:              true,
+				LastHeartbeatAt:      timePointer(time.Now()),
 			},
 		},
 	)
