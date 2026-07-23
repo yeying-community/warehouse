@@ -58,7 +58,12 @@ function handleRetry(task: UploadTask) {
 }
 
 function canRetryTask(task: UploadTask): boolean {
-  return task.status === 'failed' && Boolean(task.file)
+  return task.status === 'failed' && (Boolean(task.file) || Boolean(task.uploadSessionId) || Boolean(task.uploadPayloadStorageKey))
+}
+
+function retryTooltip(task: UploadTask): string {
+  if (task.encryptedRoot && task.uploadPayloadStorageKey) return '继续加密上传'
+  return task.file ? '重试上传' : '重新选择文件继续上传'
 }
 
 function canOpenTaskLocation(task: UploadTask): boolean {
@@ -106,13 +111,18 @@ function handleOpenTaskLocation(task: UploadTask) {
             @click="handleOpenTaskLocation(row)"
           />
         </el-tooltip>
-        <el-button
+        <el-tooltip
           v-if="canRetryTask(row)"
-          size="small"
-          circle
-          :icon="RefreshRight"
-          @click="handleRetry(row)"
-        />
+          :content="retryTooltip(row)"
+          placement="top"
+        >
+          <el-button
+            size="small"
+            circle
+            :icon="RefreshRight"
+            @click="handleRetry(row)"
+          />
+        </el-tooltip>
       </div>
     </div>
   </div>

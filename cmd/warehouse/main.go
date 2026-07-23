@@ -122,6 +122,9 @@ func runServer(args []string) {
 	if c.MultipartService != nil && c.Config.Node.Role != "standby" {
 		startBackground(c.MultipartService.Run)
 	}
+	if c.UploadSessionService != nil && c.Config.Node.Role != "standby" {
+		startBackground(c.UploadSessionService.Run)
+	}
 	if c.InternalReplicationHandler != nil {
 		startBackground(c.InternalReplicationHandler.RunAutoReconcile)
 	}

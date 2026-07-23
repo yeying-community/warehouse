@@ -149,6 +149,8 @@ cors:
     - "Depth"
     - "Destination"
     - "Overwrite"
+    - "X-Warehouse-Checksum-SHA256"
+    - "x-amz-checksum-sha256"
   exposed_headers:
     - "Content-Length"
     - "Content-Type"
