@@ -39,6 +39,8 @@ export type UploadTask = {
   uploadChunkSize?: number
   uploadSessionExpiresAt?: string
   resumable?: boolean
+  uploadPayloadStorageKey?: string
+  uploadPayloadSize?: number
   originalSize?: number
   originalLastModified?: number
 }

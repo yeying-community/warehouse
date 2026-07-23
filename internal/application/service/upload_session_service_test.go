@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,10 +34,10 @@ func TestUploadSessionServiceCompleteWritesFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 1, strings.NewReader("abcd")); err != nil {
+	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 1, uploadSessionTestChecksum("abcd"), strings.NewReader("abcd")); err != nil {
 		t.Fatalf("UploadPart 1: %v", err)
 	}
-	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 2, strings.NewReader("ef")); err != nil {
+	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 2, uploadSessionTestChecksum("ef"), strings.NewReader("ef")); err != nil {
 		t.Fatalf("UploadPart 2: %v", err)
 	}
 	if _, err := svc.Complete(context.Background(), owner, session.ID); err != nil {
@@ -69,7 +71,7 @@ func TestUploadSessionServiceCompleteRequiresAllParts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 1, strings.NewReader("abcd")); err != nil {
+	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 1, uploadSessionTestChecksum("abcd"), strings.NewReader("abcd")); err != nil {
 		t.Fatalf("UploadPart 1: %v", err)
 	}
 	if _, err := svc.Complete(context.Background(), owner, session.ID); !errors.Is(err, ErrUploadSessionInvalid) {
@@ -124,10 +126,10 @@ func TestUploadSessionServiceShareUpdatePermissionOverwritesExistingFile(t *test
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, _, err := svc.UploadPart(context.Background(), target, session.ID, 1, strings.NewReader("abc")); err != nil {
+	if _, _, err := svc.UploadPart(context.Background(), target, session.ID, 1, uploadSessionTestChecksum("abc"), strings.NewReader("abc")); err != nil {
 		t.Fatalf("UploadPart 1: %v", err)
 	}
-	if _, _, err := svc.UploadPart(context.Background(), target, session.ID, 2, strings.NewReader("def")); err != nil {
+	if _, _, err := svc.UploadPart(context.Background(), target, session.ID, 2, uploadSessionTestChecksum("def"), strings.NewReader("def")); err != nil {
 		t.Fatalf("UploadPart 2: %v", err)
 	}
 	if _, err := svc.Complete(context.Background(), target, session.ID); err != nil {
@@ -158,7 +160,7 @@ func TestUploadSessionServiceCleanupExpiredRemovesSessionDirectory(t *testing.T)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 1, strings.NewReader("abcd")); err != nil {
+	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 1, uploadSessionTestChecksum("abcd"), strings.NewReader("abcd")); err != nil {
 		t.Fatalf("UploadPart: %v", err)
 	}
 	session.ExpiresAt = time.Now().Add(-time.Minute)
@@ -178,10 +180,35 @@ func TestUploadSessionServiceCleanupExpiredRemovesSessionDirectory(t *testing.T)
 	}
 }
 
+func TestUploadSessionServiceRejectsPartChecksumMismatch(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	owner := user.NewUser("alice", "alice")
+	owner.ID = "user-alice"
+	if err := os.MkdirAll(filepath.Join(root, "alice", "personal"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewUploadSessionService(uploadSessionTestConfig(root), nil, nil, nil, nil, noopMutationRecorder{}, zap.NewNop())
+
+	session, err := svc.Create(context.Background(), owner, UploadSessionCreateInput{Path: "/personal/file.txt", Size: 4, ChunkSize: 4, FileName: "file.txt"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, _, err := svc.UploadPart(context.Background(), owner, session.ID, 1, uploadSessionTestChecksum("different"), strings.NewReader("abcd")); !errors.Is(err, ErrUploadSessionChecksum) {
+		t.Fatalf("expected ErrUploadSessionChecksum, got %v", err)
+	}
+}
+
 func uploadSessionTestConfig(root string) *config.Config {
 	cfg := config.DefaultConfig()
 	cfg.WebDAV.Directory = root
 	return cfg
+}
+
+func uploadSessionTestChecksum(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func newUploadSessionShareFixture(t *testing.T, permissions string) (*UploadSessionService, *user.User, string, string) {

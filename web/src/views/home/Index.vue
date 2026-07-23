@@ -838,6 +838,7 @@ type UploadSessionPart = {
   partNumber: number
   size: number
   etag: string
+  checksumSha256: string
   updatedAt: string
 }
 type UploadSessionResponse = {
@@ -3264,13 +3265,36 @@ function expectedChunkSize(totalSize: number, chunkSize: number, partNumber: num
   return Math.max(0, Math.min(chunkSize, totalSize - start))
 }
 
-function validUploadedPartMap(session: UploadSessionResponse, totalSize: number, chunkSize: number): Map<number, UploadSessionPart> {
+function normalizeChecksumSHA256(value: unknown): string {
+  const checksum = String(value || '').trim().toLowerCase()
+  return /^[0-9a-f]{64}$/.test(checksum) ? checksum : ''
+}
+
+function bytesToHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer), item => item.toString(16).padStart(2, '0')).join('')
+}
+
+async function blobSHA256Hex(blob: Blob): Promise<string> {
+  const subtle = globalThis.crypto?.subtle
+  if (!subtle) {
+    throw new Error('当前浏览器不支持上传校验')
+  }
+  return bytesToHex(await subtle.digest('SHA-256', await blob.arrayBuffer()))
+}
+
+async function verifiedUploadedPartMap(session: UploadSessionResponse, file: Blob, chunkSize: number): Promise<Map<number, UploadSessionPart>> {
   const result = new Map<number, UploadSessionPart>()
-  const partCount = Math.ceil(totalSize / chunkSize)
+  const partCount = Math.ceil(file.size / chunkSize)
   for (const part of session.parts || []) {
     const partNumber = Number(part.partNumber)
     if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > partCount) continue
-    if (Number(part.size) !== expectedChunkSize(totalSize, chunkSize, partNumber)) continue
+    if (Number(part.size) !== expectedChunkSize(file.size, chunkSize, partNumber)) continue
+    const expectedChecksum = normalizeChecksumSHA256(part.checksumSha256)
+    if (!expectedChecksum) continue
+    const start = (partNumber - 1) * chunkSize
+    const end = Math.min(file.size, start + chunkSize)
+    const actualChecksum = await blobSHA256Hex(file.slice(start, end, file.type || 'application/octet-stream'))
+    if (actualChecksum !== expectedChecksum) continue
     result.set(partNumber, part)
   }
   return result
@@ -3288,6 +3312,7 @@ function uploadSessionPartWithProgress(
   sessionId: string,
   partNumber: number,
   file: Blob,
+  checksumSHA256: string,
   token: string,
   onProgress: (loaded: number, speed: number) => void
 ): Promise<UploadSessionPartResponse> {
@@ -3298,6 +3323,7 @@ function uploadSessionPartWithProgress(
     xhr.open('PUT', buildApiPath(`/api/v1/public/uploads/sessions/${encodeURIComponent(sessionId)}/parts/${partNumber}`), true)
     xhr.setRequestHeader('Accept', 'application/json')
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream')
+    xhr.setRequestHeader('X-Warehouse-Checksum-SHA256', checksumSHA256)
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     }
@@ -3313,7 +3339,12 @@ function uploadSessionPartWithProgress(
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          resolve(JSON.parse(xhr.responseText || '{}') as UploadSessionPartResponse)
+          const response = JSON.parse(xhr.responseText || '{}') as UploadSessionPartResponse
+          if (normalizeChecksumSHA256(response.part?.checksumSha256) !== checksumSHA256) {
+            reject(new Error('上传分片校验失败'))
+            return
+          }
+          resolve(response)
         } catch {
           reject(new Error('上传分片响应无效'))
         }
@@ -3327,8 +3358,8 @@ function uploadSessionPartWithProgress(
   })
 }
 
-function shouldUseResumableUpload(task: UploadTask, file: Blob): boolean {
-  return !task.encryptedRoot && file.size >= RESUMABLE_UPLOAD_THRESHOLD
+function shouldUseResumableUpload(_task: UploadTask, file: Blob): boolean {
+  return file.size >= RESUMABLE_UPLOAD_THRESHOLD
 }
 
 async function uploadFileResumable(
@@ -3360,7 +3391,7 @@ async function uploadFileResumable(
   })
   await uploadTaskStore.flushPersistedTasks()
 
-  const validParts = validUploadedPartMap(session, file.size, chunkSize)
+  const validParts = await verifiedUploadedPartMap(session, file, chunkSize)
   let uploadedBytes = uploadedBytesFromParts(validParts)
   let transmittedBytes = 0
   onProgress(Math.min(99, Math.round((uploadedBytes / file.size) * 100)), uploadedBytes, file.size, 0)
@@ -3371,8 +3402,9 @@ async function uploadFileResumable(
     const start = (partNumber - 1) * chunkSize
     const end = Math.min(file.size, start + chunkSize)
     const chunk = file.slice(start, end, file.type || 'application/octet-stream')
+    const checksumSHA256 = await blobSHA256Hex(chunk)
     const baseLoaded = uploadedBytes
-    const result = await uploadSessionPartWithProgress(session.id, partNumber, chunk, token, (partLoaded, speed) => {
+    const result = await uploadSessionPartWithProgress(session.id, partNumber, chunk, checksumSHA256, token, (partLoaded, speed) => {
       const loaded = Math.min(file.size, baseLoaded + partLoaded)
       const progress = Math.min(99, Math.round((loaded / file.size) * 100))
       onProgress(progress, loaded, file.size, speed)
@@ -3387,8 +3419,78 @@ async function uploadFileResumable(
   return { transmittedBytes }
 }
 
-async function performUploadTask(task: UploadTask) {
+async function getStoredUploadPayload(task: UploadTask): Promise<Blob | null> {
+  if (!task.uploadPayloadStorageKey) return null
+  try {
+    const payload = await uploadTaskStore.getUploadPayload(task.uploadPayloadStorageKey)
+    if (payload && (!task.uploadPayloadSize || payload.size === task.uploadPayloadSize)) {
+      return payload
+    }
+  } catch (error) {
+    console.warn('读取上传缓存失败:', error)
+  }
+  await uploadTaskStore.removeUploadPayload(task.uploadPayloadStorageKey)
+  updateUploadTask(task, {
+    uploadPayloadStorageKey: undefined,
+    uploadPayloadSize: undefined,
+    uploadSessionId: undefined,
+    uploadSessionExpiresAt: undefined
+  })
+  return null
+}
+
+async function resolveEncryptedUploadBody(task: UploadTask): Promise<Blob> {
+  const storedPayload = await getStoredUploadPayload(task)
+  if (storedPayload) return storedPayload
   if (!task.file) {
+    throw new Error('加密上传缓存已失效，请重新选择文件')
+  }
+  const resetSession = Boolean(task.uploadSessionId)
+  const encryptedBody = await encryptFileContent(
+    task.file,
+    await buildEncryptedDirectoryCryptoOptions(task.encryptedRoot || '', task.cipherSuite || getEncryptedDirectoryCipherSuite(task.encryptedRoot))
+  )
+  if (encryptedBody.size >= RESUMABLE_UPLOAD_THRESHOLD) {
+    let payloadKey = ''
+    try {
+      payloadKey = await uploadTaskStore.saveUploadPayload(task.id, encryptedBody)
+    } catch {
+      throw new Error('浏览器本地空间不足，无法准备加密断点续传')
+    }
+    updateUploadTask(task, {
+      uploadPayloadStorageKey: payloadKey,
+      uploadPayloadSize: encryptedBody.size,
+      size: encryptedBody.size,
+      uploadSessionId: resetSession ? undefined : task.uploadSessionId,
+      uploadSessionExpiresAt: resetSession ? undefined : task.uploadSessionExpiresAt
+    })
+    await uploadTaskStore.flushPersistedTasks()
+  }
+  return encryptedBody
+}
+
+async function resolveUploadBody(task: UploadTask): Promise<Blob> {
+  if (!task.isShared && task.encryptedRoot) {
+    return resolveEncryptedUploadBody(task)
+  }
+  if (!task.file) {
+    throw new Error('文件已失效')
+  }
+  return task.file
+}
+
+async function clearUploadPayload(task: UploadTask) {
+  const key = task.uploadPayloadStorageKey
+  if (!key) return
+  try {
+    await uploadTaskStore.removeUploadPayload(key)
+  } catch (error) {
+    console.warn('删除上传缓存失败:', error)
+  }
+}
+
+async function performUploadTask(task: UploadTask) {
+  if (!task.file && !(task.encryptedRoot && task.uploadPayloadStorageKey)) {
     updateUploadTask(task, { status: 'failed', error: '文件已失效' })
     return
   }
@@ -3406,13 +3508,7 @@ async function performUploadTask(task: UploadTask) {
   const useMultipart = false
   updateUploadTask(task, { status: 'uploading', progress: 0, uploadedBytes: 0, uploadSpeed: 0, error: undefined })
   try {
-    let uploadBody: Blob = task.file
-    if (!task.isShared && task.encryptedRoot) {
-      uploadBody = await encryptFileContent(
-        task.file,
-        await buildEncryptedDirectoryCryptoOptions(task.encryptedRoot, task.cipherSuite || getEncryptedDirectoryCipherSuite(task.encryptedRoot))
-      )
-    }
+    const uploadBody = await resolveUploadBody(task)
     const uploadStartedAt = performance.now()
     let averageBytes = uploadBody.size
     if (shouldUseResumableUpload(task, uploadBody)) {
@@ -3427,7 +3523,17 @@ async function performUploadTask(task: UploadTask) {
     }
     const elapsedSeconds = Math.max((performance.now() - uploadStartedAt) / 1000, 0.001)
     const averageSpeed = averageBytes / elapsedSeconds
-    updateUploadTask(task, { status: 'success', progress: 100, uploadedBytes: uploadBody.size, uploadSpeed: averageSpeed, uploadSessionId: undefined, uploadSessionExpiresAt: undefined })
+    await clearUploadPayload(task)
+    updateUploadTask(task, {
+      status: 'success',
+      progress: 100,
+      uploadedBytes: uploadBody.size,
+      uploadSpeed: averageSpeed,
+      uploadSessionId: undefined,
+      uploadSessionExpiresAt: undefined,
+      uploadPayloadStorageKey: undefined,
+      uploadPayloadSize: undefined
+    })
   } catch (error: any) {
     updateUploadTask(task, { status: 'failed', error: errorMessageFromUnknown(error, '上传失败') })
   }
@@ -3548,7 +3654,6 @@ async function uploadSharedFilesWithDirectories(files: UploadItem[], extraDirect
   }
 }
 
-
 function chooseFileForUploadTask(): Promise<File | null> {
   return new Promise(resolve => {
     const input = document.createElement('input')
@@ -3570,7 +3675,11 @@ function chooseFileForUploadTask(): Promise<File | null> {
 
 async function ensureRetryTaskFile(task: UploadTask): Promise<boolean> {
   if (task.file) return true
-  if (!task.uploadSessionId) {
+  if (task.encryptedRoot && task.uploadPayloadStorageKey) {
+    const payload = await getStoredUploadPayload(task)
+    if (payload) return true
+  }
+  if (!task.uploadSessionId && !task.encryptedRoot) {
     showError('文件已失效，无法重试')
     return false
   }
@@ -3589,7 +3698,11 @@ async function ensureRetryTaskFile(task: UploadTask): Promise<boolean> {
     file,
     error: undefined,
     originalSize: file.size,
-    originalLastModified: file.lastModified
+    originalLastModified: file.lastModified,
+    uploadSessionId: task.encryptedRoot ? undefined : task.uploadSessionId,
+    uploadSessionExpiresAt: task.encryptedRoot ? undefined : task.uploadSessionExpiresAt,
+    uploadPayloadStorageKey: undefined,
+    uploadPayloadSize: undefined
   })
   return true
 }

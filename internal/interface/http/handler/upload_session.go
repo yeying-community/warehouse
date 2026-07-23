@@ -128,7 +128,12 @@ func (h *UploadSessionHandler) handleUploadPart(w http.ResponseWriter, r *http.R
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	session, part, err := h.service.UploadPart(r.Context(), u, id, partNumber, r.Body)
+	checksum := uploadSessionPartChecksum(r)
+	if checksum == "" {
+		http.Error(w, "checksum is required", http.StatusBadRequest)
+		return
+	}
+	session, part, err := h.service.UploadPart(r.Context(), u, id, partNumber, checksum, r.Body)
 	if err != nil {
 		h.writeError(w, err)
 		return
@@ -196,6 +201,16 @@ func (h *UploadSessionHandler) writeJSON(w http.ResponseWriter, code int, data a
 	}
 }
 
+func uploadSessionPartChecksum(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(r.Header.Get("X-Warehouse-Checksum-SHA256")); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.Header.Get("x-amz-checksum-sha256"))
+}
+
 func (h *UploadSessionHandler) writeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrUploadSessionNotFound):
@@ -204,6 +219,8 @@ func (h *UploadSessionHandler) writeError(w http.ResponseWriter, err error) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 	case errors.Is(err, service.ErrUploadSessionTooLarge):
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+	case errors.Is(err, service.ErrUploadSessionChecksum):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, service.ErrUploadSessionInvalid):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, shareuser.ErrShareNotFound):

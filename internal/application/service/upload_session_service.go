@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,7 @@ var (
 	ErrUploadSessionForbidden = errors.New("upload session forbidden")
 	ErrUploadSessionInvalid   = errors.New("invalid upload session")
 	ErrUploadSessionTooLarge  = errors.New("upload exceeds size limit")
+	ErrUploadSessionChecksum  = errors.New("upload session checksum mismatch")
 )
 
 const (
@@ -59,10 +61,11 @@ type UploadSessionCreateInput struct {
 }
 
 type UploadSessionPart struct {
-	PartNumber int       `json:"partNumber"`
-	Size       int64     `json:"size"`
-	ETag       string    `json:"etag"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	PartNumber     int       `json:"partNumber"`
+	Size           int64     `json:"size"`
+	ETag           string    `json:"etag"`
+	ChecksumSHA256 string    `json:"checksumSha256"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 type UploadSession struct {
@@ -202,9 +205,13 @@ func (s *UploadSessionService) Get(ctx context.Context, uploader *user.User, id 
 	return session, nil
 }
 
-func (s *UploadSessionService) UploadPart(ctx context.Context, uploader *user.User, id string, partNumber int, src io.Reader) (*UploadSession, UploadSessionPart, error) {
+func (s *UploadSessionService) UploadPart(ctx context.Context, uploader *user.User, id string, partNumber int, expectedChecksumSHA256 string, src io.Reader) (*UploadSession, UploadSessionPart, error) {
 	if partNumber < 1 {
 		return nil, UploadSessionPart{}, ErrUploadSessionInvalid
+	}
+	expectedChecksumSHA256, err := normalizeUploadChecksumSHA256(expectedChecksumSHA256)
+	if err != nil {
+		return nil, UploadSessionPart{}, err
 	}
 	unlock := s.lockSession(id)
 	defer unlock()
@@ -228,12 +235,13 @@ func (s *UploadSessionService) UploadPart(ctx context.Context, uploader *user.Us
 	if err != nil {
 		return nil, UploadSessionPart{}, err
 	}
-	hash := md5.New()
+	md5Hash := md5.New()
+	sha256Hash := sha256.New()
 	limit := session.ChunkSize
 	if limit <= 0 || limit > MaxUploadChunkSize {
 		limit = MaxUploadChunkSize
 	}
-	size, copyErr := io.Copy(io.MultiWriter(file, hash), io.LimitReader(src, limit+1))
+	size, copyErr := io.Copy(io.MultiWriter(file, md5Hash, sha256Hash), io.LimitReader(src, limit+1))
 	closeErr := file.Close()
 	if copyErr != nil {
 		_ = os.Remove(tmpPath)
@@ -247,16 +255,22 @@ func (s *UploadSessionService) UploadPart(ctx context.Context, uploader *user.Us
 		_ = os.Remove(tmpPath)
 		return nil, UploadSessionPart{}, ErrUploadSessionTooLarge
 	}
+	checksumSHA256 := hex.EncodeToString(sha256Hash.Sum(nil))
+	if expectedChecksumSHA256 != "" && expectedChecksumSHA256 != checksumSHA256 {
+		_ = os.Remove(tmpPath)
+		return nil, UploadSessionPart{}, ErrUploadSessionChecksum
+	}
 	if err := os.Rename(tmpPath, partPath); err != nil {
 		_ = os.Remove(tmpPath)
 		return nil, UploadSessionPart{}, err
 	}
 	now := time.Now()
 	part := UploadSessionPart{
-		PartNumber: partNumber,
-		Size:       size,
-		ETag:       hex.EncodeToString(hash.Sum(nil)),
-		UpdatedAt:  now,
+		PartNumber:     partNumber,
+		Size:           size,
+		ETag:           hex.EncodeToString(md5Hash.Sum(nil)),
+		ChecksumSHA256: checksumSHA256,
+		UpdatedAt:      now,
 	}
 	if session.Parts == nil {
 		session.Parts = map[int]UploadSessionPart{}
@@ -691,6 +705,20 @@ func expectedPartCount(size, chunkSize int64) int {
 		chunkSize = DefaultUploadChunkSize
 	}
 	return int((size + chunkSize - 1) / chunkSize)
+}
+
+func normalizeUploadChecksumSHA256(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "", nil
+	}
+	if len(value) != sha256.Size*2 {
+		return "", fmt.Errorf("%w: invalid checksum", ErrUploadSessionInvalid)
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return "", fmt.Errorf("%w: invalid checksum", ErrUploadSessionInvalid)
+	}
+	return value, nil
 }
 
 func copyPartFile(dst io.Writer, partPath string) error {

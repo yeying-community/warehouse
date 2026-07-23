@@ -58,10 +58,11 @@ function handleRetry(task: UploadTask) {
 }
 
 function canRetryTask(task: UploadTask): boolean {
-  return task.status === 'failed' && (Boolean(task.file) || Boolean(task.uploadSessionId))
+  return task.status === 'failed' && (Boolean(task.file) || Boolean(task.uploadSessionId) || Boolean(task.uploadPayloadStorageKey))
 }
 
 function retryTooltip(task: UploadTask): string {
+  if (task.encryptedRoot && task.uploadPayloadStorageKey) return '继续加密上传'
   return task.file ? '重试上传' : '重新选择文件继续上传'
 }
 
