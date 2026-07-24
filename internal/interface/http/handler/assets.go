@@ -54,6 +54,7 @@ func (h *AssetsHandler) GetSpaces(w http.ResponseWriter, r *http.Request) {
 	spaces := []assetspace.Space{
 		{Key: assetspace.PersonalSpaceKey, Name: "个人资产", Path: "/personal"},
 		{Key: assetspace.AppsSpaceKey, Name: "应用资产", Path: "/apps"},
+		{Key: assetspace.ServicesSpaceKey, Name: "服务资产", Path: "/services"},
 	}
 	if h.assetSpaceManager != nil {
 		defaultSpace = h.assetSpaceManager.DefaultSpace()

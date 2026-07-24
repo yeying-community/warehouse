@@ -93,7 +93,7 @@ type bucketInfo struct {
 
 func (s *Server) handleListBuckets(w http.ResponseWriter, credential *s3credential.Credential) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	response := listAllMyBucketsResult{Buckets: make([]bucketInfo, 0, 2)}
+	response := listAllMyBucketsResult{Buckets: make([]bucketInfo, 0, 3)}
 	rootPath := "/"
 	if credential != nil {
 		rootPath = credential.RootPath
@@ -109,11 +109,13 @@ func visibleS3Buckets(rootPath string) []string {
 	rootPath = path.Clean("/" + strings.TrimSpace(strings.ReplaceAll(rootPath, "\\", "/")))
 	switch {
 	case rootPath == "/":
-		return []string{"personal", "apps"}
+		return []string{"personal", "apps", "services"}
 	case rootPath == "/personal" || strings.HasPrefix(rootPath, "/personal/"):
 		return []string{"personal"}
 	case rootPath == "/apps" || strings.HasPrefix(rootPath, "/apps/"):
 		return []string{"apps"}
+	case rootPath == "/services" || strings.HasPrefix(rootPath, "/services/"):
+		return []string{"services"}
 	default:
 		return nil
 	}

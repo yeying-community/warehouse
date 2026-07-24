@@ -71,7 +71,7 @@ func (h *S3CredentialHandler) HandleCreate(w http.ResponseWriter, r *http.Reques
 	}
 	rootPath := normalizeS3RootPath(req.RootPath)
 	if !isAllowedS3RootPath(rootPath) {
-		http.Error(w, "rootPath must be under /personal or /apps", http.StatusBadRequest)
+		http.Error(w, "rootPath must be under /personal, /apps, or /services", http.StatusBadRequest)
 		return
 	}
 	secretBytes := make([]byte, 32)
@@ -110,7 +110,9 @@ func isAllowedS3RootPath(rootPath string) bool {
 	return rootPath == "/personal" ||
 		strings.HasPrefix(rootPath, "/personal/") ||
 		rootPath == "/apps" ||
-		strings.HasPrefix(rootPath, "/apps/")
+		strings.HasPrefix(rootPath, "/apps/") ||
+		rootPath == "/services" ||
+		strings.HasPrefix(rootPath, "/services/")
 }
 
 func normalizeS3Permissions(values []string) string {

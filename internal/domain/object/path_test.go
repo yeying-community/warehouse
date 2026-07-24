@@ -42,11 +42,11 @@ func TestResolvePathRejectsEscape(t *testing.T) {
 }
 
 func TestResolvePathAllowsEmptyKeyForBucketOperations(t *testing.T) {
-	got, err := ResolvePath("/srv/warehouse", "alice", "apps", "")
+	got, err := ResolvePath("/srv/warehouse", "alice", "services", "")
 	if err != nil {
 		t.Fatalf("resolve bucket path: %v", err)
 	}
-	want := filepath.Join("/srv/warehouse", "alice", "apps")
+	want := filepath.Join("/srv/warehouse", "alice", "services")
 	if got != want {
 		t.Fatalf("unexpected path: got=%q want=%q", got, want)
 	}

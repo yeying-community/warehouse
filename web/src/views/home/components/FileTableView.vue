@@ -7,6 +7,7 @@ const props = defineProps<{
   isMobile: boolean
   rows: FileItem[]
   loading: boolean
+  selectionEnabled: boolean
   onRowClick: (...args: any[]) => void
   onSelectionChange: (rows: FileItem[]) => void
   canDragItem: (item: FileItem) => boolean
@@ -99,6 +100,12 @@ function handleRowClick(row: FileItem, _column: unknown, event: MouseEvent) {
 watch(() => props.selectionNonce, () => {
   tableRef.value?.clearSelection?.()
 })
+
+watch(() => props.selectionEnabled, enabled => {
+  if (!enabled) {
+    tableRef.value?.clearSelection?.()
+  }
+})
 </script>
 
 <template>
@@ -115,7 +122,7 @@ watch(() => props.selectionNonce, () => {
     @row-click="handleRowClick"
     @selection-change="handleSelectionChange"
   >
-    <el-table-column type="selection" width="48" />
+    <el-table-column v-if="selectionEnabled" type="selection" width="48" />
     <el-table-column label="名称" min-width="280">
       <template #default="{ row }">
         <div

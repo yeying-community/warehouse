@@ -31,6 +31,7 @@ func TestManagerEnsureForUserCreatesDefaultSpaces(t *testing.T) {
 	assertDirectoryExists(t, filepath.Join(tmpDir, "alice"))
 	assertDirectoryExists(t, filepath.Join(tmpDir, "alice", "personal"))
 	assertDirectoryExists(t, filepath.Join(tmpDir, "alice", "apps"))
+	assertDirectoryExists(t, filepath.Join(tmpDir, "alice", "services"))
 }
 
 func TestManagerEnsureForUserRespectsCustomAppScopePrefix(t *testing.T) {
@@ -53,9 +54,10 @@ func TestManagerEnsureForUserRespectsCustomAppScopePrefix(t *testing.T) {
 
 	assertDirectoryExists(t, filepath.Join(tmpDir, "bob", "personal"))
 	assertDirectoryExists(t, filepath.Join(tmpDir, "bob", "dapps", "storage"))
+	assertDirectoryExists(t, filepath.Join(tmpDir, "bob", "services"))
 
 	spaces := manager.Spaces()
-	if len(spaces) != 2 {
+	if len(spaces) != 3 {
 		t.Fatalf("unexpected spaces length: %d", len(spaces))
 	}
 	if spaces[0].Path != "/personal" {
@@ -63,6 +65,9 @@ func TestManagerEnsureForUserRespectsCustomAppScopePrefix(t *testing.T) {
 	}
 	if spaces[1].Path != "/dapps/storage" {
 		t.Fatalf("unexpected apps path: %s", spaces[1].Path)
+	}
+	if spaces[2].Path != "/services" {
+		t.Fatalf("unexpected services path: %s", spaces[2].Path)
 	}
 }
 

@@ -18,11 +18,13 @@ func TestVisibleS3BucketsFollowsCredentialRootPath(t *testing.T) {
 		rootPath string
 		want     []string
 	}{
-		{name: "root", rootPath: "/", want: []string{"personal", "apps"}},
+		{name: "root", rootPath: "/", want: []string{"personal", "apps", "services"}},
 		{name: "personal bucket", rootPath: "/personal", want: []string{"personal"}},
 		{name: "personal prefix", rootPath: "/personal/docs", want: []string{"personal"}},
 		{name: "apps bucket", rootPath: "/apps", want: []string{"apps"}},
 		{name: "apps prefix", rootPath: "/apps/demo", want: []string{"apps"}},
+		{name: "services bucket", rootPath: "/services", want: []string{"services"}},
+		{name: "services prefix", rootPath: "/services/reports", want: []string{"services"}},
 		{name: "invalid", rootPath: "/other", want: nil},
 	}
 	for _, tt := range tests {

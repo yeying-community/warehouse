@@ -146,7 +146,7 @@ func (s *WebDAVService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 确保资产空间目录存在（personal + apps）
+	// 确保资产空间目录存在（personal + apps + services）
 	if err := s.ensureAssetSpaces(userDir); err != nil {
 		s.logger.Error("failed to ensure asset spaces",
 			zap.String("directory", userDir),
@@ -287,6 +287,7 @@ func (s *WebDAVService) userGuideVirtualFiles() []webdavfs.VirtualFile {
 	spaces := []assetspace.Space{
 		{Path: "/" + assetspace.PersonalSpaceKey},
 		{Path: "/" + assetspace.AppsSpaceKey},
+		{Path: "/" + assetspace.ServicesSpaceKey},
 	}
 	if s != nil && s.assetSpace != nil {
 		spaces = s.assetSpace.Spaces()

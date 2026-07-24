@@ -17,6 +17,8 @@ const (
 	PersonalSpaceKey = "personal"
 	// AppsSpaceKey 应用资产空间 key
 	AppsSpaceKey = "apps"
+	// ServicesSpaceKey 服务资产空间 key
+	ServicesSpaceKey = "services"
 )
 
 // Space 资产空间元信息
@@ -26,7 +28,7 @@ type Space struct {
 	Path string `json:"path"`
 }
 
-// Manager 管理用户资产空间目录（personal/apps）
+// Manager 管理用户资产空间目录（personal/apps/services）
 type Manager struct {
 	webdavRoot   string
 	appScopePath string
@@ -64,6 +66,7 @@ func (m *Manager) Spaces() []Space {
 	return []Space{
 		{Key: PersonalSpaceKey, Name: "个人资产", Path: "/" + PersonalSpaceKey},
 		{Key: AppsSpaceKey, Name: "应用资产", Path: appPath},
+		{Key: ServicesSpaceKey, Name: "服务资产", Path: "/" + ServicesSpaceKey},
 	}
 }
 
@@ -91,6 +94,7 @@ func (m *Manager) EnsureForUserDirectory(userRoot string) error {
 		filepath.Clean(userRoot),
 		filepath.Join(userRoot, PersonalSpaceKey),
 		filepath.Join(userRoot, filepath.FromSlash(appRelative)),
+		filepath.Join(userRoot, ServicesSpaceKey),
 	}
 
 	seen := make(map[string]struct{}, len(dirs))
