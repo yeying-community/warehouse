@@ -17,6 +17,7 @@ var (
 var supportedBuckets = map[string]struct{}{
 	"personal": {},
 	"apps":     {},
+	"services": {},
 }
 
 // ResolvePath maps an S3 bucket/key to a path below one user's asset root.

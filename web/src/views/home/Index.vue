@@ -123,6 +123,7 @@ const detailDrawerVisible = ref(false)
 const detailMode = ref<'file' | 'recycle' | 'share' | 'directShare' | 'receivedShare' | 'sharedEntry' | null>(null)
 const detailItem = ref<FileItem | RecycleItem | ShareItem | DirectShareItem | null>(null)
 const selectedFileRows = ref<FileItem[]>([])
+const fileSelectionMode = ref(false)
 const fileSelectionNonce = ref(0)
 const dragActive = ref(false)
 const dragCounter = ref(0)
@@ -161,7 +162,7 @@ const s3CredentialDialogVisible = ref(false)
 const s3Credentials = ref<S3CredentialItem[]>([])
 const s3CredentialCreateResult = ref<CreateS3CredentialResult | null>(null)
 const s3CredentialName = ref('')
-const s3CredentialBucket = ref<'personal' | 'apps'>('personal')
+const s3CredentialBucket = ref<'personal' | 'apps' | 'services'>('personal')
 const s3CredentialDirectory = ref('')
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const groupStore = useGroupStore()
@@ -310,15 +311,18 @@ const ACCESS_KEY_PERMISSIONS: Array<{ label: string; value: AccessKeyPermission 
 ]
 const ASSET_SPACE_NAME_BY_KEY: Record<string, string> = {
   personal: '个人资产',
-  apps: '应用资产'
+  apps: '应用资产',
+  services: '服务资产'
 }
 const ASSET_SPACE_PATH_BY_KEY: Record<string, string> = {
   personal: '/personal',
-  apps: '/apps'
+  apps: '/apps',
+  services: '/services'
 }
 const DEFAULT_ASSET_SPACES: AssetSpace[] = [
   { key: 'personal', name: '个人资产', path: '/personal' },
-  { key: 'apps', name: '应用资产', path: '/apps' }
+  { key: 'apps', name: '应用资产', path: '/apps' },
+  { key: 'services', name: '服务资产', path: '/services' }
 ]
 const assetSpaces = ref<AssetSpace[]>(DEFAULT_ASSET_SPACES)
 const defaultAssetSpaceKey = ref('personal')
@@ -749,7 +753,7 @@ const sortedFileList = computed(() => [...fileList.value].sort(compareItemsByMod
 const selectedFileCount = computed(() => selectedFileRows.value.length)
 const fileSelectionSummaryText = computed(() => {
   const count = selectedFileCount.value
-  if (count <= 0) return ''
+  if (count <= 0) return '勾选列表中的资产后，可以执行批量删除'
   return `已选中 ${count} 项资产，可以执行批量删除`
 })
 const shareViewSummary = computed(() => {
@@ -4200,6 +4204,24 @@ function clearSelectedFiles() {
   fileSelectionNonce.value += 1
 }
 
+function enterFileSelectionMode() {
+  if (isSharedBrowse.value) return
+  fileSelectionMode.value = true
+}
+
+function exitFileSelectionMode() {
+  fileSelectionMode.value = false
+  clearSelectedFiles()
+}
+
+function handleBatchDeleteButtonClick() {
+  if (!fileSelectionMode.value) {
+    enterFileSelectionMode()
+    return
+  }
+  void deleteSelectedFiles()
+}
+
 function buildBatchShareRevokePlan(
   items: FileItem[],
   linkShares: ShareItem[],
@@ -4298,6 +4320,7 @@ async function deleteSelectedFiles() {
   }
 
   selectedFileRows.value = []
+  fileSelectionMode.value = false
   fileSelectionNonce.value += 1
   fetchFiles(currentPath.value)
   if (failedCount > 0) {
@@ -4418,6 +4441,7 @@ function enterAssetSpace(spaceKey: string) {
 
 function getAssetSpaceIcon(spaceKey: string) {
   if (spaceKey === 'apps') return Grid
+  if (spaceKey === 'services') return Notebook
   return FolderOpened
 }
 
@@ -5383,11 +5407,13 @@ watch(recycleSearch, () => {
 
 watch(currentPath, () => {
   selectedFileRows.value = []
+  fileSelectionMode.value = false
 })
 
 watch(isFileView, visible => {
   if (visible) return
   selectedFileRows.value = []
+  fileSelectionMode.value = false
 })
 
 watch(renameDialogVisible, visible => {
@@ -6183,7 +6209,6 @@ onBeforeUnmount(() => {
                 </template>
                 <template v-else>
                   <div class="action-cluster">
-                    <span class="action-cluster-label">新建与上传</span>
                     <el-tooltip content="新建文件夹" placement="top">
                       <el-button circle type="primary" :icon="FolderAdd" @click="createFolder" />
                     </el-tooltip>
@@ -6195,13 +6220,12 @@ onBeforeUnmount(() => {
                     </el-tooltip>
                   </div>
                   <div class="action-cluster action-cluster-subtle">
-                    <span class="action-cluster-label">批量与状态</span>
-                    <el-tooltip :content="selectedFileCount > 0 ? `删除已选 ${selectedFileCount} 项` : '先勾选要删除的资产'" placement="top">
+                    <el-tooltip :content="fileSelectionMode ? (selectedFileCount > 0 ? `删除已选 ${selectedFileCount} 项` : '勾选要删除的资产') : '批量删除'" placement="top">
                       <el-button
                         type="danger"
                         circle
-                        :disabled="selectedFileCount === 0 || loading"
-                        @click="deleteSelectedFiles"
+                        :disabled="loading || (fileSelectionMode && selectedFileCount === 0)"
+                        @click="handleBatchDeleteButtonClick"
                       >
                         <el-icon><Delete /></el-icon>
                       </el-button>
@@ -6591,14 +6615,14 @@ onBeforeUnmount(() => {
               <div class="view-summary-title">{{ shareViewSummary.title }}</div>
               <div class="view-summary-text">{{ shareViewSummary.description }}</div>
             </div>
-            <div v-if="selectedFileCount > 0" class="selection-summary-bar">
+            <div v-if="fileSelectionMode" class="selection-summary-bar">
               <div class="selection-summary-main">
                 <span class="selection-summary-title">已进入批量操作模式</span>
                 <span class="selection-summary-text">{{ fileSelectionSummaryText }}</span>
               </div>
               <div class="selection-summary-actions">
-                <el-button size="small" @click="clearSelectedFiles">取消选择</el-button>
-                <el-button size="small" type="danger" :disabled="loading" @click="deleteSelectedFiles">删除已选</el-button>
+                <el-button size="small" @click="exitFileSelectionMode">退出批量</el-button>
+                <el-button size="small" type="danger" :disabled="selectedFileCount === 0 || loading" @click="deleteSelectedFiles">删除已选</el-button>
               </div>
             </div>
             <template v-if="showRecycle">
@@ -6691,6 +6715,7 @@ onBeforeUnmount(() => {
               :is-mobile="isMobileViewport"
               :rows="filteredFileList"
               :loading="loading && !manualRefresh"
+              :selection-enabled="fileSelectionMode"
               :on-row-click="handleRowClick"
               :on-selection-change="handleFileSelectionChange"
               :can-drag-item="canDragItem"
@@ -6949,6 +6974,7 @@ onBeforeUnmount(() => {
             <el-select v-model="s3CredentialBucket" class="s3-credential-bucket-select" :disabled="!!s3CredentialCreateResult">
               <el-option label="personal（个人存储）" value="personal" />
               <el-option label="apps（应用存储）" value="apps" />
+              <el-option label="services（服务存储）" value="services" />
             </el-select>
           </el-form-item>
           <el-form-item label="bucket 下目录">

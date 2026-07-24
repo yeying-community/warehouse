@@ -44,6 +44,7 @@ func TestWeb3AuthenticatorAuthenticateByJWTWallet(t *testing.T) {
 
 	assertDirExists(t, filepath.Join(tmpDir, "alice", "personal"))
 	assertDirExists(t, filepath.Join(tmpDir, "alice", "apps"))
+	assertDirExists(t, filepath.Join(tmpDir, "alice", "services"))
 }
 
 func TestWeb3AuthenticatorAuthenticateByJWTEmail(t *testing.T) {
