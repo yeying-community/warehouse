@@ -5,7 +5,7 @@ import QRCode from 'qrcode'
 import { ArrowLeft, ArrowRight, ArrowUp, Delete, Expand, Fold, Folder, FolderAdd, FolderOpened, Grid, Refresh, Upload, DocumentCopy, Share, Search, MoreFilled, Notebook, User, Lock, Unlock, Wallet } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import { getSupportedCipherSuites, type CipherSuiteInfo } from '@yeying-community/web3-bs'
-import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, s3CredentialApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type ReceivedSharedResource, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type S3CredentialItem, type CreateS3CredentialResult, type AdminUserItem, type GroupMember } from '@/api'
+import { quotaApi, userApi, recycleApi, shareApi, directShareApi, assetsApi, webdavAccessKeyApi, s3CredentialApi, warehouseToolCredentialApi, adminUserApi, type RecycleItem, type ShareItem, type DirectShareItem, type ReceivedSharedResource, type AssetSpaceInfo, type ShareExpiryUnit, type ShareMode, type AccessKeyPermission, type WebDAVAccessKeyItem, type CreateWebDAVAccessKeyResult, type S3CredentialItem, type CreateS3CredentialResult, type WarehouseToolCredentialItem, type WarehouseToolAuditItem, type AdminUserItem, type GroupMember } from '@/api'
 import { AUTH_CHANGED_EVENT, isLoggedIn, getUsername, getWalletName, getCurrentAccount, getUserPermissions, getUserCreatedAt, loginWithWallet, focusPendingWalletApproval, createIdentityLoginSession, pollIdentityLoginStatus, watchWalletProvider } from '@/plugins/auth'
 import { decryptBlobContent, encryptFileContent, encryptTextContent } from '@/utils/crypto'
 import {
@@ -155,6 +155,10 @@ const accessKeyDirectoryPickerVisible = ref(false)
 const accessKeyDirectoryPickerLoading = ref(false)
 const accessKeyDirectoryPickerPath = ref('/personal')
 const accessKeyDirectoryPickerItems = ref<FileItem[]>([])
+const directoryPickerTarget = ref<'accessKey' | 'tool'>('accessKey')
+const directoryPickerCreateMode = ref(false)
+const directoryPickerNewFolderName = ref('')
+const directoryPickerCreateSubmitting = ref(false)
 const s3CredentialLoading = ref(false)
 const s3CredentialSubmitting = ref(false)
 const s3CredentialDialogVisible = ref(false)
@@ -163,6 +167,17 @@ const s3CredentialCreateResult = ref<CreateS3CredentialResult | null>(null)
 const s3CredentialName = ref('')
 const s3CredentialBucket = ref<'personal' | 'apps' | 'services'>('personal')
 const s3CredentialDirectory = ref('')
+const toolCredentialLoading = ref(false)
+const toolCredentialSubmitting = ref(false)
+const toolCredentialDialogVisible = ref(false)
+const toolCredentialName = ref('')
+const toolCredentialPath = ref('')
+const toolCredentialScopes = ref<string[]>(['asset:read', 'asset:write'])
+const toolCredentialExpiresAt = ref('')
+const toolCredentials = ref<WarehouseToolCredentialItem[]>([])
+const toolCredentialCreateResult = ref<{ id: string; secret: string; expiresAt: string; warning: string } | null>(null)
+const toolAuditLoading = ref(false)
+const toolAudits = ref<WarehouseToolAuditItem[]>([])
 const accessKeyForm = ref(createDefaultAccessKeyForm('/'))
 const groupStore = useGroupStore()
 const { groupLoading, managedGroups, activeGroupMembers } = storeToRefs(groupStore)
@@ -199,6 +214,11 @@ const renameForm = ref({
   name: ''
 })
 type PreviewMode = 'text' | 'pdf' | 'word' | 'image' | 'audio' | 'video'
+type PreviewFormatOption = {
+  mode: PreviewMode
+  label: string
+  extensions: string
+}
 const previewVisible = ref(false)
 const previewMode = ref<PreviewMode | null>(null)
 const previewLoading = ref(false)
@@ -209,6 +229,9 @@ const previewTarget = ref<FileItem | null>(null)
 const previewBlob = ref<Blob | null>(null)
 const previewSourceUrl = ref('')
 const previewReadOnly = ref(false)
+const previewFormatDialogVisible = ref(false)
+const previewFormatTarget = ref<FileItem | null>(null)
+const previewFormatSelection = ref<PreviewMode | null>(null)
 let previewRequestSeq = 0
 let identityBroadcastChannel: BroadcastChannel | null = null
 const encryptedDirectoryRoots = ref<string[]>([])
@@ -264,7 +287,7 @@ const SHARED_PATH_STORAGE_KEY = 'warehouse:sharedPath'
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'warehouse:sidebarCollapsed'
 type ViewKey = 'files' | 'recycle' | 'shareLink' | 'shareDirect' | 'sharedWithMe' | 'quotaManage' | 'group' | 'help'
 type ManagementSection = 'account' | 'keys' | 'adminUsers' | 'group'
-type CredentialTab = 'webdav' | 's3'
+type CredentialTab = 'webdav' | 's3' | 'tool'
 type AssetSpace = AssetSpaceInfo
 type ShareExpiryForm = {
   expiresValue: string
@@ -307,6 +330,10 @@ const ACCESS_KEY_PERMISSIONS: Array<{ label: string; value: AccessKeyPermission 
   { label: '新增', value: 'create' },
   { label: '修改', value: 'update' },
   { label: '删除', value: 'delete' }
+]
+const TOOL_CREDENTIAL_SCOPES: Array<{ label: string; value: string; description: string }> = [
+  { label: '读取', value: 'asset:read', description: '列出、查看授权目录中的对象' },
+  { label: '写入', value: 'asset:write', description: '在授权目录中创建或更新对象' }
 ]
 const ASSET_SPACE_NAME_BY_KEY: Record<string, string> = {
   personal: '个人资产',
@@ -907,6 +934,14 @@ const WORD_EXTENSIONS = new Set(['docx'])
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'])
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus', 'weba', 'oga'])
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'ogv', 'mov', 'm4v', 'mkv'])
+const PREVIEW_FORMAT_OPTIONS: PreviewFormatOption[] = [
+  { mode: 'text', label: '文本', extensions: 'TXT、MD、JSON、YAML 等' },
+  { mode: 'pdf', label: 'PDF', extensions: 'PDF 文档' },
+  { mode: 'word', label: 'Word', extensions: 'DOCX 文档' },
+  { mode: 'image', label: '图片', extensions: 'PNG、JPG、WEBP 等' },
+  { mode: 'audio', label: '音频', extensions: 'MP3、WAV、OGG 等' },
+  { mode: 'video', label: '视频', extensions: 'MP4、WEBM、MOV 等' }
+]
 
 function getFileExtension(name: string): string {
   if (!name) return ''
@@ -934,6 +969,46 @@ function getPreviewMode(item?: FileItem | null): PreviewMode | null {
   if (ext && AUDIO_EXTENSIONS.has(ext)) return 'audio'
   if (ext && VIDEO_EXTENSIONS.has(ext)) return 'video'
   return null
+}
+
+function mimeTypeForPreviewMode(mode: PreviewMode): string {
+  switch (mode) {
+    case 'text':
+      return 'text/plain;charset=utf-8'
+    case 'pdf':
+      return 'application/pdf'
+    case 'word':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    case 'image':
+      return 'image/png'
+    case 'audio':
+      return 'audio/mpeg'
+    case 'video':
+      return 'video/mp4'
+  }
+}
+
+function openPreviewFormatDialog(item: FileItem) {
+  previewFormatTarget.value = item
+  previewFormatSelection.value = null
+  previewFormatDialogVisible.value = true
+}
+
+function closePreviewFormatDialog() {
+  previewFormatDialogVisible.value = false
+  previewFormatTarget.value = null
+  previewFormatSelection.value = null
+}
+
+function confirmPreviewFormat() {
+  const target = previewFormatTarget.value
+  const mode = previewFormatSelection.value
+  if (!target || !mode) {
+    showInfo('请选择打开格式')
+    return
+  }
+  closePreviewFormatDialog()
+  void openFilePreview(target, mode)
 }
 
 function isImagePreviewItem(item?: FileItem | null): boolean {
@@ -1690,6 +1765,76 @@ async function fetchS3Credentials(withLoading = false) {
   }
 }
 
+async function fetchToolCredentials(withLoading = false) {
+  if (withLoading) toolCredentialLoading.value = true
+  try {
+    const data = await warehouseToolCredentialApi.list()
+    toolCredentials.value = Array.isArray(data.items) ? data.items : []
+  } catch (error) {
+    console.error('获取 Warehouse Tool 凭证失败:', error)
+    if (withLoading) showError('获取 Warehouse Tool 凭证失败')
+  } finally {
+    if (withLoading) toolCredentialLoading.value = false
+  }
+}
+
+async function fetchToolAudits() {
+  toolAuditLoading.value = true
+  try {
+    const data = await warehouseToolCredentialApi.audits()
+    toolAudits.value = Array.isArray(data.items) ? data.items : []
+  } catch (error) {
+    console.error('获取 Tool 审计失败:', error)
+    showError('获取 Tool 审计失败')
+  } finally {
+    toolAuditLoading.value = false
+  }
+}
+
+function openToolCredentialDialog() {
+  toolCredentialName.value = ''
+  toolCredentialPath.value = ''
+  toolCredentialScopes.value = ['asset:read', 'asset:write']
+  toolCredentialExpiresAt.value = ''
+  toolCredentialCreateResult.value = null
+  toolCredentialDialogVisible.value = true
+}
+
+async function submitToolCredential() {
+  const name = toolCredentialName.value.trim()
+  const path = normalizeAccessKeyRootPath(toolCredentialPath.value)
+  if (!name || path === '/' || !toolCredentialExpiresAt.value || !toolCredentialScopes.value.length) {
+    showError('请填写名称、选择授权目录、至少一项权限和过期时间')
+    return
+  }
+  toolCredentialSubmitting.value = true
+  try {
+    toolCredentialCreateResult.value = await warehouseToolCredentialApi.create({
+      name,
+      scopes: [...toolCredentialScopes.value],
+      pathPrefixes: [path],
+      expiresAt: new Date(toolCredentialExpiresAt.value).toISOString()
+    })
+    await fetchToolCredentials()
+    showSuccess('Tool 凭证已创建，请立即保存 Secret')
+  } catch (error: any) { showError(error?.message || '创建 Tool 凭证失败') } finally { toolCredentialSubmitting.value = false }
+}
+
+async function rotateToolCredential(item: WarehouseToolCredentialItem) {
+  if (!(await confirmAction(`确定轮换凭证 ${item.name} 吗？旧 Secret 将立即失效。`, '轮换 Tool 凭证'))) return
+  try {
+    toolCredentialCreateResult.value = await warehouseToolCredentialApi.rotate(item.id)
+    toolCredentialDialogVisible.value = true
+    await fetchToolCredentials()
+    showSuccess('Tool 凭证已轮换，请立即保存新 Secret')
+  } catch (error: any) { showError(error?.message || '轮换 Tool 凭证失败') }
+}
+
+async function revokeToolCredential(item: WarehouseToolCredentialItem) {
+  if (item.status !== 'active' || !(await confirmAction(`确定撤销凭证 ${item.name} 吗？`, '撤销 Tool 凭证'))) return
+  try { await warehouseToolCredentialApi.revoke(item.id); await fetchToolCredentials(); showSuccess('Tool 凭证已撤销') } catch (error: any) { showError(error?.message || '撤销 Tool 凭证失败') }
+}
+
 function openS3CredentialDialog() {
   s3CredentialName.value = ''
   s3CredentialBucket.value = 'personal'
@@ -2159,6 +2304,9 @@ async function loadAccessKeyDirectoryPicker(path: string) {
 }
 
 function openAccessKeyDirectoryPicker() {
+  directoryPickerTarget.value = 'accessKey'
+  directoryPickerCreateMode.value = false
+  directoryPickerNewFolderName.value = ''
   const selected = normalizeAccessKeyRootPath(accessKeyForm.value.rootPath)
   const initial = resolveAssetSpaceByPath(selected)?.path
     ? selected
@@ -2167,12 +2315,83 @@ function openAccessKeyDirectoryPicker() {
   void loadAccessKeyDirectoryPicker(initial)
 }
 
+function openToolCredentialDirectoryPicker() {
+  directoryPickerTarget.value = 'tool'
+  directoryPickerCreateMode.value = false
+  directoryPickerNewFolderName.value = ''
+  const selected = normalizeAccessKeyRootPath(toolCredentialPath.value)
+  const initial = resolveAssetSpaceByPath(selected)?.path
+    ? selected
+    : (getDefaultAssetSpace()?.path || '/personal')
+  accessKeyDirectoryPickerVisible.value = true
+  void loadAccessKeyDirectoryPicker(initial)
+}
+
+function beginDirectoryPickerCreateFolder() {
+  directoryPickerNewFolderName.value = ''
+  directoryPickerCreateMode.value = true
+}
+
+function cancelDirectoryPickerCreateFolder() {
+  directoryPickerCreateMode.value = false
+  directoryPickerNewFolderName.value = ''
+}
+
+async function createDirectoryPickerFolder() {
+  const name = directoryPickerNewFolderName.value.trim()
+  if (!name) {
+    showError('请输入目录名称')
+    return
+  }
+  if (name === '.' || name === '..' || name.includes('/') || name.includes('\\')) {
+    showError('目录名称不能包含路径分隔符或 .、..')
+    return
+  }
+  const parentPath = normalizeAccessKeyRootPath(accessKeyDirectoryPickerPath.value)
+  if (!resolveAssetSpaceByPath(parentPath)) {
+    showError('只能在资产空间内创建目录')
+    return
+  }
+  const targetPath = normalizeAccessKeyRootPath(`${parentPath}/${name}`)
+  const token = localStorage.getItem('authToken') || ''
+  directoryPickerCreateSubmitting.value = true
+  try {
+    const response = await fetch(buildDavPath(targetPath), {
+      method: 'MKCOL',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    })
+    if (response.status === 405) {
+      throw new Error('目录已存在')
+    }
+    if (!response.ok) {
+      const text = (await response.text()).trim()
+      throw new Error(normalizeUserFacingErrorMessage(text, `创建目录失败: ${response.status}`))
+    }
+    cancelDirectoryPickerCreateFolder()
+    await loadAccessKeyDirectoryPicker(parentPath)
+    showSuccess(`目录已创建：${name}`)
+  } catch (error: any) {
+    console.error('创建授权目录失败:', error)
+    showError(errorMessageFromUnknown(error, '创建目录失败'))
+  } finally {
+    directoryPickerCreateSubmitting.value = false
+  }
+}
+
 function enterAccessKeyDirectoryPickerItem(item: FileItem) {
   if (item.isDir) void loadAccessKeyDirectoryPicker(item.path)
 }
 
 function selectAccessKeyDirectoryPickerPath() {
-  accessKeyForm.value.rootPath = normalizeAccessKeyRootPath(accessKeyDirectoryPickerPath.value)
+  const selected = normalizeAccessKeyRootPath(accessKeyDirectoryPickerPath.value)
+  if (directoryPickerTarget.value === 'tool') {
+    toolCredentialPath.value = selected
+    accessKeyDirectoryPickerVisible.value = false
+    return
+  }
+  accessKeyForm.value.rootPath = selected
   accessKeyDirectoryPickerVisible.value = false
 }
 
@@ -2510,12 +2729,14 @@ function openSharedEntryDetail(item: FileItem) {
   detailDrawerVisible.value = true
 }
 
-async function openFilePreview(item: FileItem) {
-  const mode = getPreviewMode(item)
+async function openFilePreview(item: FileItem, forcedMode?: PreviewMode) {
+  const detectedMode = getPreviewMode(item)
+  const mode = forcedMode || detectedMode
   if (!mode) {
-    showError('暂不支持预览该类型文件')
+    openPreviewFormatDialog(item)
     return
   }
+  const forcedFormat = Boolean(forcedMode && !detectedMode)
   const requestSeq = ++previewRequestSeq
   detailDrawerVisible.value = false
   previewTarget.value = item
@@ -2543,9 +2764,11 @@ async function openFilePreview(item: FileItem) {
         previewContent.value = text
         previewOrigin.value = text
       } else if (mode === 'audio' || mode === 'video') {
-        previewSourceUrl.value = createEncryptedDownloadURL(bytes, item.name)
+        previewSourceUrl.value = createEncryptedDownloadURL(bytes, item.name, mimeTypeForPreviewMode(mode))
       } else {
-        previewBlob.value = new Blob([bytes], { type: inferFileMimeType(item.name) })
+        previewBlob.value = new Blob([bytes], {
+          type: forcedFormat ? mimeTypeForPreviewMode(mode) : inferFileMimeType(item.name)
+        })
       }
     } else if (mode === 'text') {
       const response = await fetch(
@@ -2565,9 +2788,24 @@ async function openFilePreview(item: FileItem) {
       previewContent.value = text
       previewOrigin.value = text
     } else if (mode === 'audio' || mode === 'video') {
-      ensureAuthCookie(token)
-      if (requestSeq !== previewRequestSeq) return
-      previewSourceUrl.value = previewURL
+      if (forcedFormat) {
+        const response = await fetch(previewURL, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        })
+        if (!response.ok) {
+          throw new Error(`读取失败: ${response.status}`)
+        }
+        if (requestSeq !== previewRequestSeq) return
+        const blob = await response.blob()
+        previewSourceUrl.value = URL.createObjectURL(new Blob([blob], { type: mimeTypeForPreviewMode(mode) }))
+      } else {
+        ensureAuthCookie(token)
+        if (requestSeq !== previewRequestSeq) return
+        previewSourceUrl.value = previewURL
+      }
     } else if (mode === 'pdf' || mode === 'word' || mode === 'image') {
       const response = await fetch(
         previewURL,
@@ -2582,7 +2820,10 @@ async function openFilePreview(item: FileItem) {
         throw new Error(`读取失败: ${response.status}`)
       }
       if (requestSeq !== previewRequestSeq) return
-      previewBlob.value = await response.blob()
+      const blob = await response.blob()
+      previewBlob.value = forcedFormat
+        ? new Blob([blob], { type: mimeTypeForPreviewMode(mode) })
+        : blob
     }
   } catch (error: any) {
     if (requestSeq !== previewRequestSeq) return
@@ -5625,6 +5866,10 @@ watch(accessKeyDialogVisible, visible => {
   accessKeyForm.value = createDefaultAccessKeyForm('/')
 })
 
+watch(credentialTab, tab => {
+  if (tab === 'tool' && !toolCredentials.value.length) fetchToolCredentials(true)
+})
+
 watch(managedGroups, groups => {
   const validIDs = new Set(groups.map(group => group.id))
   const normalized = Array.from(
@@ -6655,6 +6900,29 @@ onBeforeUnmount(() => {
                       </el-table>
                     </div>
                   </el-tab-pane>
+                  <el-tab-pane label="Warehouse Tool" name="tool" @click="fetchToolCredentials(true)">
+                    <div class="credential-tab-head">
+                      <div class="card-subtitle">用于 Chat、Agent 和 Skill 的受限资产 Tool 调用</div>
+                      <div class="user-actions">
+                        <el-button size="small" @click="fetchToolCredentials(true)">刷新</el-button>
+                        <el-button size="small" @click="fetchToolAudits">审计</el-button>
+                        <el-button size="small" type="primary" @click="openToolCredentialDialog">新建</el-button>
+                      </div>
+                    </div>
+                    <div class="credential-tab-body" v-loading="toolCredentialLoading">
+                      <el-empty v-if="!toolCredentials.length && !toolCredentialLoading" description="暂无 Warehouse Tool 凭证" />
+                      <el-table v-else :data="toolCredentials" size="small">
+                        <el-table-column prop="name" label="名称" min-width="150" />
+                        <el-table-column label="授权范围" min-width="240"><template #default="{ row }"><div class="key-meta-row"><el-tag v-for="path in row.pathPrefixes" :key="path" size="small" type="info">{{ path }}</el-tag></div></template></el-table-column>
+                        <el-table-column prop="expiresAt" label="过期时间" min-width="180" />
+                        <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">{{ row.status === 'active' ? '生效中' : '已撤销' }}</el-tag></template></el-table-column>
+                        <el-table-column label="操作" width="180"><template #default="{ row }"><el-button v-if="row.status === 'active'" text size="small" @click="rotateToolCredential(row)">轮换</el-button><el-button v-if="row.status === 'active'" text type="danger" size="small" @click="revokeToolCredential(row)">撤销</el-button></template></el-table-column>
+                      </el-table>
+                      <el-table v-if="toolAudits.length" :data="toolAudits" size="small" class="tool-audit-table" v-loading="toolAuditLoading">
+                        <el-table-column prop="createdAt" label="时间" width="180" /><el-table-column prop="toolName" label="Tool" min-width="180" /><el-table-column prop="path" label="路径" min-width="240" /><el-table-column prop="outcome" label="结果" width="100" />
+                      </el-table>
+                    </div>
+                  </el-tab-pane>
                 </el-tabs>
               </div>
               <div v-if="managementSection === 'group'" class="user-card user-card-full" v-loading="groupLoading && !manualRefresh">
@@ -7040,7 +7308,7 @@ onBeforeUnmount(() => {
       </el-dialog>
       <el-dialog
         v-model="accessKeyDirectoryPickerVisible"
-        title="选择 WebDAV 授权目录"
+        :title="directoryPickerTarget === 'tool' ? '选择 Tool 授权目录' : '选择 WebDAV 授权目录'"
         width="620px"
         append-to-body
       >
@@ -7064,6 +7332,19 @@ onBeforeUnmount(() => {
               <el-button text @click="loadAccessKeyDirectoryPicker(crumb.path)">{{ crumb.label }}</el-button>
             </el-breadcrumb-item>
           </el-breadcrumb>
+          <div class="access-key-directory-create">
+            <template v-if="directoryPickerCreateMode">
+              <el-input
+                v-model="directoryPickerNewFolderName"
+                placeholder="输入新目录名称"
+                :disabled="directoryPickerCreateSubmitting"
+                @keyup.enter="createDirectoryPickerFolder"
+              />
+              <el-button type="primary" :loading="directoryPickerCreateSubmitting" @click="createDirectoryPickerFolder">创建</el-button>
+              <el-button :disabled="directoryPickerCreateSubmitting" @click="cancelDirectoryPickerCreateFolder">取消</el-button>
+            </template>
+            <el-button v-else size="small" class="access-key-ghost-button" @click="beginDirectoryPickerCreateFolder">新建目录</el-button>
+          </div>
           <div v-loading="accessKeyDirectoryPickerLoading" class="access-key-directory-list">
             <button
               v-for="item in accessKeyDirectoryPickerItems"
@@ -7134,6 +7415,34 @@ onBeforeUnmount(() => {
           <el-button v-if="!s3CredentialCreateResult" type="primary" :loading="s3CredentialSubmitting" @click="submitS3Credential">创建凭证</el-button>
         </template>
       </el-dialog>
+      <el-dialog v-model="toolCredentialDialogVisible" title="Warehouse Tool 凭证" width="560px">
+        <el-form v-if="!toolCredentialCreateResult" label-position="top" class="tool-credential-form">
+          <el-form-item label="凭证名称"><el-input v-model="toolCredentialName" placeholder="例如：conversation-review" /></el-form-item>
+          <el-form-item label="授权目录">
+            <div class="access-key-directory-field">
+              <el-input v-model="toolCredentialPath" readonly placeholder="请选择 Warehouse 目录" />
+              <el-button @click="openToolCredentialDirectoryPicker">选择</el-button>
+            </div>
+            <div class="access-key-permission-help">授权覆盖所选目录及其子目录，请按最小权限原则选择。</div>
+          </el-form-item>
+          <el-form-item label="Tool 权限">
+            <el-checkbox-group v-model="toolCredentialScopes" class="tool-credential-scope-options">
+              <el-checkbox v-for="scope in TOOL_CREDENTIAL_SCOPES" :key="scope.value" :label="scope.value">
+                <span>{{ scope.label }}</span>
+                <span class="tool-credential-scope-description">{{ scope.description }}</span>
+              </el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+          <el-form-item label="过期时间"><el-date-picker v-model="toolCredentialExpiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" placeholder="选择过期时间" /></el-form-item>
+        </el-form>
+        <div v-else class="access-key-created">
+          <div class="access-key-created-title">操作成功，请立即保存 Secret（仅显示一次）</div>
+          <div class="access-key-created-row"><span class="access-key-created-label">Credential ID</span><span class="access-key-created-value mono">{{ toolCredentialCreateResult.id }}</span><el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(toolCredentialCreateResult.id, 'Credential ID')">复制</el-button></div>
+          <div class="access-key-created-row"><span class="access-key-created-label">Secret</span><span class="access-key-created-value mono">{{ toolCredentialCreateResult.secret }}</span><el-button size="small" class="access-key-ghost-button" @click="copyAccessKeyValue(toolCredentialCreateResult.secret, 'Secret')">复制</el-button></div>
+          <div class="access-key-permission-help">关闭弹窗后 Secret 无法恢复。生产 Agent 请使用 YEYING_WAREHOUSE_TOOL_TOKEN 保存该值。</div>
+        </div>
+        <template #footer><el-button @click="toolCredentialDialogVisible = false">关闭</el-button><el-button v-if="!toolCredentialCreateResult" type="primary" :loading="toolCredentialSubmitting" @click="submitToolCredential">创建凭证</el-button></template>
+      </el-dialog>
       <el-dialog
         v-model="adminUsersDialogVisible"
         title="修改用户额度"
@@ -7173,6 +7482,38 @@ onBeforeUnmount(() => {
         <template #footer>
           <el-button @click="closeAdminUsersDialog">取消</el-button>
           <el-button type="primary" :loading="adminUsersSubmitting" @click="submitAdminUsersUpdate">保存</el-button>
+        </template>
+      </el-dialog>
+      <el-dialog
+        v-model="previewFormatDialogVisible"
+        title="选择打开格式"
+        width="480px"
+        :close-on-click-modal="false"
+        @closed="closePreviewFormatDialog"
+      >
+        <div class="preview-format-dialog">
+          <div class="preview-format-target" :title="previewFormatTarget?.name || ''">
+            {{ previewFormatTarget?.name || '当前文件' }}
+          </div>
+          <div class="preview-format-hint">文件后缀未识别，请选择内容格式打开。此选择仅影响本次预览，不会修改原文件。</div>
+          <el-radio-group v-model="previewFormatSelection" class="preview-format-options">
+            <el-radio
+              v-for="option in PREVIEW_FORMAT_OPTIONS"
+              :key="option.mode"
+              :label="option.mode"
+              border
+              class="preview-format-option"
+            >
+              <span class="preview-format-option-label">{{ option.label }}</span>
+              <span class="preview-format-option-extensions">{{ option.extensions }}</span>
+            </el-radio>
+          </el-radio-group>
+        </div>
+        <template #footer>
+          <el-button @click="closePreviewFormatDialog">取消</el-button>
+          <el-button type="primary" :disabled="!previewFormatSelection" @click="confirmPreviewFormat">
+            打开
+          </el-button>
         </template>
       </el-dialog>
       <FilePreviewDialog
@@ -8417,6 +8758,41 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.tool-credential-form :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+
+.access-key-directory-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.access-key-directory-create .el-input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.tool-credential-scope-options {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.tool-credential-scope-options :deep(.el-checkbox) {
+  height: auto;
+  margin-right: 0;
+  line-height: 1.4;
+}
+
+.tool-credential-scope-description {
+  margin-left: 4px;
+  color: #909399;
+  font-size: 12px;
+}
+
 .admin-quota-table {
   width: 100%;
 }
@@ -8753,6 +9129,60 @@ onBeforeUnmount(() => {
   margin-top: 4px;
   font-size: 12px;
   color: #606266;
+}
+
+.preview-format-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preview-format-target {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-format-hint {
+  color: #909399;
+  font-size: 13px;
+}
+
+.preview-format-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.preview-format-option {
+  height: auto;
+  min-height: 58px;
+  margin: 0 !important;
+  display: flex;
+  align-items: center;
+}
+
+.preview-format-option :deep(.el-radio__label) {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.preview-format-option-label {
+  color: #303133;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.preview-format-option-extensions {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
 }
 
 .quota-value {
