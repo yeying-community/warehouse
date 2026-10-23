@@ -22,6 +22,7 @@ type Router struct {
 	emailAuthHandler           *handler.EmailAuthHandler
 	assetsHandler              *handler.AssetsHandler
 	assetObjectHandler         *handler.AssetObjectHandler
+	assetToolHandler           *handler.AssetToolHandler
 	webdavHandler              *handler.WebDAVHandler
 	quotaHandler               *handler.QuotaHandler
 	userHandler                *handler.UserHandler
@@ -34,6 +35,7 @@ type Router struct {
 	notificationHandler        *handler.NotificationHandler
 	s3CredentialHandler        *handler.S3CredentialHandler
 	uploadSessionHandler       *handler.UploadSessionHandler
+	toolCredentialHandler      *handler.ToolCredentialHandler
 	logger                     *zap.Logger
 }
 
@@ -48,6 +50,7 @@ func NewRouter(
 	emailAuthHandler *handler.EmailAuthHandler,
 	assetsHandler *handler.AssetsHandler,
 	assetObjectHandler *handler.AssetObjectHandler,
+	assetToolHandler *handler.AssetToolHandler,
 	webdavHandler *handler.WebDAVHandler,
 	quotaHandler *handler.QuotaHandler,
 	userHandler *handler.UserHandler,
@@ -60,6 +63,7 @@ func NewRouter(
 	notificationHandler *handler.NotificationHandler,
 	s3CredentialHandler *handler.S3CredentialHandler,
 	uploadSessionHandler *handler.UploadSessionHandler,
+	toolCredentialHandler *handler.ToolCredentialHandler,
 	logger *zap.Logger,
 ) *Router {
 	return &Router{
@@ -72,6 +76,7 @@ func NewRouter(
 		emailAuthHandler:           emailAuthHandler,
 		assetsHandler:              assetsHandler,
 		assetObjectHandler:         assetObjectHandler,
+		assetToolHandler:           assetToolHandler,
 		webdavHandler:              webdavHandler,
 		quotaHandler:               quotaHandler,
 		userHandler:                userHandler,
@@ -84,6 +89,7 @@ func NewRouter(
 		notificationHandler:        notificationHandler,
 		s3CredentialHandler:        s3CredentialHandler,
 		uploadSessionHandler:       uploadSessionHandler,
+		toolCredentialHandler:      toolCredentialHandler,
 		logger:                     logger,
 	}
 }
@@ -130,6 +136,10 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/public/assets/object", r.createAuthenticatedHandler(http.HandlerFunc(r.assetObjectHandler.HandleObject)))
 		mux.Handle("/api/v1/public/assets/object/content", r.createAuthenticatedHandler(http.HandlerFunc(r.assetObjectHandler.HandleObjectContent)))
 		mux.Handle("/api/v1/public/assets/objects", r.createAuthenticatedHandler(http.HandlerFunc(r.assetObjectHandler.HandleObjects)))
+	}
+	if r.assetToolHandler != nil {
+		mux.Handle("/api/v1/public/tools/warehouse", r.createAuthenticatedHandler(http.HandlerFunc(r.assetToolHandler.HandleCatalog)))
+		mux.Handle("/api/v1/public/tools/warehouse/call", r.createAuthenticatedHandler(http.HandlerFunc(r.assetToolHandler.HandleCall)))
 	}
 	mux.Handle("/api/v1/public/webdav/quota", r.createAuthenticatedHandler(http.HandlerFunc(r.quotaHandler.GetUserQuota)))
 	mux.Handle("/api/v1/public/webdav/user/info", r.createAuthenticatedHandler(http.HandlerFunc(r.userHandler.GetUserInfo)))
@@ -189,6 +199,30 @@ func (r *Router) Setup() http.Handler {
 		mux.Handle("/api/v1/public/s3/credentials/create", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleCreate)))
 		mux.Handle("/api/v1/public/s3/credentials/revoke", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleRevoke)))
 		mux.Handle("/api/v1/public/s3/credentials/delete", r.createAuthenticatedHandler(http.HandlerFunc(r.s3CredentialHandler.HandleDelete)))
+	}
+	if r.toolCredentialHandler != nil {
+		mux.Handle("/api/v1/public/tools/credentials", r.createAuthenticatedHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			switch req.Method {
+			case http.MethodGet:
+				r.toolCredentialHandler.HandleList(w, req)
+			case http.MethodPost:
+				r.toolCredentialHandler.HandleCreate(w, req)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		})))
+		mux.Handle("/api/v1/public/tools/credentials/", r.createAuthenticatedHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if req.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			if strings.HasSuffix(req.URL.Path, "/rotate") {
+				r.toolCredentialHandler.HandleRotate(w, req)
+				return
+			}
+			r.toolCredentialHandler.HandleRevoke(w, req)
+		})))
+		mux.Handle("/api/v1/public/tools/audits", r.createAuthenticatedHandler(http.HandlerFunc(r.toolCredentialHandler.HandleAudit)))
 	}
 	if r.uploadSessionHandler != nil {
 		mux.Handle("/api/v1/public/uploads/sessions", r.createAuthenticatedHandler(http.HandlerFunc(r.uploadSessionHandler.HandleCreate)))
