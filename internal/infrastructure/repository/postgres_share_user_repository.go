@@ -326,8 +326,17 @@ func (r *PostgresUserShareRepository) UpdatePathsForOwnerMove(ctx context.Contex
 }
 
 func (r *PostgresUserShareRepository) DeleteByID(ctx context.Context, id string) error {
-	query := `DELETE FROM internal_share_items WHERE id = $1`
-	result, err := r.db.ExecContext(ctx, query, id)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin share deletion transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM internal_share_grants WHERE legacy_share_id = $1`, id); err != nil {
+		return fmt.Errorf("failed to delete share grant: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM internal_share_items WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete share item: %w", err)
 	}
@@ -337,6 +346,9 @@ func (r *PostgresUserShareRepository) DeleteByID(ctx context.Context, id string)
 	}
 	if rows == 0 {
 		return shareuser.ErrShareNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit share deletion transaction: %w", err)
 	}
 	return nil
 }
